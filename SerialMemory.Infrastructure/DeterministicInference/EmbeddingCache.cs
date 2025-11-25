@@ -177,35 +177,36 @@ public sealed class CachedEmbeddingService : IEmbeddingService
 
     public int EmbeddingDimension => _inner.EmbeddingDimension;
 
-    public async Task<float[]> EmbedTextAsync(string text)
+    public async Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
     {
         var contentHash = ComputeContentHash(text);
 
-        var cached = await _cache.GetAsync(contentHash);
+        var cached = await _cache.GetAsync(contentHash, cancellationToken);
         if (cached != null)
         {
             return cached;
         }
 
-        var embedding = await _inner.EmbedTextAsync(text);
+        var embedding = await _inner.EmbedTextAsync(text, cancellationToken);
 
-        await _cache.SetAsync(contentHash, embedding, _modelVersion);
+        await _cache.SetAsync(contentHash, embedding, _modelVersion, cancellationToken);
 
         return embedding;
     }
 
-    public async Task<List<float[]>> EmbedBatchAsync(IEnumerable<string> texts)
+    public async Task<List<float[]>> EmbedBatchAsync(List<string> texts, CancellationToken cancellationToken = default)
     {
-        var textList = texts.ToList();
-        var results = new float[textList.Count][];
+        var results = new float[texts.Count][];
         var uncachedIndices = new List<int>();
         var uncachedTexts = new List<string>();
 
         // Check cache for each text
-        for (int i = 0; i < textList.Count; i++)
+        for (int i = 0; i < texts.Count; i++)
         {
-            var contentHash = ComputeContentHash(textList[i]);
-            var cached = await _cache.GetAsync(contentHash);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var contentHash = ComputeContentHash(texts[i]);
+            var cached = await _cache.GetAsync(contentHash, cancellationToken);
 
             if (cached != null)
             {
@@ -214,28 +215,28 @@ public sealed class CachedEmbeddingService : IEmbeddingService
             else
             {
                 uncachedIndices.Add(i);
-                uncachedTexts.Add(textList[i]);
+                uncachedTexts.Add(texts[i]);
             }
         }
 
         // Batch process uncached texts
         if (uncachedTexts.Count > 0)
         {
-            var newEmbeddings = await _inner.EmbedBatchAsync(uncachedTexts);
+            var newEmbeddings = await _inner.EmbedBatchAsync(uncachedTexts, cancellationToken);
 
             for (int i = 0; i < uncachedIndices.Count; i++)
             {
                 var idx = uncachedIndices[i];
                 results[idx] = newEmbeddings[i];
 
-                var contentHash = ComputeContentHash(textList[idx]);
-                await _cache.SetAsync(contentHash, newEmbeddings[i], _modelVersion);
+                var contentHash = ComputeContentHash(texts[idx]);
+                await _cache.SetAsync(contentHash, newEmbeddings[i], _modelVersion, cancellationToken);
             }
 
             _logger.LogDebug(
                 "Embedded {Uncached} uncached texts, {Cached} from cache",
                 uncachedTexts.Count,
-                textList.Count - uncachedTexts.Count);
+                texts.Count - uncachedTexts.Count);
         }
 
         return results.ToList();
