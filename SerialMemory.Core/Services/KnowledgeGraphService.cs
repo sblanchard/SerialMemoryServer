@@ -274,6 +274,8 @@ public class KnowledgeGraphService
 
         var visitedMemoryIds = new HashSet<Guid>();
         var visitedEntityIds = new HashSet<Guid>();
+        var processedEntityIds = new HashSet<Guid>(); // Track entities whose relationships have been fetched
+        var visitedRelationships = new HashSet<(Guid, Guid, string)>(); // Track (source, target, type) to avoid duplicates
 
         // Initial search
         var initialResults = await SearchMemoriesAsync(
@@ -300,18 +302,32 @@ public class KnowledgeGraphService
             }
         }
 
-        // Traverse hops
+        // Traverse hops - only process frontier entities (those not yet processed for relationships)
         for (int hop = 0; hop < hops; hop++)
         {
-            var currentEntities = result.Entities.ToList();
+            // Get only entities that haven't had their relationships fetched yet
+            var frontierEntities = result.Entities
+                .Where(e => !processedEntityIds.Contains(e.Id))
+                .ToList();
 
-            foreach (var entity in currentEntities)
+            if (frontierEntities.Count == 0)
+                break; // No new entities to explore
+
+            foreach (var entity in frontierEntities)
             {
+                // Mark this entity as processed before fetching relationships
+                processedEntityIds.Add(entity.Id);
+
                 // Get relationships for this entity
                 var relationships = await _store.GetRelationshipsForEntityAsync(entity.Id, cancellationToken);
 
                 foreach (var rel in relationships.Take(maxResultsPerHop))
                 {
+                    // Check for duplicate relationships (using source, target, type as key)
+                    var relationshipKey = (rel.SourceEntityId, rel.TargetEntityId, rel.RelationshipType);
+                    if (!visitedRelationships.Add(relationshipKey))
+                        continue; // Skip duplicate relationship
+
                     result.Relationships.Add(new RelationshipInfo
                     {
                         SourceId = rel.SourceEntityId,
