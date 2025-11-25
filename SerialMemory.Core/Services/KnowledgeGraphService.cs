@@ -121,6 +121,8 @@ public class KnowledgeGraphService
 
             result.Relationships.Add(new RelationshipInfo
             {
+                SourceId = sourceId,
+                TargetId = targetId,
                 Source = extracted.SourceEntity,
                 Target = extracted.TargetEntity,
                 Type = extracted.RelationType,
@@ -312,6 +314,8 @@ public class KnowledgeGraphService
                 {
                     result.Relationships.Add(new RelationshipInfo
                     {
+                        SourceId = rel.SourceEntityId,
+                        TargetId = rel.TargetEntityId,
                         Source = rel.SourceEntity?.Name ?? entity.Name,
                         Target = rel.TargetEntity?.Name ?? "Unknown",
                         Type = rel.RelationshipType,
@@ -589,6 +593,8 @@ public class EntityInfo
 
 public class RelationshipInfo
 {
+    public Guid SourceId { get; set; }
+    public Guid TargetId { get; set; }
     public required string Source { get; set; }
     public required string Target { get; set; }
     public required string Type { get; set; }
