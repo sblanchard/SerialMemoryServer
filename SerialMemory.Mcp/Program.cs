@@ -337,6 +337,32 @@ object HandleToolsList()
                     },
                     required = new[] { "attribute_type", "attribute_key", "attribute_value" }
                 }
+            },
+            // crawl_relationships
+            new
+            {
+                name = "crawl_relationships",
+                description = "Crawl existing memories to extract entities and relationships. Useful for populating the knowledge graph from memories that were ingested without entity extraction.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" },
+                        force_reprocess = new { type = "boolean", @default = false, description = "Reprocess memories that already have entities" }
+                    }
+                }
+            },
+            // get_graph_statistics
+            new
+            {
+                name = "get_graph_statistics",
+                description = "Get statistics about the knowledge graph including entity and relationship counts by type.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new { }
+                }
             }
         }
     };
@@ -456,6 +482,12 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
             case "set_user_persona":
                 return await HandleSetUserPersona(arguments);
+
+            case "crawl_relationships":
+                return await HandleCrawlRelationships(arguments);
+
+            case "get_graph_statistics":
+                return await HandleGetGraphStatistics();
 
             default:
                 throw new Exception($"Unknown tool: {toolName}");
@@ -705,6 +737,156 @@ async Task<object> HandleSetUserPersona(JsonNode? arguments)
     await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
 
     return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
+}
+
+async Task<object> HandleCrawlRelationships(JsonNode? arguments)
+{
+    var batchSize = Math.Clamp(arguments?["batch_size"]?.GetValue<int>() ?? 100, 1, 1000);
+    var forceReprocess = arguments?["force_reprocess"]?.GetValue<bool>() ?? false;
+
+    logger.LogInformation("Starting relationship crawl: batch_size={BatchSize}, force_reprocess={Force}", batchSize, forceReprocess);
+
+    var totalEntities = 0;
+    var totalRelationships = 0;
+    var processedMemories = 0;
+
+    // Get memories to process (those without entities)
+    var memories = await store.GetMemoriesWithoutEntitiesAsync(batchSize);
+
+    foreach (var memory in memories)
+    {
+        // Extract entities and relationships
+        var (entities, relationships) = await entityService.ExtractAllAsync(memory.Content);
+
+        // Create entities and link to memory
+        var entityIdMap = new Dictionary<string, Guid>();
+        foreach (var entity in entities)
+        {
+            var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+            {
+                Id = Guid.CreateVersion7(),
+                Name = entity.Name,
+                EntityType = entity.Type,
+                CanonicalName = entity.Name.ToLowerInvariant(),
+                FirstSeenMemoryId = memory.Id,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            entityIdMap[entity.Name] = entityId;
+            await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
+            totalEntities++;
+        }
+
+        // Create relationships
+        foreach (var rel in relationships)
+        {
+            Guid sourceId, targetId;
+
+            if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
+            {
+                sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                {
+                    Id = Guid.CreateVersion7(),
+                    Name = rel.SourceEntity,
+                    EntityType = "UNKNOWN",
+                    CanonicalName = rel.SourceEntity.ToLowerInvariant(),
+                    FirstSeenMemoryId = memory.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+                entityIdMap[rel.SourceEntity] = sourceId;
+                totalEntities++;
+            }
+
+            if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+            {
+                targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                {
+                    Id = Guid.CreateVersion7(),
+                    Name = rel.TargetEntity,
+                    EntityType = "UNKNOWN",
+                    CanonicalName = rel.TargetEntity.ToLowerInvariant(),
+                    FirstSeenMemoryId = memory.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+                entityIdMap[rel.TargetEntity] = targetId;
+                totalEntities++;
+            }
+
+            await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+            {
+                Id = Guid.CreateVersion7(),
+                SourceEntityId = sourceId,
+                TargetEntityId = targetId,
+                RelationshipType = rel.RelationshipType,
+                Confidence = rel.Confidence,
+                FirstSeenMemoryId = memory.Id,
+                CreatedAt = DateTime.UtcNow
+            });
+            totalRelationships++;
+        }
+
+        // Infer co-occurrence relationships for entities in same memory
+        var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
+        var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
+
+        foreach (var person in personEntities)
+        {
+            foreach (var org in orgEntities)
+            {
+                if (entityIdMap.TryGetValue(person.Name, out var personId) &&
+                    entityIdMap.TryGetValue(org.Name, out var orgId))
+                {
+                    await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                    {
+                        Id = Guid.CreateVersion7(),
+                        SourceEntityId = personId,
+                        TargetEntityId = orgId,
+                        RelationshipType = "MENTIONED_WITH",
+                        Confidence = 0.5f,
+                        FirstSeenMemoryId = memory.Id,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    totalRelationships++;
+                }
+            }
+        }
+
+        processedMemories++;
+    }
+
+    var text = $"Relationship crawl completed!\n\n" +
+               $"Memories processed: {processedMemories}\n" +
+               $"Entities created: {totalEntities}\n" +
+               $"Relationships created: {totalRelationships}";
+
+    logger.LogInformation("Crawl completed: {Memories} memories, {Entities} entities, {Relationships} relationships",
+        processedMemories, totalEntities, totalRelationships);
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleGetGraphStatistics()
+{
+    var memoryCnt = await store.GetMemoryCountAsync();
+    var entityCnt = await store.GetEntityCountAsync();
+    var relationshipCnt = await store.GetRelationshipCountAsync();
+
+    // Get relationship type breakdown
+    var relationships = await store.GetAllRelationshipsAsync(1000);
+    var typeBreakdown = relationships
+        .GroupBy(r => r.RelationshipType)
+        .Select(g => new { Type = g.Key, Count = g.Count() })
+        .OrderByDescending(x => x.Count)
+        .ToList();
+
+    var text = $"Knowledge Graph Statistics\n\n" +
+               $"Total Memories: {memoryCnt}\n" +
+               $"Total Entities: {entityCnt}\n" +
+               $"Total Relationships: {relationshipCnt}\n\n" +
+               $"Relationship Types:\n" +
+               string.Join("\n", typeBreakdown.Select(t => $"  - {t.Type}: {t.Count}"));
+
+    return CreateTextResponse(text);
 }
 
 object CreateTextResponse(string text)
