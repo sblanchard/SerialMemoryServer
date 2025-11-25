@@ -3,6 +3,19 @@
 -- Extensions for offline, replayable, ONNX-based cognition
 -- =====================================================
 
+-- =====================================================
+-- EMBEDDING DIMENSION CONFIGURATION
+-- =====================================================
+-- Set this variable to match your ONNX model's embedding dimension:
+--   384  = all-MiniLM-L6-v2, all-MiniLM-L12-v2, bge-small-en-v1.5
+--   768  = all-mpnet-base-v2, bge-base-en-v1.5, e5-base-v2, gte-base
+--   1024 = e5-large-v2, bge-large-en-v1.5, gte-large
+--
+-- Usage: psql -v EMBEDDING_DIM=768 -f deterministic_memory_schema.sql
+-- Or set before running: \set EMBEDDING_DIM 768
+-- =====================================================
+\set EMBEDDING_DIM COALESCE(:'EMBEDDING_DIM', '384')
+
 -- Inference session tracking for deterministic replay
 CREATE TABLE IF NOT EXISTS inference_sessions (
     session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -48,7 +61,7 @@ CREATE INDEX idx_reasoning_steps_type ON reasoning_steps(step_type);
 CREATE TABLE IF NOT EXISTS embedding_cache (
     cache_key CHAR(64) NOT NULL,
     content_hash CHAR(64) NOT NULL,
-    embedding vector(384) NOT NULL,
+    embedding vector(:EMBEDDING_DIM) NOT NULL,
     model_version VARCHAR(64) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_accessed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -65,7 +78,7 @@ CREATE INDEX idx_embedding_cache_access ON embedding_cache(last_accessed_at);
 CREATE TABLE IF NOT EXISTS memory_clusters (
     cluster_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cluster_name VARCHAR(256),
-    centroid vector(384) NOT NULL,
+    centroid vector(:EMBEDDING_DIM) NOT NULL,
     cluster_radius REAL NOT NULL,
     memory_count INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -300,7 +313,7 @@ CREATE TABLE IF NOT EXISTS memory_state_timeline (
     memory_id UUID NOT NULL,
     state_at TIMESTAMP WITH TIME ZONE NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(384),
+    embedding vector(:EMBEDDING_DIM),
     confidence REAL NOT NULL,
     layer VARCHAR(32) NOT NULL,
     is_active BOOLEAN NOT NULL,
@@ -413,13 +426,15 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- Function to get memory state at timestamp
+-- Note: This function returns embeddings as REAL[] for dimension flexibility.
+-- The actual dimension depends on your configured model.
 CREATE OR REPLACE FUNCTION get_memory_state_at(
     p_memory_id UUID,
     p_timestamp TIMESTAMP WITH TIME ZONE
 ) RETURNS TABLE (
     memory_id UUID,
     content TEXT,
-    embedding vector(384),
+    embedding REAL[],
     confidence REAL,
     layer VARCHAR(32),
     is_active BOOLEAN
@@ -429,7 +444,7 @@ BEGIN
     SELECT
         mst.memory_id,
         mst.content,
-        mst.embedding,
+        mst.embedding::REAL[],
         mst.confidence,
         mst.layer,
         mst.is_active
@@ -487,8 +502,10 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- Function to compute cluster distance
+-- Note: p_embedding parameter accepts any vector dimension; it will be compared
+-- against cluster centroids of the same dimension.
 CREATE OR REPLACE FUNCTION compute_cluster_assignment(
-    p_embedding vector(384),
+    p_embedding vector,
     p_max_distance REAL DEFAULT 0.5
 ) RETURNS TABLE (
     cluster_id UUID,
