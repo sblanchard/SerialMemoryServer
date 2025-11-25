@@ -323,6 +323,56 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return results.Select(MapToEntityRelationship).ToList();
     }
 
+    public async Task<List<EntityRelationship>> GetAllRelationshipsAsync(
+        int limit = 1000,
+        CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT
+                er.*,
+                source.name as source_name,
+                source.entity_type as source_type,
+                target.name as target_name,
+                target.entity_type as target_type
+            FROM entity_relationships er
+            JOIN entities source ON er.source_entity_id = source.id
+            JOIN entities target ON er.target_entity_id = target.id
+            ORDER BY er.created_at DESC
+            LIMIT @Limit";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit },
+            cancellationToken: cancellationToken
+        ));
+
+        return results.Select(MapToEntityRelationship).ToList();
+    }
+
+    public async Task<List<Entity>> GetAllEntitiesAsync(
+        int limit = 1000,
+        CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT * FROM entities
+            ORDER BY created_at DESC
+            LIMIT @Limit";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit },
+            cancellationToken: cancellationToken
+        ));
+
+        return results.Select(MapToEntity).ToList();
+    }
+
     #endregion
 
     #region User Persona Operations
