@@ -146,11 +146,16 @@ Located in `ops/init.sql`, the knowledge graph uses 8 tables:
 
 ### Environment Variables
 
+**Database:**
 - `POSTGRES_HOST` - PostgreSQL host (default: localhost)
 - `POSTGRES_PORT` - PostgreSQL port (default: 5432)
 - `POSTGRES_USER` - Database user (default: postgres)
 - `POSTGRES_PASSWORD` - Database password (default: postgres)
 - `POSTGRES_DB` - Database name (default: contextdb)
+
+**Embeddings (choose one):**
+- `ONNX_MODEL_PATH` - Path to ONNX model file (pure C#, no Python)
+- `VOCAB_PATH` - Path to vocab.txt for ONNX model
 - `EMBEDDING_SERVICE_URL` - HTTP embedding service URL (default: http://localhost:8765)
 
 ### MCP Tools Available
@@ -268,9 +273,31 @@ The import will:
 3. Create relationship edges between entities
 4. Generate embeddings for semantic search
 
-## Embedding Service Setup
+## Embedding Service Options
 
-The C# MCP server requires an HTTP embedding service. Start one with:
+### Option 1: ONNX (Pure C#, No Python Required) - RECOMMENDED
+
+Use the ONNX embedding service for a pure C# solution:
+
+1. Export the sentence-transformers model to ONNX:
+```bash
+pip install optimum[exporters]
+optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2 ./onnx_model/
+```
+
+2. Configure environment variables:
+```json
+{
+  "env": {
+    "ONNX_MODEL_PATH": "D:\\models\\all-MiniLM-L6-v2\\model.onnx",
+    "VOCAB_PATH": "D:\\models\\all-MiniLM-L6-v2\\vocab.txt"
+  }
+}
+```
+
+### Option 2: HTTP Embedding Service (Requires Python)
+
+Start the Python embedding service:
 
 ```bash
 cd SerialMemory.Mcp.Python
@@ -297,6 +324,15 @@ def embed_batch(request: dict):
 
 if __name__ == "__main__":
     uvicorn.run(app, port=8765)
+```
+
+Configure with:
+```json
+{
+  "env": {
+    "EMBEDDING_SERVICE_URL": "http://localhost:8765"
+  }
+}
 ```
 
 ## Data Flow

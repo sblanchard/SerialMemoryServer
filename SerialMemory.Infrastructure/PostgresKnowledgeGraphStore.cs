@@ -27,18 +27,21 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task<Guid> CreateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
     {
+        // Use Version 7 GUID (time-ordered) for better indexing and sorting
+        var id = Guid.CreateVersion7();
+
         const string sql = @"
-            INSERT INTO memories (content, embedding, source, conversation_session_id, metadata)
-            VALUES (@Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)
-            RETURNING id";
+            INSERT INTO memories (id, content, embedding, source, conversation_session_id, metadata)
+            VALUES (@Id, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)";
 
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        var id = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+        await conn.ExecuteAsync(new CommandDefinition(
             sql,
             new
             {
+                Id = id,
                 memory.Content,
                 Embedding = memory.Embedding != null ? new Vector(memory.Embedding) : null,
                 memory.Source,
@@ -131,9 +134,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default)
     {
+        // Use Version 7 GUID (time-ordered) for better indexing and sorting
+        var id = Guid.CreateVersion7();
+
         const string sql = @"
-            INSERT INTO entities (name, entity_type, canonical_name, first_seen_memory_id, metadata)
-            VALUES (@Name, @EntityType, @CanonicalName, @FirstSeenMemoryId, @Metadata::jsonb)
+            INSERT INTO entities (id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
+            VALUES (@Id, @Name, @EntityType, @CanonicalName, @FirstSeenMemoryId, @Metadata::jsonb)
             ON CONFLICT (name, entity_type) DO UPDATE SET
                 canonical_name = COALESCE(EXCLUDED.canonical_name, entities.canonical_name),
                 metadata = COALESCE(EXCLUDED.metadata, entities.metadata)
@@ -142,10 +148,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        var id = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+        var returnedId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
             new
             {
+                Id = id,
                 entity.Name,
                 entity.EntityType,
                 entity.CanonicalName,
@@ -155,7 +162,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             cancellationToken: cancellationToken
         ));
 
-        return id;
+        return returnedId;
     }
 
     public async Task<Entity?> GetEntityByIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -222,10 +229,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task<Guid> CreateRelationshipAsync(EntityRelationship relationship, CancellationToken cancellationToken = default)
     {
+        // Use Version 7 GUID (time-ordered) for better indexing and sorting
+        var id = Guid.CreateVersion7();
+
         const string sql = @"
             INSERT INTO entity_relationships
-                (source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
-            VALUES (@SourceEntityId, @TargetEntityId, @RelationshipType, @Confidence, @FirstSeenMemoryId, @Metadata::jsonb)
+                (id, source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
+            VALUES (@Id, @SourceEntityId, @TargetEntityId, @RelationshipType, @Confidence, @FirstSeenMemoryId, @Metadata::jsonb)
             ON CONFLICT (source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
                 confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence),
                 metadata = COALESCE(EXCLUDED.metadata, entity_relationships.metadata)
@@ -234,10 +244,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        var id = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+        var returnedId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
             new
             {
+                Id = id,
                 relationship.SourceEntityId,
                 relationship.TargetEntityId,
                 relationship.RelationshipType,
@@ -248,7 +259,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             cancellationToken: cancellationToken
         ));
 
-        return id;
+        return returnedId;
     }
 
     public async Task<List<EntityRelationship>> GetRelationshipsForEntityAsync(
@@ -286,10 +297,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task SetUserPersonaAttributeAsync(UserPersona persona, CancellationToken cancellationToken = default)
     {
+        // Use Version 7 GUID (time-ordered) for better indexing and sorting
+        var id = Guid.CreateVersion7();
+
         const string sql = @"
             INSERT INTO user_personas
-                (user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
-            VALUES (@UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
+                (id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
+            VALUES (@Id, @UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
             ON CONFLICT (user_id, attribute_type, attribute_key) DO UPDATE SET
                 attribute_value = EXCLUDED.attribute_value,
                 confidence = EXCLUDED.confidence,
@@ -302,6 +316,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             sql,
             new
             {
+                Id = id,
                 persona.UserId,
                 persona.AttributeType,
                 persona.AttributeKey,
@@ -356,18 +371,21 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task<Guid> CreateConversationSessionAsync(ConversationSession session, CancellationToken cancellationToken = default)
     {
+        // Use Version 7 GUID (time-ordered) for better indexing and sorting
+        var id = Guid.CreateVersion7();
+
         const string sql = @"
-            INSERT INTO conversation_sessions (session_name, client_type, metadata)
-            VALUES (@SessionName, @ClientType, @Metadata::jsonb)
-            RETURNING id";
+            INSERT INTO conversation_sessions (id, session_name, client_type, metadata)
+            VALUES (@Id, @SessionName, @ClientType, @Metadata::jsonb)";
 
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        var id = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+        await conn.ExecuteAsync(new CommandDefinition(
             sql,
             new
             {
+                Id = id,
                 session.SessionName,
                 session.ClientType,
                 Metadata = session.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(session.Metadata) : null
