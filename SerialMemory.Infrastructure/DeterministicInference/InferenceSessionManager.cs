@@ -133,6 +133,14 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             return null;
         }
 
+        // Get the current max step sequence to resume from correct position
+        const string maxStepSql = @"
+            SELECT COALESCE(MAX(step_sequence), 0)
+            FROM reasoning_steps
+            WHERE session_id = @SessionId";
+
+        var maxStepSequence = await connection.ExecuteScalarAsync<int>(maxStepSql, new { SessionId = sessionId });
+
         var config = JsonSerializer.Deserialize<InferenceConfig>(row.config_snapshot);
 
         return new InferenceSession(
@@ -143,7 +151,8 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             row.parent_session_id,
             _dataSource,
             _logger,
-            Enum.Parse<InferenceSessionStatus>(row.status, true));
+            Enum.Parse<InferenceSessionStatus>(row.status, true),
+            maxStepSequence);
     }
 
     public async Task<ReplayVerificationResult> VerifyReplayAsync(
@@ -273,7 +282,8 @@ public sealed class InferenceSession : IInferenceSession
         Guid? parentSessionId,
         NpgsqlDataSource dataSource,
         ILogger logger,
-        InferenceSessionStatus status = InferenceSessionStatus.Active)
+        InferenceSessionStatus status = InferenceSessionStatus.Active,
+        int initialStepSequence = 0)
     {
         SessionId = sessionId;
         Seed = seed;
@@ -283,7 +293,7 @@ public sealed class InferenceSession : IInferenceSession
         _dataSource = dataSource;
         _logger = logger;
         Status = status;
-        _currentStepSequence = 0;
+        _currentStepSequence = initialStepSequence;
     }
 
     public async Task<TOutput> ExecuteStepAsync<TInput, TOutput>(
