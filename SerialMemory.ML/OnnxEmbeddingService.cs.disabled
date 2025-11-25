@@ -1,0 +1,124 @@
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+using Microsoft.ML.Tokenizers;
+using SerialMemory.Core.Interfaces;
+using System.Text;
+
+namespace SerialMemory.ML;
+
+/// <summary>
+/// ONNX-based embedding service using sentence-transformers models
+/// Requires ONNX model exported from sentence-transformers
+/// </summary>
+public class OnnxEmbeddingService : IEmbeddingService, IDisposable
+{
+    private readonly InferenceSession _session;
+    private readonly Tokenizer _tokenizer;
+    private readonly int _embeddingDimension;
+    private const int MaxTokens = 512;
+
+    public OnnxEmbeddingService(string modelPath, string tokenizerPath)
+    {
+        if (!File.Exists(modelPath))
+            throw new FileNotFoundException($"ONNX model not found at: {modelPath}");
+
+        _session = new InferenceSession(modelPath);
+
+        // Load tokenizer (sentence-transformers uses BERT tokenizer)
+        _tokenizer = Tokenizer.CreateTiktokenForModel("bert-base-uncased");
+
+        // Get embedding dimension from model metadata
+        var outputMeta = _session.OutputMetadata.First().Value;
+        _embeddingDimension = outputMeta.Dimensions.Last();
+    }
+
+    public int EmbeddingDimension => _embeddingDimension;
+
+    public Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() => EmbedText(text), cancellationToken);
+    }
+
+    public Task<List<float[]>> EmbedBatchAsync(List<string> texts, CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() =>
+        {
+            var results = new List<float[]>();
+            foreach (var text in texts)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+                results.Add(EmbedText(text));
+            }
+            return results;
+        }, cancellationToken);
+    }
+
+    private float[] EmbedText(string text)
+    {
+        // Tokenize
+        var encoding = _tokenizer.Encode(text);
+        var tokens = encoding.Ids.Take(MaxTokens).ToArray();
+
+        var batchSize = 1;
+        var seqLen = tokens.Length;
+
+        // Create input tensors
+        var inputIds = new DenseTensor<long>(new[] { batchSize, seqLen });
+        var attentionMask = new DenseTensor<long>(new[] { batchSize, seqLen });
+
+        for (int i = 0; i < seqLen; i++)
+        {
+            inputIds[0, i] = tokens[i];
+            attentionMask[0, i] = 1;
+        }
+
+        // Run inference
+        var inputs = new List<NamedOnnxValue>
+        {
+            NamedOnnxValue.CreateFromTensor("input_ids", inputIds),
+            NamedOnnxValue.CreateFromTensor("attention_mask", attentionMask)
+        };
+
+        using var results = _session.Run(inputs);
+        var embeddings = results.First().AsEnumerable<float>().ToArray();
+
+        // Mean pooling
+        var pooled = MeanPooling(embeddings, seqLen, _embeddingDimension);
+
+        // Normalize
+        return Normalize(pooled);
+    }
+
+    private static float[] MeanPooling(float[] embeddings, int seqLen, int embDim)
+    {
+        var result = new float[embDim];
+        for (int i = 0; i < seqLen; i++)
+        {
+            for (int j = 0; j < embDim; j++)
+            {
+                result[j] += embeddings[i * embDim + j];
+            }
+        }
+
+        for (int j = 0; j < embDim; j++)
+        {
+            result[j] /= seqLen;
+        }
+
+        return result;
+    }
+
+    private static float[] Normalize(float[] vector)
+    {
+        var magnitude = MathF.Sqrt(vector.Sum(x => x * x));
+        if (magnitude == 0) return vector;
+
+        return vector.Select(x => x / magnitude).ToArray();
+    }
+
+    public void Dispose()
+    {
+        _session?.Dispose();
+    }
+}

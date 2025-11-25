@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\SerialMemory.Core\SerialMemory.Core.csproj" />
+        <ProjectReference Include="..\SerialMemory.Contracts\SerialMemory.Contracts.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Dapper" Version="2.1.35" />
+        <PackageReference Include="MassTransit" Version="8.5.5" />
+        <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.5" />
+        <PackageReference Include="Npgsql" Version="9.0.0" />
+        <PackageReference Include="Pgvector" Version="0.2.2" />
+        <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
+        <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
+    </ItemGroup>
+</Project>

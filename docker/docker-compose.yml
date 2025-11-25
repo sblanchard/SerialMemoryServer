@@ -1,0 +1,53 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: SerialMemory.Api/Dockerfile
+    ports: ["5000:8080"]
+    environment:
+      - ConnectionStrings__Redis=redis:6379
+      - RabbitMq__Host=rabbitmq
+    depends_on: [redis, rabbitmq, postgres]
+
+  worker:
+    build:
+      context: .
+      dockerfile: SerialMemory.Worker/Dockerfile
+    ports: ["8081:8081"]
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+    depends_on: [rabbitmq, postgres]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports: ["5672:5672", "15672:15672"]
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: contextdb
+    ports: ["5432:5432"]
+    volumes:
+      - ./ops/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on: [api, worker]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports: ["3000:3000"]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+    depends_on: [prometheus]
