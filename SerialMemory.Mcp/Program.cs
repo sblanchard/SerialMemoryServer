@@ -23,6 +23,12 @@ var postgresPort = configuration["POSTGRES_PORT"] ?? "5432";
 var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
+
+// Embedding service configuration
+// Option 1: ONNX (pure C#, no Python required) - set ONNX_MODEL_PATH and VOCAB_PATH
+// Option 2: HTTP (requires Python embedding service) - set EMBEDDING_SERVICE_URL
+var onnxModelPath = configuration["ONNX_MODEL_PATH"];
+var vocabPath = configuration["VOCAB_PATH"];
 var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765";
 
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
@@ -44,7 +50,15 @@ logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgr
 
 // Initialize services
 IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
-IEmbeddingService embeddingService = new HttpEmbeddingService(embeddingServiceUrl);
+
+// Create embedding service (ONNX or HTTP)
+IEmbeddingService embeddingService = EmbeddingServiceFactory.Create(
+    onnxModelPath: onnxModelPath,
+    vocabPath: vocabPath,
+    httpServiceUrl: embeddingServiceUrl);
+
+logger.LogInformation("Embedding service: {Type}", embeddingService.GetType().Name);
+
 IEntityExtractionService entityService = new PatternEntityExtractionService();
 
 var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
