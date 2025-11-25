@@ -23,7 +23,7 @@
 
     <!-- Database -->
     <PackageReference Include="Npgsql" Version="9.0.0" />
-    <PackageReference Include="Pgvector" Version="0.2.2" />
+    <PackageReference Include="Pgvector" Version="0.3.0" />
 
     <!-- Legacy Redis support (optional) -->
     <PackageReference Include="StackExchange.Redis" Version="2.7.33" />

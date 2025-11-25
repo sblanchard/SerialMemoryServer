@@ -11,17 +11,20 @@ namespace SerialMemory.Infrastructure;
 /// </summary>
 public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 {
-    private readonly string _connectionString;
+    private readonly NpgsqlDataSource _dataSource;
 
     public PostgresKnowledgeGraphStore(string connectionString)
     {
-        _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
+        if (string.IsNullOrEmpty(connectionString))
+            throw new ArgumentNullException(nameof(connectionString));
 
-        // Register pgvector types
-        NpgsqlConnection.GlobalTypeMapper.UseVector();
+        // Use NpgsqlDataSourceBuilder for proper pgvector type registration (Npgsql 7.0+ recommended approach)
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+        dataSourceBuilder.UseVector();
+        _dataSource = dataSourceBuilder.Build();
     }
 
-    private NpgsqlConnection CreateConnection() => new(_connectionString);
+    private NpgsqlConnection CreateConnection() => _dataSource.CreateConnection();
 
     #region Memory Operations
 
@@ -37,19 +40,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        await conn.ExecuteAsync(new CommandDefinition(
-            sql,
-            new
-            {
-                Id = id,
-                memory.Content,
-                Embedding = memory.Embedding != null ? new Vector(memory.Embedding) : null,
-                memory.Source,
-                SessionId = memory.ConversationSessionId,
-                Metadata = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : null
-            },
-            cancellationToken: cancellationToken
-        ));
+        // Use NpgsqlCommand directly to properly handle Vector type
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@Id", id);
+        cmd.Parameters.AddWithValue("@Content", memory.Content);
+        cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
+        cmd.Parameters.AddWithValue("@Source", (object?)memory.Source ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@SessionId", (object?)memory.ConversationSessionId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@Metadata", memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
 
         return id;
     }
@@ -108,16 +108,28 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken);
 
-        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
-            sql,
-            new
+        // Use NpgsqlCommand directly to properly handle Vector type
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@QueryEmbedding", new Vector(queryEmbedding));
+        cmd.Parameters.AddWithValue("@Threshold", threshold);
+        cmd.Parameters.AddWithValue("@Limit", limit);
+
+        var results = new List<dynamic>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new
             {
-                QueryEmbedding = new Vector(queryEmbedding),
-                Threshold = threshold,
-                Limit = limit
-            },
-            cancellationToken: cancellationToken
-        ));
+                id = reader.GetGuid(0),
+                content = reader.GetString(1),
+                created_at = reader.GetDateTime(2),
+                updated_at = reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3),
+                source = reader.IsDBNull(4) ? null : reader.GetString(4),
+                conversation_session_id = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5),
+                metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
+                similarity = reader.GetFloat(7)
+            });
+        }
 
         return results.Select(MapToMemory).ToList();
     }
@@ -541,6 +553,40 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             ClientType = row.client_type,
             Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
         };
+    }
+
+    #endregion
+
+    #region Statistics Operations
+
+    public async Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default)
+    {
+        const string sql = "SELECT COUNT(*) FROM memories";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+    }
+
+    public async Task<long> GetEntityCountAsync(CancellationToken cancellationToken = default)
+    {
+        const string sql = "SELECT COUNT(*) FROM entities";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+    }
+
+    public async Task<long> GetRelationshipCountAsync(CancellationToken cancellationToken = default)
+    {
+        const string sql = "SELECT COUNT(*) FROM entity_relationships";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
     }
 
     #endregion

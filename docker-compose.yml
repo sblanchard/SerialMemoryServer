@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   redis:
     image: redis:7-alpine
@@ -19,10 +18,53 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: contextdb
-    ports: ["5434:5432"]
+    ports: ["5435:5432"]
     volumes:
       - ./ops/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: SerialMemory.Api/Dockerfile
+    ports: ["5100:8080"]
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=contextdb
+      - ONNX_MODEL_PATH=/models/model.onnx
+      - VOCAB_PATH=/models/vocab.txt
+      - RabbitMq__Host=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    volumes:
+      - models:/models:ro
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+
+  worker:
+    build:
+      context: .
+      dockerfile: SerialMemory.Worker/Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=contextdb
+      - ONNX_MODEL_PATH=/models/model.onnx
+      - VOCAB_PATH=/models/vocab.txt
+      - RabbitMq__Host=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    volumes:
+      - models:/models:ro
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
 
   prometheus:
     image: prom/prometheus:v2.55.0
@@ -35,12 +77,24 @@ services:
 
   grafana:
     image: grafana/grafana:11.2.0
-    ports: ["3000:3000"]
+    ports: ["3001:3000"]
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_SECURITY_ADMIN_USER=admin
       - GF_AUTH_ANONYMOUS_ENABLED=true
     depends_on: [prometheus]
 
+  web:
+    build:
+      context: ./SerialMemory.Web
+      dockerfile: Dockerfile
+    ports: ["3002:80"]
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
+  models:
+    # To use local models, set MODELS_PATH environment variable or bind mount manually:
+    # docker compose -f docker-compose.yml -f docker-compose.override.yml up
+    # Or create a docker-compose.override.yml with your local models path

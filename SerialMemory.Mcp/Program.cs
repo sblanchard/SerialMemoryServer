@@ -85,9 +85,9 @@ await using var stdout = Console.OpenStandardOutput();
 using var reader = new StreamReader(stdin);
 await using var writer = new StreamWriter(stdout) { AutoFlush = true };
 
-while (!reader.EndOfStream)
+string? line;
+while ((line = await reader.ReadLineAsync()) != null)
 {
-    var line = await reader.ReadLineAsync();
     if (string.IsNullOrWhiteSpace(line)) continue;
 
     try
@@ -464,7 +464,7 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     catch (Exception ex)
     {
         logger.LogError(ex, "Error executing tool {ToolName}", toolName);
-        return CreateTextResponse($"Error: {ex.Message}");
+        return CreateErrorResponse(ex.Message);
     }
 }
 
@@ -474,10 +474,15 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
 async Task<object> HandleMemorySearch(JsonNode? arguments)
 {
-    var query = arguments?["query"]?.GetValue<string>() ?? throw new Exception("Missing query");
+    var query = arguments?["query"]?.GetValue<string>()?.Trim();
+    if (string.IsNullOrEmpty(query))
+        throw new ArgumentException("Query is required and cannot be empty");
+    if (query.Length > 10000)
+        throw new ArgumentException("Query exceeds maximum length of 10000 characters");
+
     var modeStr = arguments?["mode"]?.GetValue<string>() ?? "hybrid";
-    var limit = arguments?["limit"]?.GetValue<int>() ?? 10;
-    var threshold = arguments?["threshold"]?.GetValue<float>() ?? 0.7f;
+    var limit = Math.Clamp(arguments?["limit"]?.GetValue<int>() ?? 10, 1, 100);
+    var threshold = Math.Clamp(arguments?["threshold"]?.GetValue<float>() ?? 0.7f, 0f, 1f);
     var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
 
     var mode = modeStr.ToLowerInvariant() switch
@@ -502,8 +507,13 @@ async Task<object> HandleMemorySearch(JsonNode? arguments)
 
 async Task<object> HandleMemoryIngest(JsonNode? arguments)
 {
-    var content = arguments?["content"]?.GetValue<string>() ?? throw new Exception("Missing content");
-    var source = arguments?["source"]?.GetValue<string>();
+    var content = arguments?["content"]?.GetValue<string>()?.Trim();
+    if (string.IsNullOrEmpty(content))
+        throw new ArgumentException("Content is required and cannot be empty");
+    if (content.Length > 100000)
+        throw new ArgumentException("Content exceeds maximum length of 100000 characters");
+
+    var source = arguments?["source"]?.GetValue<string>()?.Trim();
     var extractEntities = arguments?["extract_entities"]?.GetValue<bool>() ?? true;
 
     Dictionary<string, object>? metadata = null;
@@ -589,9 +599,12 @@ async Task<object> HandleEndSession()
 
 async Task<object> HandleMultiHopSearch(JsonNode? arguments)
 {
-    var query = arguments?["query"]?.GetValue<string>() ?? throw new Exception("Missing query");
-    var hops = arguments?["hops"]?.GetValue<int>() ?? 2;
-    var maxResultsPerHop = arguments?["max_results_per_hop"]?.GetValue<int>() ?? 5;
+    var query = arguments?["query"]?.GetValue<string>()?.Trim();
+    if (string.IsNullOrEmpty(query))
+        throw new ArgumentException("Query is required and cannot be empty");
+
+    var hops = Math.Clamp(arguments?["hops"]?.GetValue<int>() ?? 2, 1, 5);
+    var maxResultsPerHop = Math.Clamp(arguments?["max_results_per_hop"]?.GetValue<int>() ?? 5, 1, 20);
 
     var result = await kgService.MultiHopSearchAsync(query, hops, maxResultsPerHop);
 
@@ -671,11 +684,23 @@ async Task<object> HandleImportFromCore(JsonNode? arguments)
 
 async Task<object> HandleSetUserPersona(JsonNode? arguments)
 {
-    var attrType = arguments?["attribute_type"]?.GetValue<string>() ?? throw new Exception("Missing attribute_type");
-    var attrKey = arguments?["attribute_key"]?.GetValue<string>() ?? throw new Exception("Missing attribute_key");
-    var attrValue = arguments?["attribute_value"]?.GetValue<string>() ?? throw new Exception("Missing attribute_value");
-    var confidence = arguments?["confidence"]?.GetValue<float>() ?? 1.0f;
-    var userId = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
+    var attrType = arguments?["attribute_type"]?.GetValue<string>()?.Trim();
+    var attrKey = arguments?["attribute_key"]?.GetValue<string>()?.Trim();
+    var attrValue = arguments?["attribute_value"]?.GetValue<string>()?.Trim();
+
+    if (string.IsNullOrEmpty(attrType))
+        throw new ArgumentException("attribute_type is required");
+    if (string.IsNullOrEmpty(attrKey))
+        throw new ArgumentException("attribute_key is required");
+    if (string.IsNullOrEmpty(attrValue))
+        throw new ArgumentException("attribute_value is required");
+
+    var validTypes = new[] { "preference", "skill", "goal", "background" };
+    if (!validTypes.Contains(attrType.ToLowerInvariant()))
+        throw new ArgumentException($"attribute_type must be one of: {string.Join(", ", validTypes)}");
+
+    var confidence = Math.Clamp(arguments?["confidence"]?.GetValue<float>() ?? 1.0f, 0f, 1f);
+    var userId = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
 
     await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
 
@@ -694,6 +719,22 @@ object CreateTextResponse(string text)
                 text
             }
         }
+    };
+}
+
+object CreateErrorResponse(string message)
+{
+    return new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text = $"Error: {message}"
+            }
+        },
+        isError = true
     };
 }
 
