@@ -23,6 +23,10 @@ public interface IKnowledgeGraphStore
     // Relationship operations
     Task<Guid> CreateRelationshipAsync(EntityRelationship relationship, CancellationToken cancellationToken = default);
     Task<List<EntityRelationship>> GetRelationshipsForEntityAsync(Guid entityId, CancellationToken cancellationToken = default);
+    Task<List<EntityRelationship>> GetAllRelationshipsAsync(int limit = 1000, CancellationToken cancellationToken = default);
+
+    // Entity listing
+    Task<List<Entity>> GetAllEntitiesAsync(int limit = 1000, CancellationToken cancellationToken = default);
 
     // User persona operations
     Task SetUserPersonaAttributeAsync(UserPersona persona, CancellationToken cancellationToken = default);
@@ -32,4 +36,9 @@ public interface IKnowledgeGraphStore
     Task<Guid> CreateConversationSessionAsync(ConversationSession session, CancellationToken cancellationToken = default);
     Task EndConversationSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<List<ConversationSession>> GetRecentSessionsAsync(int limit = 10, CancellationToken cancellationToken = default);
+
+    // Statistics operations
+    Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default);
+    Task<long> GetEntityCountAsync(CancellationToken cancellationToken = default);
+    Task<long> GetRelationshipCountAsync(CancellationToken cancellationToken = default);
 }

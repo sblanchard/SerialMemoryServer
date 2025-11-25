@@ -10,6 +10,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using SerialMemory.Core.Telemetry;
 using MassTransit;
+using SerialMemory.Core.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,19 +44,35 @@ catch
 // Knowledge Graph Services (PostgreSQL)
 var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? $"Host={Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost"};" +
-       $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432"};" +
+       $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434"};" +
        $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
        $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
        $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
 
+// Embedding Service - prefer ONNX, fallback to HTTP
+var onnxModelPath = builder.Configuration["Embedding:OnnxModelPath"]
+    ?? Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
+var vocabPath = builder.Configuration["Embedding:VocabPath"]
+    ?? Environment.GetEnvironmentVariable("VOCAB_PATH");
 var embeddingServiceUrl = builder.Configuration["EmbeddingServiceUrl"]
     ?? Environment.GetEnvironmentVariable("EMBEDDING_SERVICE_URL")
     ?? "http://localhost:8765";
 
 builder.Services.AddSingleton<IKnowledgeGraphStore>(_ => new PostgresKnowledgeGraphStore(pgConnectionString));
-builder.Services.AddSingleton<IEmbeddingService>(_ => new HttpEmbeddingService(embeddingServiceUrl));
+
+if (!string.IsNullOrEmpty(onnxModelPath) && !string.IsNullOrEmpty(vocabPath) && File.Exists(onnxModelPath))
+{
+    Console.WriteLine($"Using ONNX embedding service: {onnxModelPath}");
+    builder.Services.AddSingleton<IEmbeddingService>(_ => new OnnxEmbeddingService(onnxModelPath, vocabPath));
+}
+else
+{
+    Console.WriteLine($"Using HTTP embedding service: {embeddingServiceUrl}");
+    builder.Services.AddSingleton<IEmbeddingService>(_ => new HttpEmbeddingService(embeddingServiceUrl));
+}
 builder.Services.AddSingleton<IEntityExtractionService, PatternEntityExtractionService>();
 builder.Services.AddSingleton<KnowledgeGraphService>();
+builder.Services.AddSingleton<RelationshipDiscoveryService>();
 
 // MassTransit Configuration (optional - for event publishing)
 try
@@ -171,6 +188,21 @@ app.MapGet("/api/memories/recent", async (int? limit, KnowledgeGraphService kgSe
     return Results.Ok(results);
 });
 
+// Get statistics (total counts)
+app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
+{
+    var memoryCount = await store.GetMemoryCountAsync();
+    var entityCount = await store.GetEntityCountAsync();
+    var relationshipCount = await store.GetRelationshipCountAsync();
+
+    return Results.Ok(new
+    {
+        memories = memoryCount,
+        entities = entityCount,
+        relationships = relationshipCount
+    });
+});
+
 // Ingest a new memory
 app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphService kgService) =>
 {
@@ -228,7 +260,8 @@ app.MapGet("/api/graph", async (
         var recentMemories = await kgService.GetRecentMemoriesAsync(limit ?? 50, includeEntities: true);
 
         var entityMap = new Dictionary<string, EntityInfo>();
-        var relationships = new List<object>();
+        var edgesList = new List<object>();
+        var seenEdges = new HashSet<string>();
 
         foreach (var memory in recentMemories)
         {
@@ -240,19 +273,47 @@ app.MapGet("/api/graph", async (
                     entityMap[key] = entity;
                 }
             }
+        }
 
-            // Create edges between entities in the same memory
+        // Get actual relationships from the database
+        var dbRelationships = await store.GetAllRelationshipsAsync(500);
+        foreach (var rel in dbRelationships)
+        {
+            var edgeKey = $"{rel.SourceEntityId}-{rel.TargetEntityId}-{rel.RelationshipType}";
+            if (seenEdges.Add(edgeKey))
+            {
+                edgesList.Add(new
+                {
+                    from = rel.SourceEntityId.ToString(),
+                    to = rel.TargetEntityId.ToString(),
+                    label = rel.RelationshipType,
+                    title = $"{rel.SourceEntity?.Name ?? "?"} → {rel.TargetEntity?.Name ?? "?"}: {rel.RelationshipType} ({rel.Confidence:P0})",
+                    dashes = false,
+                    width = Math.Max(1, (int)(rel.Confidence * 3))
+                });
+            }
+        }
+
+        // Also add co-occurrence edges (dashed) for entities in the same memory
+        foreach (var memory in recentMemories)
+        {
             for (int i = 0; i < memory.Entities.Count; i++)
             {
                 for (int j = i + 1; j < memory.Entities.Count; j++)
                 {
-                    relationships.Add(new
+                    var edgeKey = $"{memory.Entities[i].Id}-{memory.Entities[j].Id}-co-occurs";
+                    var reverseKey = $"{memory.Entities[j].Id}-{memory.Entities[i].Id}-co-occurs";
+                    if (seenEdges.Add(edgeKey) && !seenEdges.Contains(reverseKey))
                     {
-                        from = memory.Entities[i].Id.ToString(),
-                        to = memory.Entities[j].Id.ToString(),
-                        label = "co-occurs",
-                        dashes = true
-                    });
+                        edgesList.Add(new
+                        {
+                            from = memory.Entities[i].Id.ToString(),
+                            to = memory.Entities[j].Id.ToString(),
+                            label = "co-occurs",
+                            dashes = true,
+                            width = 1
+                        });
+                    }
                 }
             }
         }
@@ -266,7 +327,7 @@ app.MapGet("/api/graph", async (
                 group = e.Type,
                 title = $"{e.Type}: {e.Name}"
             }),
-            edges = relationships,
+            edges = edgesList,
             memories = recentMemories.Select(m => new
             {
                 id = m.Id,
@@ -276,6 +337,131 @@ app.MapGet("/api/graph", async (
             })
         });
     }
+});
+
+// Get clustered graph data (grouped by entity type)
+app.MapGet("/api/graph/clustered", async (int? limit, KnowledgeGraphService kgService) =>
+{
+    var recentMemories = await kgService.GetRecentMemoriesAsync(limit ?? 50, includeEntities: true);
+
+    // Group entities by type
+    var entityMap = new Dictionary<string, EntityInfo>();
+    var entityByType = new Dictionary<string, List<EntityInfo>>();
+
+    foreach (var memory in recentMemories)
+    {
+        foreach (var entity in memory.Entities)
+        {
+            var key = $"{entity.Type}:{entity.Name}";
+            if (!entityMap.ContainsKey(key))
+            {
+                entityMap[key] = entity;
+
+                if (!entityByType.ContainsKey(entity.Type))
+                    entityByType[entity.Type] = new List<EntityInfo>();
+                entityByType[entity.Type].Add(entity);
+            }
+        }
+    }
+
+    // Build clusters
+    var clusters = entityByType.Select(kvp => new
+    {
+        id = $"cluster-{kvp.Key}",
+        type = kvp.Key,
+        label = $"{kvp.Key} ({kvp.Value.Count})",
+        nodeCount = kvp.Value.Count,
+        nodes = kvp.Value.Select(e => new
+        {
+            id = e.Id.ToString(),
+            label = e.Name,
+            group = e.Type
+        })
+    }).ToList();
+
+    // Build edges (co-occurrence within same memory)
+    var edges = new List<object>();
+    foreach (var memory in recentMemories)
+    {
+        for (int i = 0; i < memory.Entities.Count; i++)
+        {
+            for (int j = i + 1; j < memory.Entities.Count; j++)
+            {
+                edges.Add(new
+                {
+                    source = memory.Entities[i].Id.ToString(),
+                    target = memory.Entities[j].Id.ToString(),
+                    label = "co-occurs"
+                });
+            }
+        }
+    }
+
+    return Results.Ok(new
+    {
+        clusters,
+        edges,
+        stats = new
+        {
+            totalNodes = entityMap.Count,
+            totalEdges = edges.Count,
+            totalClusters = clusters.Count
+        }
+    });
+});
+
+// Get all relationships from the database
+app.MapGet("/api/relationships", async (int? limit, IKnowledgeGraphStore store) =>
+{
+    var relationships = await store.GetAllRelationshipsAsync(limit ?? 1000);
+
+    return Results.Ok(relationships.Select(r => new
+    {
+        id = r.Id.ToString(),
+        sourceEntityId = r.SourceEntityId.ToString(),
+        targetEntityId = r.TargetEntityId.ToString(),
+        sourceName = r.SourceEntity?.Name ?? "Unknown",
+        targetName = r.TargetEntity?.Name ?? "Unknown",
+        relationshipType = r.RelationshipType,
+        confidence = r.Confidence
+    }));
+});
+
+// Get all entities
+app.MapGet("/api/entities", async (int? limit, IKnowledgeGraphStore store) =>
+{
+    var entities = await store.GetAllEntitiesAsync(limit ?? 1000);
+
+    return Results.Ok(entities.Select(e => new
+    {
+        id = e.Id.ToString(),
+        name = e.Name,
+        type = e.EntityType,
+        canonicalName = e.CanonicalName,
+        createdAt = e.CreatedAt
+    }));
+});
+
+// Discover relationships from co-occurrence
+app.MapPost("/api/relationships/discover", async (
+    int? memoriesLimit,
+    float? minConfidence,
+    RelationshipDiscoveryService discoveryService) =>
+{
+    var result = await discoveryService.DiscoverCoOccurrenceRelationshipsAsync(
+        memoriesLimit ?? 100,
+        minConfidence ?? 0.3f);
+
+    return Results.Ok(result);
+});
+
+// Discover relationships using pattern matching
+app.MapPost("/api/relationships/discover/patterns", async (
+    int? memoriesLimit,
+    RelationshipDiscoveryService discoveryService) =>
+{
+    var result = await discoveryService.DiscoverPatternRelationshipsAsync(memoriesLimit ?? 100);
+    return Results.Ok(result);
 });
 
 // Get user persona
@@ -360,44 +546,44 @@ app.MapDelete("/context/{key}", async (string key, IContextStore store) =>
 app.Run();
 
 // Request DTOs
-record MemoryIngestRequest(
+internal record MemoryIngestRequest(
     string Content,
     string? Source = null,
     Guid? SessionId = null,
     Dictionary<string, object>? Metadata = null,
     bool? ExtractEntities = true);
 
-record UserPersonaRequest(
+internal record UserPersonaRequest(
     string AttributeType,
     string AttributeKey,
     string AttributeValue,
     float? Confidence = 1.0f,
     string? UserId = null);
 
-record SessionRequest(
+internal record SessionRequest(
     string? SessionName = null,
     string? ClientType = null);
 
 // Simple in-memory context store fallback
-class InMemoryContextStore : IContextStore
+internal class InMemoryContextStore : IContextStore
 {
     private readonly Dictionary<string, string> _store = new();
 
-    public Task<string?> GetAsync(string key) =>
-        Task.FromResult(_store.TryGetValue(key, out var value) ? value : null);
+    public Task<string?> GetAsync(string key, CancellationToken ct = default) =>
+        Task.FromResult(_store.GetValueOrDefault(key));
 
-    public Task SetAsync(string key, string value)
+    public Task SetAsync(string key, string value, CancellationToken ct = default)
     {
         _store[key] = value;
         return Task.CompletedTask;
     }
 
-    public Task DeleteAsync(string key)
+    public Task DeleteAsync(string key, CancellationToken ct = default)
     {
         _store.Remove(key);
         return Task.CompletedTask;
     }
 
-    public Task<IEnumerable<string>> ListKeysAsync() =>
+    public Task<IEnumerable<string>> ListKeysAsync(CancellationToken ct = default) =>
         Task.FromResult<IEnumerable<string>>(_store.Keys);
 }
