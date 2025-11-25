@@ -1,34 +1,75 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
-using StackExchange.Redis;
+using SerialMemory.ML;
 
-// MCP STDIO Server for Serial Memory
+// MCP STDIO Server for Serial Memory - CORE-like Temporal Knowledge Graph
 // Implements Model Context Protocol over STDIN/STDOUT
-// Backed by Redis + PostgreSQL for persistent context storage
+// Backed by PostgreSQL + pgvector for semantic search
 
-var redisConn = ConnectionMultiplexer.Connect(Environment.GetEnvironmentVariable("REDIS_CONN") ?? "localhost:6379");
-IContextStore store = new RedisContextStore(redisConn);
+#region Configuration
+
+var configuration = new ConfigurationBuilder()
+    .AddEnvironmentVariables()
+    .Build();
+
+var postgresHost = configuration["POSTGRES_HOST"] ?? "localhost";
+var postgresPort = configuration["POSTGRES_PORT"] ?? "5432";
+var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
+var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
+var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
+var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765";
+
+var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
+
+// Configure logging to stderr (MCP uses stdout for protocol)
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+    builder.SetMinimumLevel(LogLevel.Information);
+});
+var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
+
+#endregion
+
+#region Service Initialization
+
+logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
+logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
+
+// Initialize services
+IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
+IEmbeddingService embeddingService = new HttpEmbeddingService(embeddingServiceUrl);
+IEntityExtractionService entityService = new PatternEntityExtractionService();
+
+var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
+
+// Session state
+Guid? currentSessionId = null;
+
+logger.LogInformation("Services initialized successfully");
+
+#endregion
+
+#region MCP Protocol Handlers
+
+var jsonOptions = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    WriteIndented = false,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+};
 
 // Read JSON-RPC requests from STDIN, write responses to STDOUT
 await using var stdin = Console.OpenStandardInput();
 await using var stdout = Console.OpenStandardOutput();
 using var reader = new StreamReader(stdin);
 await using var writer = new StreamWriter(stdout) { AutoFlush = true };
-
-var options = new JsonSerializerOptions
-{
-    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    WriteIndented = false
-};
-
-await writer.WriteLineAsync(JsonSerializer.Serialize(new
-{
-    jsonrpc = "2.0",
-    method = "initialized",
-    @params = new { }
-}, options));
 
 while (!reader.EndOfStream)
 {
@@ -44,9 +85,12 @@ while (!reader.EndOfStream)
         var method = request["method"]?.GetValue<string>();
         var @params = request["params"];
 
+        logger.LogDebug("Received request: {Method}", method);
+
         object? result = method switch
         {
             "initialize" => HandleInitialize(),
+            "notifications/initialized" => null, // Notification, no response needed
             "tools/list" => HandleToolsList(),
             "resources/list" => HandleResourcesList(),
             "resources/read" => await HandleResourcesRead(@params),
@@ -56,21 +100,28 @@ while (!reader.EndOfStream)
 
         if (result != null)
         {
-            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            var response = JsonSerializer.Serialize(new
             {
                 jsonrpc = "2.0",
                 id = id?.GetValue<object>(),
                 result
-            }, options));
+            }, jsonOptions);
+
+            await writer.WriteLineAsync(response);
+            logger.LogDebug("Sent response for: {Method}", method);
         }
     }
     catch (Exception ex)
     {
+        logger.LogError(ex, "Error processing request");
         await Console.Error.WriteLineAsync($"[MCP Error] {ex.Message}");
     }
 }
 
-// MCP Protocol Handlers
+#endregion
+
+#region Protocol Handlers
+
 object HandleInitialize()
 {
     return new
@@ -79,7 +130,7 @@ object HandleInitialize()
         serverInfo = new
         {
             name = "serial-memory-server",
-            version = "1.0.0"
+            version = "2.0.0"
         },
         capabilities = new
         {
@@ -95,57 +146,182 @@ object HandleToolsList()
     {
         tools = new object[]
         {
+            // memory_search
             new
             {
-                name = "set_context",
-                description = "Store or update a context value by key",
+                name = "memory_search",
+                description = "Search for relevant memories using semantic search, full-text search, or both. Returns memories with entities and temporal context.",
                 inputSchema = new
                 {
                     type = "object",
                     properties = new
                     {
-                        key = new { type = "string", description = "The context key" },
-                        value = new { type = "string", description = "The context value to store" }
+                        query = new { type = "string", description = "Search query (natural language)" },
+                        mode = new { type = "string", @enum = new[] { "semantic", "text", "hybrid" }, @default = "hybrid", description = "Search mode" },
+                        limit = new { type = "integer", @default = 10, description = "Maximum results to return" },
+                        threshold = new { type = "number", @default = 0.7, description = "Minimum similarity threshold (0.0-1.0)" },
+                        include_entities = new { type = "boolean", @default = true, description = "Include linked entities" }
                     },
-                    required = new[] { "key", "value" }
+                    required = new[] { "query" }
                 }
             },
+            // memory_ingest
             new
             {
-                name = "get_context",
-                description = "Retrieve a context value by key",
+                name = "memory_ingest",
+                description = "Add a new memory (episode) to the knowledge graph. Automatically extracts entities, relationships, and generates embeddings.",
                 inputSchema = new
                 {
                     type = "object",
                     properties = new
                     {
-                        key = new { type = "string", description = "The context key" }
+                        content = new { type = "string", description = "Memory content to store" },
+                        source = new { type = "string", description = "Source of the memory (e.g., 'claude-desktop', 'cursor')" },
+                        metadata = new { type = "object", description = "Additional metadata (tags, importance, etc.)" },
+                        extract_entities = new { type = "boolean", @default = true, description = "Whether to extract entities and relationships" }
                     },
-                    required = new[] { "key" }
+                    required = new[] { "content" }
                 }
             },
+            // memory_about_user
             new
             {
-                name = "delete_context",
-                description = "Delete a context entry by key",
+                name = "memory_about_user",
+                description = "Retrieve structured information about the user's persona, preferences, skills, goals, and background.",
                 inputSchema = new
                 {
                     type = "object",
                     properties = new
                     {
-                        key = new { type = "string", description = "The context key to delete" }
-                    },
-                    required = new[] { "key" }
+                        user_id = new { type = "string", @default = "default_user", description = "User identifier" }
+                    }
                 }
             },
+            // initialise_conversation_session
             new
             {
-                name = "list_contexts",
-                description = "List all available context keys",
+                name = "initialise_conversation_session",
+                description = "Create a new conversation session to track context across interactions.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        session_name = new { type = "string", description = "Optional session name/title" },
+                        client_type = new { type = "string", description = "Client type (e.g., 'claude-desktop', 'cursor')" },
+                        metadata = new { type = "object", description = "Additional session metadata" }
+                    }
+                }
+            },
+            // end_conversation_session
+            new
+            {
+                name = "end_conversation_session",
+                description = "End the current conversation session.",
                 inputSchema = new
                 {
                     type = "object",
                     properties = new { }
+                }
+            },
+            // memory_multi_hop_search
+            new
+            {
+                name = "memory_multi_hop_search",
+                description = "Perform multi-hop reasoning by traversing the knowledge graph. Finds initial memories, then follows entity relationships.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        query = new { type = "string", description = "Initial search query" },
+                        hops = new { type = "integer", @default = 2, description = "Number of relationship hops to traverse" },
+                        max_results_per_hop = new { type = "integer", @default = 5, description = "Maximum results per hop" }
+                    },
+                    required = new[] { "query" }
+                }
+            },
+            // get_integrations
+            new
+            {
+                name = "get_integrations",
+                description = "List available integrations (external tools/APIs).",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new { }
+                }
+            },
+            // import_from_core
+            new
+            {
+                name = "import_from_core",
+                description = "Import entities, relations, and observations from CORE MCP export format. Provide JSON with 'entities' array (each with name, entityType, observations[]) and 'relations' array (each with from, to, relationType).",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        data = new
+                        {
+                            type = "object",
+                            description = "CORE export data with 'entities' and 'relations' arrays",
+                            properties = new
+                            {
+                                entities = new
+                                {
+                                    type = "array",
+                                    items = new
+                                    {
+                                        type = "object",
+                                        properties = new
+                                        {
+                                            name = new { type = "string" },
+                                            entityType = new { type = "string" },
+                                            observations = new { type = "array", items = new { type = "string" } }
+                                        },
+                                        required = new[] { "name" }
+                                    }
+                                },
+                                relations = new
+                                {
+                                    type = "array",
+                                    items = new
+                                    {
+                                        type = "object",
+                                        properties = new
+                                        {
+                                            from = new { type = "string" },
+                                            to = new { type = "string" },
+                                            relationType = new { type = "string" }
+                                        },
+                                        required = new[] { "from", "to", "relationType" }
+                                    }
+                                }
+                            }
+                        },
+                        source = new { type = "string", @default = "core-import", description = "Source identifier for imported data" }
+                    },
+                    required = new[] { "data" }
+                }
+            },
+            // set_user_persona
+            new
+            {
+                name = "set_user_persona",
+                description = "Set or update a user persona attribute (preference, skill, goal, background).",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        attribute_type = new { type = "string", description = "Type: preference, skill, goal, background" },
+                        attribute_key = new { type = "string", description = "Attribute name (e.g., 'programming_language')" },
+                        attribute_value = new { type = "string", description = "Attribute value" },
+                        confidence = new { type = "number", @default = 1.0, description = "Confidence score (0.0-1.0)" },
+                        user_id = new { type = "string", @default = "default_user", description = "User identifier" }
+                    },
+                    required = new[] { "attribute_type", "attribute_key", "attribute_value" }
                 }
             }
         }
@@ -160,9 +336,16 @@ object HandleResourcesList()
         {
             new
             {
-                uri = "context://all",
-                name = "All Contexts",
-                description = "List of all context keys",
+                uri = "memory://recent",
+                name = "Recent Memories",
+                description = "List of recently added memories",
+                mimeType = "application/json"
+            },
+            new
+            {
+                uri = "memory://sessions",
+                name = "Conversation Sessions",
+                description = "List of recent conversation sessions",
                 mimeType = "application/json"
             }
         }
@@ -173,18 +356,49 @@ async Task<object> HandleResourcesRead(JsonNode? @params)
 {
     var uri = @params?["uri"]?.GetValue<string>();
 
-    if (uri == "context://all")
+    if (uri == "memory://recent")
     {
-        var keys = await store.ListKeysAsync();
+        var results = await kgService.SearchMemoriesAsync("", SearchMode.Text, 20, 0.0f, true);
         return new
         {
             contents = new[]
             {
                 new
                 {
-                    uri = "context://all",
+                    uri = "memory://recent",
                     mimeType = "application/json",
-                    text = JsonSerializer.Serialize(new { keys })
+                    text = JsonSerializer.Serialize(results.Select(r => new
+                    {
+                        id = r.Id,
+                        content = r.Content,
+                        created_at = r.CreatedAt.ToString("O"),
+                        source = r.Source,
+                        entities = r.Entities.Select(e => new { name = e.Name, type = e.Type })
+                    }), jsonOptions)
+                }
+            }
+        };
+    }
+
+    if (uri == "memory://sessions")
+    {
+        var sessions = await kgService.GetRecentSessionsAsync(20);
+        return new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    uri = "memory://sessions",
+                    mimeType = "application/json",
+                    text = JsonSerializer.Serialize(sessions.Select(s => new
+                    {
+                        id = s.Id,
+                        session_name = s.SessionName,
+                        started_at = s.StartedAt.ToString("O"),
+                        ended_at = s.EndedAt?.ToString("O"),
+                        client_type = s.ClientType
+                    }), jsonOptions)
                 }
             }
         };
@@ -198,92 +412,275 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     var toolName = @params?["name"]?.GetValue<string>();
     var arguments = @params?["arguments"];
 
-    switch (toolName)
+    try
     {
-        case "set_context":
+        switch (toolName)
         {
-            var key = arguments?["key"]?.GetValue<string>() ?? throw new Exception("Missing key");
-            var value = arguments?["value"]?.GetValue<string>() ?? throw new Exception("Missing value");
-            await store.SetAsync(key, value);
-            return new
-            {
-                content = new[]
-                {
-                    new
-                    {
-                        type = "text",
-                        text = $"Context '{key}' set successfully"
-                    }
-                }
-            };
-        }
+            case "memory_search":
+                return await HandleMemorySearch(arguments);
 
-        case "get_context":
-        {
-            var key = arguments?["key"]?.GetValue<string>() ?? throw new Exception("Missing key");
-            var value = await store.GetAsync(key);
-            if (value == null)
-            {
-                return new
-                {
-                    content = new[]
-                    {
-                        new
-                        {
-                            type = "text",
-                            text = $"Context '{key}' not found"
-                        }
-                    }
-                };
-            }
-            return new
-            {
-                content = new[]
-                {
-                    new
-                    {
-                        type = "text",
-                        text = value
-                    }
-                }
-            };
-        }
+            case "memory_ingest":
+                return await HandleMemoryIngest(arguments);
 
-        case "delete_context":
-        {
-            var key = arguments?["key"]?.GetValue<string>() ?? throw new Exception("Missing key");
-            await store.DeleteAsync(key);
-            return new
-            {
-                content = new[]
-                {
-                    new
-                    {
-                        type = "text",
-                        text = $"Context '{key}' deleted successfully"
-                    }
-                }
-            };
-        }
+            case "memory_about_user":
+                return await HandleMemoryAboutUser(arguments);
 
-        case "list_contexts":
-        {
-            var keys = await store.ListKeysAsync();
-            var keyList = keys.ToList();
-            return new
-            {
-                content = new[]
-                {
-                    new
-                    {
-                        type = "text",
-                        text = JsonSerializer.Serialize(new { keys = keyList, count = keyList.Count })
-                    }
-                }
-            };
-        }
+            case "initialise_conversation_session":
+                return await HandleInitialiseSession(arguments);
 
-        default:
-            throw new Exception($"Unknown tool: {toolName}");
+            case "end_conversation_session":
+                return await HandleEndSession();
+
+            case "memory_multi_hop_search":
+                return await HandleMultiHopSearch(arguments);
+
+            case "get_integrations":
+                return HandleGetIntegrations();
+
+            case "import_from_core":
+                return await HandleImportFromCore(arguments);
+
+            case "set_user_persona":
+                return await HandleSetUserPersona(arguments);
+
+            default:
+                throw new Exception($"Unknown tool: {toolName}");
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error executing tool {ToolName}", toolName);
+        return CreateTextResponse($"Error: {ex.Message}");
     }
 }
+
+#endregion
+
+#region Tool Implementations
+
+async Task<object> HandleMemorySearch(JsonNode? arguments)
+{
+    var query = arguments?["query"]?.GetValue<string>() ?? throw new Exception("Missing query");
+    var modeStr = arguments?["mode"]?.GetValue<string>() ?? "hybrid";
+    var limit = arguments?["limit"]?.GetValue<int>() ?? 10;
+    var threshold = arguments?["threshold"]?.GetValue<float>() ?? 0.7f;
+    var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
+
+    var mode = modeStr.ToLowerInvariant() switch
+    {
+        "semantic" => SearchMode.Semantic,
+        "text" => SearchMode.Text,
+        _ => SearchMode.Hybrid
+    };
+
+    var results = await kgService.SearchMemoriesAsync(query, mode, limit, threshold, includeEntities);
+
+    var text = $"Found {results.Count} memories:\n\n" +
+        string.Join("\n\n", results.Select((r, i) =>
+            $"**Memory {i + 1}** (ID: {r.Id})\n" +
+            $"Created: {r.CreatedAt:O}\n" +
+            $"Content: {r.Content}\n" +
+            $"Entities: {string.Join(", ", r.Entities.Select(e => e.Name))}\n" +
+            $"Similarity: {(r.Similarity > 0 ? r.Similarity : r.Rank):F3}"));
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleMemoryIngest(JsonNode? arguments)
+{
+    var content = arguments?["content"]?.GetValue<string>() ?? throw new Exception("Missing content");
+    var source = arguments?["source"]?.GetValue<string>();
+    var extractEntities = arguments?["extract_entities"]?.GetValue<bool>() ?? true;
+
+    Dictionary<string, object>? metadata = null;
+    if (arguments?["metadata"] is JsonNode metadataNode)
+    {
+        metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(metadataNode.ToJsonString());
+    }
+
+    var result = await kgService.IngestMemoryAsync(
+        content,
+        source,
+        currentSessionId,
+        metadata,
+        extractEntities);
+
+    var text =
+        $"Memory ingested successfully!\n\n" +
+        $"Memory ID: {result.MemoryId}\n" +
+        $"Entities extracted: {result.EntitiesCreated}\n" +
+        $"Relationships extracted: {result.RelationshipsCreated}\n\n" +
+        $"Entities: {string.Join(", ", result.Entities.Select(e => e.Name))}\n" +
+        $"Relationships: {string.Join(", ", result.Relationships.Select(r => $"{r.Source} --{r.Type}--> {r.Target}"))}";
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleMemoryAboutUser(JsonNode? arguments)
+{
+    var userId = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
+
+    var persona = await kgService.GetUserPersonaAsync(userId);
+
+    if (persona.Count == 0)
+    {
+        return CreateTextResponse($"No persona information found for user: {userId}");
+    }
+
+    var text = $"User Persona for {userId}:\n\n";
+    foreach (var (attrType, attributes) in persona)
+    {
+        text += $"**{char.ToUpper(attrType[0]) + attrType[1..]}:**\n";
+        foreach (var (key, valueData) in attributes)
+        {
+            if (valueData is Dictionary<string, object> vd)
+            {
+                text += $"  - {key}: {vd.GetValueOrDefault("value", "N/A")} (confidence: {vd.GetValueOrDefault("confidence", 1.0):F2})\n";
+            }
+        }
+        text += "\n";
+    }
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleInitialiseSession(JsonNode? arguments)
+{
+    var sessionName = arguments?["session_name"]?.GetValue<string>();
+    var clientType = arguments?["client_type"]?.GetValue<string>();
+
+    Dictionary<string, object>? metadata = null;
+    if (arguments?["metadata"] is JsonNode metadataNode)
+    {
+        metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(metadataNode.ToJsonString());
+    }
+
+    currentSessionId = await kgService.CreateConversationSessionAsync(sessionName, clientType, metadata);
+
+    return CreateTextResponse($"Conversation session initialized: {currentSessionId}");
+}
+
+async Task<object> HandleEndSession()
+{
+    if (currentSessionId.HasValue)
+    {
+        await kgService.EndConversationSessionAsync(currentSessionId.Value);
+        var oldSession = currentSessionId;
+        currentSessionId = null;
+        return CreateTextResponse($"Conversation session ended: {oldSession}");
+    }
+
+    return CreateTextResponse("No active conversation session to end.");
+}
+
+async Task<object> HandleMultiHopSearch(JsonNode? arguments)
+{
+    var query = arguments?["query"]?.GetValue<string>() ?? throw new Exception("Missing query");
+    var hops = arguments?["hops"]?.GetValue<int>() ?? 2;
+    var maxResultsPerHop = arguments?["max_results_per_hop"]?.GetValue<int>() ?? 5;
+
+    var result = await kgService.MultiHopSearchAsync(query, hops, maxResultsPerHop);
+
+    var text =
+        $"Multi-hop search completed ({result.Hops} hops):\n\n" +
+        $"Memories found: {result.Memories.Count}\n" +
+        $"Entities discovered: {result.Entities.Count}\n" +
+        $"Relationships: {result.Relationships.Count}\n\n" +
+        string.Join("\n\n", result.Memories.Take(5).Select((m, i) =>
+            $"**Memory {i + 1}:**\n{(m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content)}"));
+
+    return CreateTextResponse(text);
+}
+
+object HandleGetIntegrations()
+{
+    return CreateTextResponse("No integrations configured yet.");
+}
+
+async Task<object> HandleImportFromCore(JsonNode? arguments)
+{
+    var dataNode = arguments?["data"] ?? throw new Exception("Missing data");
+    var source = arguments?["source"]?.GetValue<string>() ?? "core-import";
+
+    var coreData = new CoreExportData();
+
+    // Parse entities
+    if (dataNode["entities"] is JsonArray entitiesArray)
+    {
+        foreach (var entityNode in entitiesArray)
+        {
+            var entity = new CoreEntity
+            {
+                Name = entityNode?["name"]?.GetValue<string>() ?? "Unknown",
+                EntityType = entityNode?["entityType"]?.GetValue<string>()
+            };
+
+            if (entityNode?["observations"] is JsonArray obsArray)
+            {
+                entity.Observations = obsArray.Select(o => o?.GetValue<string>() ?? "").ToList();
+            }
+
+            coreData.Entities.Add(entity);
+        }
+    }
+
+    // Parse relations
+    if (dataNode["relations"] is JsonArray relationsArray)
+    {
+        foreach (var relNode in relationsArray)
+        {
+            coreData.Relations.Add(new CoreRelation
+            {
+                From = relNode?["from"]?.GetValue<string>() ?? "",
+                To = relNode?["to"]?.GetValue<string>() ?? "",
+                RelationType = relNode?["relationType"]?.GetValue<string>() ?? "RELATED_TO"
+            });
+        }
+    }
+
+    var result = await kgService.ImportFromCoreAsync(coreData, source);
+
+    var text =
+        $"CORE Import completed!\n\n" +
+        $"Entities imported: {result.EntitiesImported}\n" +
+        $"Relations imported: {result.RelationsImported}\n" +
+        $"Observations imported: {result.ObservationsImported}\n";
+
+    if (result.Errors.Count > 0)
+    {
+        text += $"\nWarnings/Errors ({result.Errors.Count}):\n" +
+                string.Join("\n", result.Errors.Take(10).Select(e => $"  - {e}"));
+    }
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleSetUserPersona(JsonNode? arguments)
+{
+    var attrType = arguments?["attribute_type"]?.GetValue<string>() ?? throw new Exception("Missing attribute_type");
+    var attrKey = arguments?["attribute_key"]?.GetValue<string>() ?? throw new Exception("Missing attribute_key");
+    var attrValue = arguments?["attribute_value"]?.GetValue<string>() ?? throw new Exception("Missing attribute_value");
+    var confidence = arguments?["confidence"]?.GetValue<float>() ?? 1.0f;
+    var userId = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
+
+    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
+
+    return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
+}
+
+object CreateTextResponse(string text)
+{
+    return new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text
+            }
+        }
+    };
+}
+
+#endregion
