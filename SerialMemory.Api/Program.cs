@@ -208,10 +208,10 @@ app.MapGet("/api/graph", async (
             }),
             edges = result.Relationships.Select(r => new
             {
-                from = r.Source,
-                to = r.Target,
+                from = r.SourceId.ToString(),
+                to = r.TargetId.ToString(),
                 label = r.Type,
-                title = $"{r.Type} (confidence: {r.Confidence:P0})"
+                title = $"{r.Source} → {r.Target}: {r.Type} (confidence: {r.Confidence:P0})"
             }),
             memories = result.Memories.Select(m => new
             {
