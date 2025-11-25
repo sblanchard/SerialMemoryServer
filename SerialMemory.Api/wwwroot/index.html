@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SerialMemory - Knowledge Graph Explorer</title>
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.6/dist/dist/vis-network.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ade80;
+            --border: #2a2a4a;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            gap: 1px;
+            background: var(--border);
+        }
+
+        header {
+            grid-column: 1 / -1;
+            background: var(--bg-secondary);
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo svg {
+            width: 32px;
+            height: 32px;
+            fill: var(--accent);
+        }
+
+        .logo h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), #ff9a9e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .sidebar {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .panel {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .panel h3 {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        input, textarea, select {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.625rem 0.875rem;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            width: 100%;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0.625rem 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .main-content {
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            border-radius: 0;
+            color: var(--text-secondary);
+            cursor: pointer;
+            position: relative;
+        }
+
+        .tab.active {
+            color: var(--accent);
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--accent);
+        }
+
+        .tab-content {
+            flex: 1;
+            display: none;
+            overflow: hidden;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #graph-container {
+            flex: 1;
+            background: var(--bg-primary);
+        }
+
+        .memories-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .memory-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--border);
+        }
+
+        .memory-card:hover {
+            border-color: var(--accent);
+        }
+
+        .memory-content {
+            font-size: 0.9375rem;
+            line-height: 1.5;
+            margin-bottom: 0.75rem;
+        }
+
+        .memory-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .tag {
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .tag.entity {
+            background: var(--accent);
+            color: white;
+        }
+
+        .tag.person { background: #3b82f6; }
+        .tag.org { background: #8b5cf6; }
+        .tag.gpe { background: #10b981; }
+        .tag.date { background: #f59e0b; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 0.75rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .form-group {
+            margin-bottom: 0.75rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .mode-selector button {
+            flex: 1;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .mode-selector button.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            border-color: var(--success);
+        }
+
+        .toast.error {
+            border-color: var(--accent);
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.75rem;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            fill: var(--border);
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                <h1>SerialMemory</h1>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <span id="connection-status" style="font-size: 0.75rem; color: var(--text-secondary);">
+                    Connecting...
+                </span>
+                <a href="/swagger" target="_blank" class="btn-secondary" style="text-decoration: none; display: inline-block;">
+                    API Docs
+                </a>
+            </div>
+        </header>
+
+        <aside class="sidebar">
+            <div class="panel">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                    </svg>
+                    Search Memories
+                </h3>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="Search knowledge graph...">
+                    <button onclick="searchMemories()">Search</button>
+                </div>
+                <div class="mode-selector" style="margin-top: 0.75rem;">
+                    <button class="active" data-mode="hybrid">Hybrid</button>
+                    <button data-mode="semantic">Semantic</button>
+                    <button data-mode="text">Text</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                    </svg>
+                    Add Memory
+                </h3>
+                <div class="form-group">
+                    <label>Content</label>
+                    <textarea id="memory-content" placeholder="Enter memory content..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Source (optional)</label>
+                    <input type="text" id="memory-source" placeholder="e.g., conversation, document">
+                </div>
+                <button onclick="ingestMemory()" style="width: 100%;">Add Memory</button>
+            </div>
+
+            <div class="panel">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                    </svg>
+                    Statistics
+                </h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-memories">-</div>
+                        <div class="stat-label">Memories</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-entities">-</div>
+                        <div class="stat-label">Entities</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                    </svg>
+                    Legend
+                </h3>
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #3b82f6;"></div>
+                        <span>Person</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #8b5cf6;"></div>
+                        <span>Organization</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #10b981;"></div>
+                        <span>Location</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #f59e0b;"></div>
+                        <span>Date</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #e94560;"></div>
+                        <span>Other</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="tabs">
+                <button class="tab active" data-tab="graph">Knowledge Graph</button>
+                <button class="tab" data-tab="memories">Recent Memories</button>
+            </div>
+
+            <div id="tab-graph" class="tab-content active">
+                <div id="graph-container"></div>
+            </div>
+
+            <div id="tab-memories" class="tab-content">
+                <div class="memories-list" id="memories-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading memories...
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="toast" class="toast">
+        <span id="toast-message"></span>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.6/dist/vis-network.min.js"></script>
+    <script>
+        const API_BASE = '';
+        let network = null;
+        let currentSearchMode = 'hybrid';
+        let graphData = { nodes: [], edges: [], memories: [] };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initGraph();
+            loadGraphData();
+            loadRecentMemories();
+            setupEventListeners();
+            checkConnection();
+        });
+
+        function setupEventListeners() {
+            // Tab switching
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+
+                    if (tab.dataset.tab === 'graph') {
+                        network?.fit();
+                    }
+                });
+            });
+
+            // Search mode selection
+            document.querySelectorAll('.mode-selector button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.mode-selector button').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentSearchMode = btn.dataset.mode;
+                });
+            });
+
+            // Enter key for search
+            document.getElementById('search-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') searchMemories();
+            });
+        }
+
+        function initGraph() {
+            const container = document.getElementById('graph-container');
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 20,
+                    font: {
+                        size: 12,
+                        color: '#eaeaea'
+                    },
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    width: 2,
+                    color: { color: '#4a4a6a', highlight: '#e94560', hover: '#e94560' },
+                    font: {
+                        size: 10,
+                        color: '#a0a0a0',
+                        strokeWidth: 0
+                    },
+                    smooth: {
+                        type: 'continuous'
+                    },
+                    arrows: {
+                        to: { enabled: true, scaleFactor: 0.5 }
+                    }
+                },
+                physics: {
+                    stabilization: { iterations: 100 },
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        centralGravity: 0.3,
+                        springLength: 150
+                    }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 100
+                },
+                groups: {
+                    PERSON: { color: { background: '#3b82f6', border: '#2563eb' } },
+                    ORG: { color: { background: '#8b5cf6', border: '#7c3aed' } },
+                    GPE: { color: { background: '#10b981', border: '#059669' } },
+                    DATE: { color: { background: '#f59e0b', border: '#d97706' } },
+                    TIME: { color: { background: '#f59e0b', border: '#d97706' } },
+                    MONEY: { color: { background: '#06b6d4', border: '#0891b2' } },
+                    PERCENT: { color: { background: '#06b6d4', border: '#0891b2' } },
+                    default: { color: { background: '#e94560', border: '#dc2626' } }
+                }
+            };
+
+            network = new vis.Network(container, { nodes: [], edges: [] }, options);
+
+            network.on('click', (params) => {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = graphData.nodes.find(n => n.id === nodeId);
+                    if (node) {
+                        showToast(`Selected: ${node.label} (${node.group})`, 'success');
+                    }
+                }
+            });
+        }
+
+        async function loadGraphData(query = null) {
+            try {
+                const url = query
+                    ? `${API_BASE}/api/graph?query=${encodeURIComponent(query)}&hops=2&limit=20`
+                    : `${API_BASE}/api/graph?limit=50`;
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('Failed to load graph data');
+
+                graphData = await response.json();
+                updateGraph();
+                updateStats();
+            } catch (error) {
+                console.error('Error loading graph:', error);
+                showToast('Failed to load graph data', 'error');
+            }
+        }
+
+        function updateGraph() {
+            const nodes = new vis.DataSet(graphData.nodes.map(n => ({
+                ...n,
+                group: n.group || 'default'
+            })));
+
+            const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
+                ...e,
+                id: i,
+                from: e.from,
+                to: e.to
+            })));
+
+            network.setData({ nodes, edges });
+
+            setTimeout(() => {
+                network.fit({ animation: { duration: 500 } });
+            }, 100);
+        }
+
+        function updateStats() {
+            document.getElementById('stat-memories').textContent = graphData.memories?.length || 0;
+            document.getElementById('stat-entities').textContent = graphData.nodes?.length || 0;
+        }
+
+        async function searchMemories() {
+            const query = document.getElementById('search-input').value.trim();
+            if (!query) {
+                loadGraphData();
+                loadRecentMemories();
+                return;
+            }
+
+            try {
+                // Load graph with query
+                await loadGraphData(query);
+
+                // Also search memories
+                const response = await fetch(
+                    `${API_BASE}/api/memories/search?query=${encodeURIComponent(query)}&mode=${currentSearchMode}&limit=20`
+                );
+
+                if (!response.ok) throw new Error('Search failed');
+
+                const memories = await response.json();
+                displayMemories(memories);
+
+                // Switch to graph tab to show results
+                document.querySelector('.tab[data-tab="graph"]').click();
+
+                showToast(`Found ${memories.length} memories`, 'success');
+            } catch (error) {
+                console.error('Search error:', error);
+                showToast('Search failed', 'error');
+            }
+        }
+
+        async function loadRecentMemories() {
+            try {
+                const response = await fetch(`${API_BASE}/api/memories/recent?limit=20`);
+                if (!response.ok) throw new Error('Failed to load memories');
+
+                const memories = await response.json();
+                displayMemories(memories);
+            } catch (error) {
+                console.error('Error loading memories:', error);
+                document.getElementById('memories-list').innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                        </svg>
+                        <p>Could not load memories</p>
+                        <p style="font-size: 0.875rem;">Make sure the database is connected</p>
+                    </div>
+                `;
+            }
+        }
+
+        function displayMemories(memories) {
+            const container = document.getElementById('memories-list');
+
+            if (!memories || memories.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
+                        </svg>
+                        <p>No memories found</p>
+                        <p style="font-size: 0.875rem;">Add some memories to get started</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = memories.map(memory => `
+                <div class="memory-card">
+                    <div class="memory-content">${escapeHtml(memory.content)}</div>
+                    <div class="memory-meta">
+                        <span class="tag">${formatDate(memory.createdAt)}</span>
+                        ${memory.source ? `<span class="tag">${escapeHtml(memory.source)}</span>` : ''}
+                        ${memory.similarity ? `<span class="tag">Similarity: ${(memory.similarity * 100).toFixed(1)}%</span>` : ''}
+                        ${memory.entities?.map(e => `
+                            <span class="tag entity ${e.type?.toLowerCase()}">${escapeHtml(e.name)}</span>
+                        `).join('') || ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function ingestMemory() {
+            const content = document.getElementById('memory-content').value.trim();
+            const source = document.getElementById('memory-source').value.trim();
+
+            if (!content) {
+                showToast('Please enter memory content', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/memories`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content,
+                        source: source || 'web-ui',
+                        extractEntities: true
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to add memory');
+
+                const result = await response.json();
+
+                // Clear form
+                document.getElementById('memory-content').value = '';
+                document.getElementById('memory-source').value = '';
+
+                // Reload data
+                await loadGraphData();
+                await loadRecentMemories();
+
+                showToast(`Memory added! Extracted ${result.entitiesCreated} entities`, 'success');
+            } catch (error) {
+                console.error('Ingest error:', error);
+                showToast('Failed to add memory', 'error');
+            }
+        }
+
+        async function checkConnection() {
+            const status = document.getElementById('connection-status');
+            try {
+                const response = await fetch(`${API_BASE}/api/memories/recent?limit=1`);
+                if (response.ok) {
+                    status.innerHTML = '<span style="color: var(--success);">Connected</span>';
+                } else {
+                    status.innerHTML = '<span style="color: var(--accent);">API Error</span>';
+                }
+            } catch {
+                status.innerHTML = '<span style="color: var(--accent);">Disconnected</span>';
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const msg = document.getElementById('toast-message');
+
+            msg.textContent = message;
+            toast.className = `toast show ${type}`;
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return 'Unknown';
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

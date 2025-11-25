@@ -14,17 +14,22 @@ namespace SerialMemory.ML;
 ///
 /// Or use the provided Python script: python tools/embedding_http_service.py
 /// </summary>
-public class HttpEmbeddingService(string serviceUrl = "http://localhost:8765") : IEmbeddingService, IDisposable
+public class HttpEmbeddingService : IEmbeddingService, IDisposable
 {
-    private readonly HttpClient _httpClient = new()
-    {
-        BaseAddress = new Uri(serviceUrl),
-        Timeout = TimeSpan.FromSeconds(30)
-    };
-    private readonly string _serviceUrl = serviceUrl;
-    private const int EmbeddingDim = 384;
+    private readonly HttpClient _httpClient;
+    private readonly int _embeddingDimension;
 
-    public int EmbeddingDimension => EmbeddingDim;
+    public HttpEmbeddingService(string serviceUrl = "http://localhost:8765", int embeddingDimension = 384)
+    {
+        _httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(serviceUrl),
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+        _embeddingDimension = embeddingDimension;
+    }
+
+    public int EmbeddingDimension => _embeddingDimension;
 
     public async Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
     {
