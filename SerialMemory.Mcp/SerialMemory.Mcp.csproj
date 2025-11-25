@@ -5,14 +5,27 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyName>SerialMemory.Mcp</AssemblyName>
+    <RootNamespace>SerialMemory.Mcp</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SerialMemory.Core\SerialMemory.Core.csproj" />
     <ProjectReference Include="..\SerialMemory.Infrastructure\SerialMemory.Infrastructure.csproj" />
+    <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- MCP Server Dependencies -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
+
+    <!-- Database -->
+    <PackageReference Include="Npgsql" Version="9.0.0" />
+    <PackageReference Include="Pgvector" Version="0.2.2" />
+
+    <!-- Legacy Redis support (optional) -->
     <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
   </ItemGroup>
 
