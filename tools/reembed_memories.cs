@@ -10,6 +10,7 @@
 #r "nuget: Npgsql, 8.0.0"
 #r "nuget: Dapper, 2.1.24"
 #r "nuget: Microsoft.ML.OnnxRuntime, 1.16.3"
+#r "nuget: Pgvector, 0.2.0"
 
 using System;
 using System.Collections.Generic;
@@ -22,6 +23,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
 using Npgsql;
+using Pgvector;
 
 class ReembedTool
 {
