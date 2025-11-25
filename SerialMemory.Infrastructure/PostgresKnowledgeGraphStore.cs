@@ -435,6 +435,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     private static Memory MapToMemory(dynamic row)
     {
+        var rowDict = (IDictionary<string, object>)row;
+
         return new Memory
         {
             Id = row.id,
@@ -443,7 +445,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             UpdatedAt = row.updated_at,
             Source = row.source,
             ConversationSessionId = row.conversation_session_id,
-            Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
+            Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null,
+            // Map search scores when available from query results
+            Similarity = rowDict.TryGetValue("similarity", out var sim) && sim != null ? Convert.ToSingle(sim) : 0f,
+            Rank = rowDict.TryGetValue("rank", out var rank) && rank != null ? Convert.ToSingle(rank) : 0f
         };
     }
 
@@ -463,7 +468,9 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     private static EntityRelationship MapToEntityRelationship(dynamic row)
     {
-        return new EntityRelationship
+        var rowDict = (IDictionary<string, object>)row;
+
+        var relationship = new EntityRelationship
         {
             Id = row.id,
             SourceEntityId = row.source_entity_id,
@@ -474,6 +481,33 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             FirstSeenMemoryId = row.first_seen_memory_id,
             Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
         };
+
+        // Populate navigation properties when joined entity data is available
+        if (rowDict.TryGetValue("source_name", out var sourceName) && sourceName != null)
+        {
+            relationship.SourceEntity = new Entity
+            {
+                Id = row.source_entity_id,
+                Name = sourceName.ToString()!,
+                EntityType = rowDict.TryGetValue("source_type", out var sourceType) && sourceType != null
+                    ? sourceType.ToString()!
+                    : "UNKNOWN"
+            };
+        }
+
+        if (rowDict.TryGetValue("target_name", out var targetName) && targetName != null)
+        {
+            relationship.TargetEntity = new Entity
+            {
+                Id = row.target_entity_id,
+                Name = targetName.ToString()!,
+                EntityType = rowDict.TryGetValue("target_type", out var targetType) && targetType != null
+                    ? targetType.ToString()!
+                    : "UNKNOWN"
+            };
+        }
+
+        return relationship;
     }
 
     private static ConversationSession MapToConversationSession(dynamic row)

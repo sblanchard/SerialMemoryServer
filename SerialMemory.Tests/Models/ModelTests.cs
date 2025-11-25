@@ -21,6 +21,8 @@ public class ModelTests
         memory.Source.Should().BeNull();
         memory.ConversationSessionId.Should().BeNull();
         memory.Metadata.Should().BeNull();
+        memory.Similarity.Should().Be(0f);
+        memory.Rank.Should().Be(0f);
     }
 
     [Fact]
@@ -42,7 +44,9 @@ public class ModelTests
             Embedding = embedding,
             Source = source,
             ConversationSessionId = sessionId,
-            Metadata = metadata
+            Metadata = metadata,
+            Similarity = 0.95f,
+            Rank = 1.5f
         };
 
         // Assert
@@ -52,6 +56,8 @@ public class ModelTests
         memory.Source.Should().Be(source);
         memory.ConversationSessionId.Should().Be(sessionId);
         memory.Metadata.Should().BeEquivalentTo(metadata);
+        memory.Similarity.Should().Be(0.95f);
+        memory.Rank.Should().Be(1.5f);
     }
 
     #endregion

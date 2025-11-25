@@ -14,6 +14,10 @@ public class Memory
     public Guid? ConversationSessionId { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
 
+    // Search result scores (populated by search queries, not stored in DB)
+    public float Similarity { get; set; } // Cosine similarity from semantic search (0.0 to 1.0)
+    public float Rank { get; set; } // Full-text search rank score
+
     // Navigation properties
     public List<Entity> Entities { get; set; } = [];
     public ConversationSession? ConversationSession { get; set; }

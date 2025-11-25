@@ -158,7 +158,7 @@ public class KnowledgeGraphService
                     Content = memory.Content,
                     CreatedAt = memory.CreatedAt,
                     Source = memory.Source,
-                    Similarity = 0, // Will be calculated from distance
+                    Similarity = memory.Similarity, // Use similarity score from search results
                     Entities = []
                 };
 
@@ -192,7 +192,7 @@ public class KnowledgeGraphService
                     Content = memory.Content,
                     CreatedAt = memory.CreatedAt,
                     Source = memory.Source,
-                    Rank = 0, // From text search
+                    Rank = memory.Rank, // Use rank score from text search results
                     Entities = []
                 };
 

@@ -403,6 +403,67 @@ public class KnowledgeGraphServiceTests
         results[0].Entities[0].Type.Should().Be("PERSON");
     }
 
+    [Fact]
+    public async Task SearchMemoriesAsync_SemanticMode_PreservesSimilarityScore()
+    {
+        // Arrange
+        var query = "test query";
+        var queryEmbedding = new float[] { 0.1f };
+        var memory = new Memory
+        {
+            Id = Guid.CreateVersion7(),
+            Content = "Result",
+            Similarity = 0.92f // Similarity score from store
+        };
+
+        _embeddingServiceMock
+            .Setup(x => x.EmbedTextAsync(query, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(queryEmbedding);
+
+        _storeMock
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Memory> { memory });
+
+        _storeMock
+            .Setup(x => x.GetEntitiesForMemoryAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Entity>());
+
+        // Act
+        var results = await _service.SearchMemoriesAsync(query, SearchMode.Semantic);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].Similarity.Should().Be(0.92f);
+    }
+
+    [Fact]
+    public async Task SearchMemoriesAsync_TextMode_PreservesRankScore()
+    {
+        // Arrange
+        var query = "test query";
+        var memory = new Memory
+        {
+            Id = Guid.CreateVersion7(),
+            Content = "Result",
+            Rank = 1.5f // Rank score from text search
+        };
+
+        _storeMock
+            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Memory> { memory });
+
+        _storeMock
+            .Setup(x => x.GetEntitiesForMemoryAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Entity>());
+
+        // Act
+        var results = await _service.SearchMemoriesAsync(query, SearchMode.Text);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].Rank.Should().Be(1.5f);
+    }
+
     #endregion
 
     #region Session Operations Tests
