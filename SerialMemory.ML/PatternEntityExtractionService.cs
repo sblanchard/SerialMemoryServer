@@ -21,7 +21,7 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
     [GeneratedRegex(@"\b\d{4}\b", RegexOptions.Compiled)]
     private static partial Regex YearRegex();
 
-    [GeneratedRegex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", RegexOptions.Compiled)]
     private static partial Regex EmailRegex();
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.Compiled)]
@@ -29,6 +29,19 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
 
     [GeneratedRegex(@"\b(?:CEO|CTO|CFO|COO|Manager|Director|President|VP|Engineer|Developer|Designer|Analyst)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex TitleRegex();
+
+    // Relationship extraction patterns (compiled for performance)
+    [GeneratedRegex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:works? at|is with|employed by)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)* (?:Inc|Corp|LLC|Ltd|Company)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex WorksAtRelationRegex();
+
+    [GeneratedRegex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:founded|created|started)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)* (?:Inc|Corp|LLC|Ltd|Company)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex FoundedRelationRegex();
+
+    [GeneratedRegex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:lives? in|is from|resides in)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)*)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex LivesInRelationRegex();
+
+    [GeneratedRegex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:met|knows|knew)\s+([A-Z][a-z]+ [A-Z][a-z]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex KnowsRelationRegex();
 
     public Task<List<ExtractedEntity>> ExtractEntitiesAsync(string text, CancellationToken cancellationToken = default)
     {
@@ -144,9 +157,8 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
     {
         var relationships = new List<ExtractedRelationship>();
 
-        // Pattern: "X works at Y" or "X is with Y"
-        var worksAtPattern = new Regex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:works? at|is with|employed by)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)* (?:Inc|Corp|LLC|Ltd|Company)?)", RegexOptions.IgnoreCase);
-        foreach (Match match in worksAtPattern.Matches(text))
+        // Pattern: "X works at Y" or "X is with Y" (using compiled regex)
+        foreach (Match match in WorksAtRelationRegex().Matches(text))
         {
             relationships.Add(new ExtractedRelationship(
                 match.Groups[1].Value,
@@ -156,9 +168,8 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
             ));
         }
 
-        // Pattern: "X founded Y" or "X created Y"
-        var foundedPattern = new Regex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:founded|created|started)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)* (?:Inc|Corp|LLC|Ltd|Company)?)", RegexOptions.IgnoreCase);
-        foreach (Match match in foundedPattern.Matches(text))
+        // Pattern: "X founded Y" or "X created Y" (using compiled regex)
+        foreach (Match match in FoundedRelationRegex().Matches(text))
         {
             relationships.Add(new ExtractedRelationship(
                 match.Groups[1].Value,
@@ -168,9 +179,8 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
             ));
         }
 
-        // Pattern: "X lives in Y" or "X is from Y"
-        var livesInPattern = new Regex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:lives? in|is from|resides in)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)*)", RegexOptions.IgnoreCase);
-        foreach (Match match in livesInPattern.Matches(text))
+        // Pattern: "X lives in Y" or "X is from Y" (using compiled regex)
+        foreach (Match match in LivesInRelationRegex().Matches(text))
         {
             relationships.Add(new ExtractedRelationship(
                 match.Groups[1].Value,
@@ -180,9 +190,8 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
             ));
         }
 
-        // Pattern: "X met Y" or "X knows Y"
-        var meetsPattern = new Regex(@"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:met|knows|knew)\s+([A-Z][a-z]+ [A-Z][a-z]+)", RegexOptions.IgnoreCase);
-        foreach (Match match in meetsPattern.Matches(text))
+        // Pattern: "X met Y" or "X knows Y" (using compiled regex)
+        foreach (Match match in KnowsRelationRegex().Matches(text))
         {
             relationships.Add(new ExtractedRelationship(
                 match.Groups[1].Value,

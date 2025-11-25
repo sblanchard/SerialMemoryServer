@@ -17,12 +17,11 @@
     <ItemGroup>
         <PackageReference Include="MassTransit" Version="8.5.5" />
         <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.5" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
         <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
-        <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.9.0-rc.1" />
-        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.8.1" />
+        <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.14.0-beta.1" />
+        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
         <PackageReference Include="OpenTelemetry.Instrumentation.Process" Version="0.5.0-beta.6" />
-        <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.8.1" />
+        <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
         <PackageReference Include="Npgsql" Version="9.0.0" />
         <PackageReference Include="Dapper" Version="2.1.35" />
         <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
