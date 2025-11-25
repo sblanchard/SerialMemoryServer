@@ -70,6 +70,26 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return result != null ? MapToMemory(result) : null;
     }
 
+    public async Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT id, content, created_at, updated_at, source, conversation_session_id, metadata
+            FROM memories
+            ORDER BY created_at DESC
+            LIMIT @Limit";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit },
+            cancellationToken: cancellationToken
+        ));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
     public async Task<List<Memory>> SearchMemoriesByEmbeddingAsync(
         float[] queryEmbedding,
         int limit = 10,

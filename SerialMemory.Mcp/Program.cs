@@ -372,7 +372,7 @@ async Task<object> HandleResourcesRead(JsonNode? @params)
 
     if (uri == "memory://recent")
     {
-        var results = await kgService.SearchMemoriesAsync("", SearchMode.Text, 20, 0.0f, true);
+        var results = await kgService.GetRecentMemoriesAsync(20, includeEntities: true);
         return new
         {
             contents = new[]
