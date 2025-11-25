@@ -46,14 +46,15 @@ CREATE INDEX idx_reasoning_steps_type ON reasoning_steps(step_type);
 
 -- Embedding cache for deterministic retrieval
 CREATE TABLE IF NOT EXISTS embedding_cache (
-    cache_key CHAR(64) PRIMARY KEY,
+    cache_key CHAR(64) NOT NULL,
     content_hash CHAR(64) NOT NULL,
     embedding vector(384) NOT NULL,
     model_version VARCHAR(64) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_accessed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     access_count INTEGER DEFAULT 1,
-    is_compiled BOOLEAN DEFAULT FALSE
+    is_compiled BOOLEAN DEFAULT FALSE,
+    PRIMARY KEY (cache_key, model_version)
 );
 
 CREATE INDEX idx_embedding_cache_content ON embedding_cache(content_hash);
