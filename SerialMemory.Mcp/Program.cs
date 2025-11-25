@@ -1001,17 +1001,8 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
     // Get memories to re-embed
     var memories = forceAll
-        ? await store.GetRecentMemoriesAsync(batchSize)
-        : await store.GetMemoriesWithoutEntitiesAsync(batchSize); // This returns memories without embeddings too
-
-    // If not forcing all, we need to query for memories with null embeddings
-    // For now, use GetRecentMemoriesAsync and filter
-    if (!forceAll)
-    {
-        // Get recent memories and the store will need to expose a method for null embeddings
-        // For simplicity, we'll re-embed recent ones
-        memories = await store.GetRecentMemoriesAsync(batchSize);
-    }
+        ? await store.GetAllMemoriesAsync(batchSize)
+        : await store.GetMemoriesWithNullEmbeddingsAsync(batchSize);
 
     foreach (var memory in memories)
     {
