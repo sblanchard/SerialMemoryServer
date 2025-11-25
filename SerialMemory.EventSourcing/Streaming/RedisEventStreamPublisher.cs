@@ -1,0 +1,205 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using SerialMemory.EventSourcing.Store;
+using StackExchange.Redis;
+
+namespace SerialMemory.EventSourcing.Streaming;
+
+/// <summary>
+/// Redis Streams implementation for event publishing and subscription.
+/// Provides durable, ordered event delivery with consumer groups.
+/// </summary>
+public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStreamSubscriber, IDisposable
+{
+    private readonly IConnectionMultiplexer _redis;
+    private readonly ILogger<RedisEventStreamPublisher> _logger;
+    private readonly JsonSerializerOptions _jsonOptions;
+
+    private const string StreamKey = "memory:events";
+
+    public RedisEventStreamPublisher(
+        string redisConnectionString,
+        ILogger<RedisEventStreamPublisher> logger)
+    {
+        _redis = ConnectionMultiplexer.Connect(redisConnectionString);
+        _logger = logger;
+        _jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+    }
+
+    public async Task PublishToStreamAsync(StoredEvent @event, CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+
+        var entries = new NameValueEntry[]
+        {
+            new("eventId", @event.EventId.ToString()),
+            new("streamId", @event.StreamId.ToString()),
+            new("eventType", @event.EventType.ToString()),
+            new("eventVersion", @event.EventVersion.ToString()),
+            new("globalSequence", @event.GlobalSequence.ToString()),
+            new("eventData", @event.EventData),
+            new("metadata", @event.Metadata),
+            new("createdAt", @event.CreatedAt.ToString("O")),
+            new("createdBy", @event.CreatedBy ?? ""),
+            new("contentHash", @event.ContentHash)
+        };
+
+        var messageId = await db.StreamAddAsync(StreamKey, entries, maxLength: 100000);
+
+        _logger.LogDebug("Published event {EventId} to Redis stream as {MessageId}",
+            @event.EventId, messageId);
+    }
+
+    public async Task BroadcastToWebSocketsAsync(StoredEvent @event, CancellationToken cancellationToken = default)
+    {
+        var pub = _redis.GetSubscriber();
+
+        var message = JsonSerializer.Serialize(new
+        {
+            @event.EventId,
+            @event.StreamId,
+            @event.EventType,
+            @event.EventVersion,
+            @event.GlobalSequence,
+            @event.CreatedAt
+        }, _jsonOptions);
+
+        await pub.PublishAsync(RedisChannel.Literal("memory:events:broadcast"), message);
+    }
+
+    public async IAsyncEnumerable<StoredEvent> SubscribeAsync(
+        string consumerGroup,
+        string consumerId,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+
+        // Ensure consumer group exists
+        try
+        {
+            await db.StreamCreateConsumerGroupAsync(StreamKey, consumerGroup, "$", createStream: true);
+            _logger.LogInformation("Created consumer group {Group}", consumerGroup);
+        }
+        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
+        {
+            // Group already exists, ok
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            // Read pending messages first
+            var pending = await db.StreamReadGroupAsync(
+                StreamKey, consumerGroup, consumerId,
+                ">", // Only new messages
+                count: 100);
+
+            foreach (var entry in pending)
+            {
+                var storedEvent = ParseStreamEntry(entry);
+                if (storedEvent != null)
+                {
+                    yield return storedEvent;
+                }
+            }
+
+            if (pending.Length == 0)
+            {
+                await Task.Delay(100, cancellationToken);
+            }
+        }
+    }
+
+    public async Task AcknowledgeAsync(string consumerGroup, string messageId, CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+        await db.StreamAcknowledgeAsync(StreamKey, consumerGroup, messageId);
+    }
+
+    /// <summary>
+    /// Initialize consumer group for the stream.
+    /// </summary>
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+
+        try
+        {
+            await db.StreamCreateConsumerGroupAsync(StreamKey, "projections", "0", createStream: true);
+            _logger.LogInformation("Created projections consumer group");
+        }
+        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
+        {
+            // Already exists
+        }
+
+        try
+        {
+            await db.StreamCreateConsumerGroupAsync(StreamKey, "maintenance", "0", createStream: true);
+            _logger.LogInformation("Created maintenance consumer group");
+        }
+        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
+        {
+            // Already exists
+        }
+    }
+
+    /// <summary>
+    /// Get stream info including length and consumer groups.
+    /// </summary>
+    public async Task<StreamInfo> GetStreamInfoAsync(CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+
+        var info = await db.StreamInfoAsync(StreamKey);
+
+        return new StreamInfo
+        {
+            Length = info.Length,
+            FirstEntry = info.FirstEntry.Id.ToString(),
+            LastEntry = info.LastEntry.Id.ToString()
+        };
+    }
+
+    private StoredEvent? ParseStreamEntry(StreamEntry entry)
+    {
+        try
+        {
+            var dict = entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
+
+            return new StoredEvent
+            {
+                EventId = Guid.Parse(dict["eventId"]),
+                StreamId = Guid.Parse(dict["streamId"]),
+                EventType = Enum.Parse<Events.MemoryEventType>(dict["eventType"]),
+                EventVersion = long.Parse(dict["eventVersion"]),
+                GlobalSequence = long.Parse(dict["globalSequence"]),
+                EventData = dict["eventData"],
+                Metadata = dict["metadata"],
+                CreatedAt = DateTimeOffset.Parse(dict["createdAt"]),
+                CreatedBy = string.IsNullOrEmpty(dict["createdBy"]) ? null : dict["createdBy"],
+                ContentHash = dict["contentHash"]
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse stream entry {Id}", entry.Id);
+            return null;
+        }
+    }
+
+    public void Dispose()
+    {
+        _redis.Dispose();
+    }
+}
+
+public sealed record StreamInfo
+{
+    public long Length { get; init; }
+    public string? FirstEntry { get; init; }
+    public string? LastEntry { get; init; }
+}
