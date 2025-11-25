@@ -793,8 +793,12 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
     var totalRelationships = 0;
     var processedMemories = 0;
 
-    // Get memories to process (those without entities)
-    var memories = await store.GetMemoriesWithoutEntitiesAsync(batchSize);
+    // Get memories to process
+    // force_reprocess=true: process all memories (re-extract entities/relationships)
+    // force_reprocess=false: only process memories without existing entity links
+    var memories = forceReprocess
+        ? await store.GetAllMemoriesAsync(batchSize)
+        : await store.GetMemoriesWithoutEntitiesAsync(batchSize);
 
     foreach (var memory in memories)
     {

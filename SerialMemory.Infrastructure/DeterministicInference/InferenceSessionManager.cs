@@ -343,16 +343,18 @@ public sealed class InferenceSession : IInferenceSession
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Scope cache lookup to current session to ensure deterministic replay.
+        // Cross-session caching would break determinism if sessions have different seeds.
         const string sql = @"
             SELECT output_data::text
             FROM reasoning_steps
-            WHERE input_hash = @InputHash AND step_type = @StepType
+            WHERE session_id = @SessionId AND input_hash = @InputHash AND step_type = @StepType
             ORDER BY created_at DESC
             LIMIT 1";
 
         var outputJson = await connection.QuerySingleOrDefaultAsync<string>(
             sql,
-            new { InputHash = inputHash, StepType = stepType });
+            new { SessionId, InputHash = inputHash, StepType = stepType });
 
         if (outputJson == null)
         {
