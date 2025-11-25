@@ -64,13 +64,13 @@ public sealed class EmbeddingCache : IEmbeddingCache
 
         var cacheKey = ComputeCacheKey(contentHash);
 
+        // Use composite key (cache_key, model_version) so different models can coexist
         const string sql = @"
             INSERT INTO embedding_cache (cache_key, content_hash, embedding, model_version)
             VALUES (@CacheKey, @ContentHash, @Embedding, @ModelVersion)
-            ON CONFLICT (cache_key)
+            ON CONFLICT (cache_key, model_version)
             DO UPDATE SET
                 embedding = EXCLUDED.embedding,
-                model_version = EXCLUDED.model_version,
                 last_accessed_at = NOW(),
                 access_count = embedding_cache.access_count + 1";
 
@@ -110,9 +110,9 @@ public sealed class EmbeddingCache : IEmbeddingCache
         const string sql = @"
             UPDATE embedding_cache
             SET is_compiled = TRUE
-            WHERE cache_key = @CacheKey";
+            WHERE cache_key = @CacheKey AND model_version = @ModelVersion";
 
-        await connection.ExecuteAsync(sql, new { CacheKey = cacheKey });
+        await connection.ExecuteAsync(sql, new { CacheKey = cacheKey, ModelVersion = _modelVersion });
     }
 
     public async Task<int> GetCompiledCountAsync(CancellationToken cancellationToken = default)
