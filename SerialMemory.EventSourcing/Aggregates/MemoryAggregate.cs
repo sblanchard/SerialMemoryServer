@@ -36,8 +36,16 @@ public sealed class MemoryAggregate
     // State
     public bool IsActive { get; private set; } = true;
     public bool IsArchived { get; private set; }
+    public bool IsExpired { get; private set; }
+    public bool IsSplit { get; private set; }
     public Guid? MergedIntoId { get; private set; }
     public Guid[] ContradictionIds { get; private set; } = [];
+    public Guid[] ChildMemoryIds { get; private set; } = [];
+
+    // Access tracking
+    public int RecallCount { get; private set; }
+    public int IgnoreCount { get; private set; }
+    public DateTimeOffset? LastRecalledAt { get; private set; }
 
     // Version tracking
     public long Version { get; private set; }
@@ -219,6 +227,120 @@ public sealed class MemoryAggregate
         _uncommittedEvents.Add(@event);
     }
 
+    public void Archive(string reason, int accessCount, DateTimeOffset lastAccessedAt, string? archivedBy = null)
+    {
+        if (!IsActive || IsArchived) return;
+
+        var daysSinceAccess = (int)(DateTimeOffset.UtcNow - lastAccessedAt).TotalDays;
+
+        var @event = new MemoryArchivedEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            Reason = reason,
+            ConfidenceAtArchive = CurrentConfidence,
+            AccessCountAtArchive = accessCount,
+            DaysSinceLastAccess = daysSinceAccess,
+            CreatedBy = archivedBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    public void Recall(string? query, float similarityScore, string? context, Guid? sessionId, string? recalledBy = null)
+    {
+        if (!IsActive) return;
+
+        var @event = new MemoryRecalledEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            Query = query,
+            SimilarityScore = similarityScore,
+            RecallContext = context,
+            SessionId = sessionId,
+            CreatedBy = recalledBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    public void Ignore(string? query, string reason, Guid? sessionId, string? ignoredBy = null)
+    {
+        if (!IsActive) return;
+
+        var @event = new MemoryIgnoredEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            Query = query,
+            Reason = reason,
+            SessionId = sessionId,
+            CreatedBy = ignoredBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    public void MarkContradiction(Guid[] contradictingMemoryIds, string contradictionType, string? detectionMethod = null, float confidence = 1.0f, string? markedBy = null)
+    {
+        if (!IsActive) return;
+
+        var @event = new MemoryContradictedEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            ContradictingMemoryIds = contradictingMemoryIds,
+            ContradictionType = contradictionType,
+            DetectionMethod = detectionMethod,
+            ContradictionConfidence = confidence,
+            CreatedBy = markedBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    public void Expire(string policy, int originalTtlDays, string? expiredBy = null)
+    {
+        if (!IsActive || IsExpired) return;
+
+        var @event = new MemoryExpiredEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            ExpirationPolicy = policy,
+            OriginalTtlDays = originalTtlDays,
+            ConfidenceAtExpiration = CurrentConfidence,
+            AccessCountAtExpiration = RecallCount,
+            CreatedBy = expiredBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    public void Split(Guid[] childMemoryIds, string? strategy = null, string? reason = null, string? splitBy = null)
+    {
+        if (!IsActive || IsSplit) return;
+
+        var @event = new MemorySplitEvent
+        {
+            StreamId = Id,
+            EventVersion = Version + 1,
+            ChildMemoryIds = childMemoryIds,
+            SplitStrategy = strategy,
+            Reason = reason,
+            CreatedBy = splitBy
+        };
+
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
     // ========================================================================
     // EVENT APPLICATION (rebuild state)
     // ========================================================================
@@ -246,6 +368,24 @@ public sealed class MemoryAggregate
                 Apply(e);
                 break;
             case MemoryMergedEvent e:
+                Apply(e);
+                break;
+            case MemoryArchivedEvent e:
+                Apply(e);
+                break;
+            case MemoryRecalledEvent e:
+                Apply(e);
+                break;
+            case MemoryIgnoredEvent e:
+                Apply(e);
+                break;
+            case MemoryContradictedEvent e:
+                Apply(e);
+                break;
+            case MemoryExpiredEvent e:
+                Apply(e);
+                break;
+            case MemorySplitEvent e:
                 Apply(e);
                 break;
             default:
@@ -320,6 +460,52 @@ public sealed class MemoryAggregate
         ContentHash = ComputeHash(e.MergedContent);
         if (e.MergedEmbedding != null) Embedding = e.MergedEmbedding;
         CausalParents = [.. CausalParents, .. e.SourceMemoryIds];
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemoryArchivedEvent e)
+    {
+        IsArchived = true;
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemoryRecalledEvent e)
+    {
+        RecallCount++;
+        LastRecalledAt = e.CreatedAt;
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemoryIgnoredEvent e)
+    {
+        IgnoreCount++;
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemoryContradictedEvent e)
+    {
+        ContradictionIds = [.. ContradictionIds, .. e.ContradictingMemoryIds];
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemoryExpiredEvent e)
+    {
+        IsExpired = true;
+        IsActive = false;
+        UpdatedAt = e.CreatedAt;
+        Version = e.EventVersion;
+    }
+
+    private void Apply(MemorySplitEvent e)
+    {
+        IsSplit = true;
+        IsActive = false;
+        ChildMemoryIds = e.ChildMemoryIds;
         UpdatedAt = e.CreatedAt;
         Version = e.EventVersion;
     }

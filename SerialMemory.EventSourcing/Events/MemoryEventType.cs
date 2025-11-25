@@ -12,5 +12,11 @@ public enum MemoryEventType
     MemoryInvalidated,
     MemoryDecayed,
     MemoryReinforced,
-    MemoryLayerTransitioned
+    MemoryLayerTransitioned,
+    MemoryArchived,
+    MemoryRecalled,
+    MemoryIgnored,
+    MemoryContradicted,
+    MemoryExpired,
+    MemorySplit
 }

@@ -143,3 +143,133 @@ public sealed record MemoryLayerTransitionedEvent : MemoryEventBase
     protected override string GetHashableContent() =>
         JsonSerializer.Serialize(new { PreviousLayer, NewLayer, TransitionReason });
 }
+
+/// <summary>
+/// Event: Memory was archived (cold storage).
+/// </summary>
+public sealed record MemoryArchivedEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemoryArchived;
+
+    public required string Reason { get; init; }
+    public float ConfidenceAtArchive { get; init; }
+    public int AccessCountAtArchive { get; init; }
+    public int DaysSinceLastAccess { get; init; }
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { Reason, ConfidenceAtArchive, DaysSinceLastAccess });
+}
+
+/// <summary>
+/// Event: Memory was recalled/accessed during retrieval.
+/// Tracks access patterns for decay and reinforcement decisions.
+/// </summary>
+public sealed record MemoryRecalledEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemoryRecalled;
+
+    /// <summary>Query that triggered the recall</summary>
+    public string? Query { get; init; }
+
+    /// <summary>Similarity score when recalled (0.0-1.0)</summary>
+    public float SimilarityScore { get; init; }
+
+    /// <summary>Context in which memory was recalled</summary>
+    public string? RecallContext { get; init; }
+
+    /// <summary>Session ID during recall</summary>
+    public Guid? SessionId { get; init; }
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { Query, SimilarityScore, RecallContext, SessionId });
+}
+
+/// <summary>
+/// Event: Memory was present in results but explicitly ignored/skipped.
+/// Useful for tracking negative signals about memory relevance.
+/// </summary>
+public sealed record MemoryIgnoredEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemoryIgnored;
+
+    /// <summary>Query context where memory was ignored</summary>
+    public string? Query { get; init; }
+
+    /// <summary>Reason memory was ignored</summary>
+    public required string Reason { get; init; }
+
+    /// <summary>Session ID during ignore</summary>
+    public Guid? SessionId { get; init; }
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { Query, Reason, SessionId });
+}
+
+/// <summary>
+/// Event: Memory was marked as contradicting another memory.
+/// Different from invalidation - both memories may remain active but flagged.
+/// </summary>
+public sealed record MemoryContradictedEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemoryContradicted;
+
+    /// <summary>Memory IDs that contradict this memory</summary>
+    public required Guid[] ContradictingMemoryIds { get; init; }
+
+    /// <summary>Nature of the contradiction</summary>
+    public required string ContradictionType { get; init; }
+
+    /// <summary>How the contradiction was detected</summary>
+    public string? DetectionMethod { get; init; }
+
+    /// <summary>Confidence that this is a real contradiction (0.0-1.0)</summary>
+    public float ContradictionConfidence { get; init; } = 1.0f;
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { ContradictingMemoryIds, ContradictionType, DetectionMethod, ContradictionConfidence });
+}
+
+/// <summary>
+/// Event: Memory has expired due to time-based policies.
+/// Distinct from decay (gradual) - expiration is a hard cutoff.
+/// </summary>
+public sealed record MemoryExpiredEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemoryExpired;
+
+    /// <summary>Policy that triggered expiration</summary>
+    public required string ExpirationPolicy { get; init; }
+
+    /// <summary>Original TTL in days</summary>
+    public int OriginalTtlDays { get; init; }
+
+    /// <summary>Confidence at time of expiration</summary>
+    public float ConfidenceAtExpiration { get; init; }
+
+    /// <summary>Access count at time of expiration</summary>
+    public int AccessCountAtExpiration { get; init; }
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { ExpirationPolicy, OriginalTtlDays, ConfidenceAtExpiration });
+}
+
+/// <summary>
+/// Event: Memory was split into multiple child memories.
+/// Inverse of merge - used for decomposing complex memories.
+/// </summary>
+public sealed record MemorySplitEvent : MemoryEventBase
+{
+    public override MemoryEventType EventType => MemoryEventType.MemorySplit;
+
+    /// <summary>IDs of the resulting child memories</summary>
+    public required Guid[] ChildMemoryIds { get; init; }
+
+    /// <summary>Strategy used for splitting</summary>
+    public string? SplitStrategy { get; init; }
+
+    /// <summary>Reason for the split</summary>
+    public string? Reason { get; init; }
+
+    protected override string GetHashableContent() =>
+        JsonSerializer.Serialize(new { ChildMemoryIds, SplitStrategy, Reason });
+}

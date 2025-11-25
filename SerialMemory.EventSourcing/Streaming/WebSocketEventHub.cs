@@ -115,8 +115,9 @@ public sealed class WebSocketEventHub : IAsyncDisposable
 
             foreach (var (connectionId, connection) in _connections)
             {
-                // Check if connection is subscribed to this event type
-                if (!connection.Subscription.ShouldReceive(@event.EventType))
+                // Check if connection is subscribed to this event type and stream
+                if (!connection.Subscription.ShouldReceive(@event.EventType) ||
+                    !connection.Subscription.ShouldReceiveStream(@event.StreamId))
                 {
                     continue;
                 }
