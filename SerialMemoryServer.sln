@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2022 / .NET 9
+# Visual Studio 2022 / .NET 10
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Api", "SerialMemory.Api\SerialMemory.Api.csproj", "{A9AFDF84-8CD8-4DD8-B2C2-6B14C932EECC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Core", "SerialMemory.Core\SerialMemory.Core.csproj", "{C2D37342-E3D0-4629-A258-BE64C7E8F492}"
@@ -14,6 +14,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.ML", "SerialMemory.ML\SerialMemory.ML.csproj", "{14B29466-BA57-4B13-9AFA-A9428F0634D1}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Contracts", "SerialMemory.Contracts\SerialMemory.Contracts.csproj", "{11C48537-8810-4C7C-B377-48255867DBF5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Tests", "SerialMemory.Tests\SerialMemory.Tests.csproj", "{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -109,6 +111,18 @@ Global
 		{11C48537-8810-4C7C-B377-48255867DBF5}.Release|x64.Build.0 = Release|Any CPU
 		{11C48537-8810-4C7C-B377-48255867DBF5}.Release|x86.ActiveCfg = Release|Any CPU
 		{11C48537-8810-4C7C-B377-48255867DBF5}.Release|x86.Build.0 = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|x64.Build.0 = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Debug|x86.Build.0 = Debug|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|x64.ActiveCfg = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|x64.Build.0 = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|x86.ActiveCfg = Release|Any CPU
+		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
