@@ -49,6 +49,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
             if (memories.Count < options.MinClusterSize)
             {
                 _logger.LogWarning("Not enough memories ({Count}) for clustering", memories.Count);
+                await CompleteCompilationTaskAsync(taskId, 0, cancellationToken);
                 return new CompilationResult(0, 0, 0, 0, stopwatch.Elapsed, 0);
             }
 
@@ -123,6 +124,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
             if (newMemories.Count == 0)
             {
                 _logger.LogInformation("No new memories to compile since {Since}", since);
+                await CompleteCompilationTaskAsync(taskId, 0, cancellationToken);
                 return new CompilationResult(0, 0, 0, 0, stopwatch.Elapsed, await GetCompilationVersionAsync(cancellationToken));
             }
 
