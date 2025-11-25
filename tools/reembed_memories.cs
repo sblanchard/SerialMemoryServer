@@ -32,6 +32,7 @@ class ReembedTool
     private readonly int _embeddingDimension;
     private int _processedCount = 0;
     private int _errorCount = 0;
+    private int _permanentErrorCount = 0;
 
     public ReembedTool(string connectionString, Func<string, Task<float[]>> embedFunc, int dimension)
     {
@@ -63,33 +64,35 @@ class ReembedTool
 
         var stopwatch = Stopwatch.StartNew();
 
-        // Track the last processed ID to handle pagination correctly when WHERE clause mutates
-        // For forceAll=false, rows are removed from the result set after processing (embedding IS NULL -> has value)
-        // So we always query from offset 0 in that case. For forceAll=true, we use offset since rows stay in result.
-        Guid? lastProcessedId = null;
+        // Track failed memory IDs for retry (transient failures like network timeouts)
+        var failedMemories = new List<(Guid id, string content, int attempts)>();
+        const int maxRetries = 3;
+
+        // Track position for offset-based pagination (forceAll mode)
+        // This counts rows fetched, not successful operations, to ensure no rows are skipped
+        var rowsFetched = 0L;
 
         while (true)
         {
             // Fetch batch
-            // When forceAll=false: use cursor-based pagination (order by id, get next batch after last id)
-            // When forceAll=true: use offset-based pagination (rows don't leave result set)
+            // When forceAll=false: rows leave result set when processed, so always query from offset 0
+            // When forceAll=true: use offset based on rows fetched (not processed) to ensure all rows are visited
             List<MemoryRow> memoryList;
 
             if (forceAll)
             {
-                // Offset-based: rows stay in result set, so offset is valid
+                // Offset-based: track position by rows fetched, not by success count
                 var memories = await connection.QueryAsync<MemoryRow>(
                     $@"SELECT id, content FROM memories
                        ORDER BY id
                        LIMIT @BatchSize OFFSET @Offset",
-                    new { BatchSize = batchSize, Offset = _processedCount + _errorCount });
+                    new { BatchSize = batchSize, Offset = rowsFetched });
                 memoryList = memories.ToList();
+                rowsFetched += memoryList.Count;
             }
             else
             {
-                // Cursor-based: rows leave result set when processed, so always get from beginning
-                // We order by id and optionally filter to rows after lastProcessedId for safety
-                // But since rows with embeddings are filtered out by WHERE clause, we can just query from start
+                // Rows leave result set when processed, so always get from beginning
                 var memories = await connection.QueryAsync<MemoryRow>(
                     $@"SELECT id, content FROM memories
                        WHERE embedding IS NULL
@@ -104,39 +107,43 @@ class ReembedTool
             // Process batch
             foreach (var memory in memoryList)
             {
-                try
+                var success = await ProcessMemoryAsync(connection, memory.id, memory.content, totalCount, stopwatch);
+                if (!success)
                 {
-                    var embedding = await _embedFunc(memory.content);
-
-                    await connection.ExecuteAsync(
-                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
-                        new { Id = memory.id, Embedding = new Pgvector.Vector(embedding) });
-
-                    _processedCount++;
-                    lastProcessedId = memory.id;
+                    // Queue for retry
+                    failedMemories.Add((memory.id, memory.content, 1));
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error processing memory {memory.id}: {ex.Message}");
-                    _errorCount++;
-                }
+            }
+        }
 
-                // Progress indicator
-                if ((_processedCount + _errorCount) % 10 == 0)
-                {
-                    var progress = (double)(_processedCount + _errorCount) / totalCount * 100;
-                    var elapsed = stopwatch.Elapsed;
-                    var rate = elapsed.TotalSeconds > 0 ? _processedCount / elapsed.TotalSeconds : 0;
+        // Retry failed memories (transient failures may succeed on retry)
+        if (failedMemories.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Retrying {failedMemories.Count} failed memories...");
 
-                    var etaText = "calculating...";
-                    if (rate > 0)
+            var retryQueue = new Queue<(Guid id, string content, int attempts)>(failedMemories);
+            failedMemories.Clear();
+
+            while (retryQueue.Count > 0)
+            {
+                var (id, content, attempts) = retryQueue.Dequeue();
+
+                // Small delay before retry
+                await Task.Delay(100 * attempts);
+
+                var success = await ProcessMemoryAsync(connection, id, content, totalCount, stopwatch);
+                if (!success)
+                {
+                    if (attempts < maxRetries)
                     {
-                        var remaining = TimeSpan.FromSeconds((totalCount - _processedCount - _errorCount) / rate);
-                        etaText = remaining.ToString(@"hh\:mm\:ss");
+                        retryQueue.Enqueue((id, content, attempts + 1));
                     }
-
-                    Console.Write($"\rProgress: {progress:F1}% ({_processedCount}/{totalCount}) " +
-                                  $"| Rate: {rate:F1}/s | ETA: {etaText}    ");
+                    else
+                    {
+                        _permanentErrorCount++;
+                        Console.WriteLine($"Permanently failed memory {id} after {maxRetries} attempts");
+                    }
                 }
             }
         }
@@ -145,7 +152,47 @@ class ReembedTool
         Console.WriteLine();
         Console.WriteLine();
         Console.WriteLine($"Completed in {stopwatch.Elapsed:hh\\:mm\\:ss}");
-        Console.WriteLine($"Processed: {_processedCount}, Errors: {_errorCount}");
+        Console.WriteLine($"Processed: {_processedCount}, Transient errors (retried): {_errorCount}, Permanent errors: {_permanentErrorCount}");
+    }
+
+    private async Task<bool> ProcessMemoryAsync(NpgsqlConnection connection, Guid id, string content, long totalCount, Stopwatch stopwatch)
+    {
+        try
+        {
+            var embedding = await _embedFunc(content);
+
+            await connection.ExecuteAsync(
+                "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                new { Id = id, Embedding = new Pgvector.Vector(embedding) });
+
+            _processedCount++;
+
+            // Progress indicator
+            if (_processedCount % 10 == 0)
+            {
+                var progress = (double)_processedCount / totalCount * 100;
+                var elapsed = stopwatch.Elapsed;
+                var rate = elapsed.TotalSeconds > 0 ? _processedCount / elapsed.TotalSeconds : 0;
+
+                var etaText = "calculating...";
+                if (rate > 0)
+                {
+                    var remaining = TimeSpan.FromSeconds((totalCount - _processedCount) / rate);
+                    etaText = remaining.ToString(@"hh\:mm\:ss");
+                }
+
+                Console.Write($"\rProgress: {progress:F1}% ({_processedCount}/{totalCount}) " +
+                              $"| Rate: {rate:F1}/s | ETA: {etaText}    ");
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error processing memory {id}: {ex.Message}");
+            _errorCount++;
+            return false;
+        }
     }
 
     private record MemoryRow(Guid id, string content);
