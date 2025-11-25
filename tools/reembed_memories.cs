@@ -62,18 +62,43 @@ class ReembedTool
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var processed = 0L;
 
-        while (processed < totalCount)
+        // Track the last processed ID to handle pagination correctly when WHERE clause mutates
+        // For forceAll=false, rows are removed from the result set after processing (embedding IS NULL -> has value)
+        // So we always query from offset 0 in that case. For forceAll=true, we use offset since rows stay in result.
+        Guid? lastProcessedId = null;
+
+        while (true)
         {
             // Fetch batch
-            var memories = await connection.QueryAsync<MemoryRow>(
-                $@"SELECT id, content FROM memories {whereClause}
-                   ORDER BY created_at DESC
-                   LIMIT @BatchSize OFFSET @Offset",
-                new { BatchSize = batchSize, Offset = processed });
+            // When forceAll=false: use cursor-based pagination (order by id, get next batch after last id)
+            // When forceAll=true: use offset-based pagination (rows don't leave result set)
+            List<MemoryRow> memoryList;
 
-            var memoryList = memories.ToList();
+            if (forceAll)
+            {
+                // Offset-based: rows stay in result set, so offset is valid
+                var memories = await connection.QueryAsync<MemoryRow>(
+                    $@"SELECT id, content FROM memories
+                       ORDER BY id
+                       LIMIT @BatchSize OFFSET @Offset",
+                    new { BatchSize = batchSize, Offset = _processedCount + _errorCount });
+                memoryList = memories.ToList();
+            }
+            else
+            {
+                // Cursor-based: rows leave result set when processed, so always get from beginning
+                // We order by id and optionally filter to rows after lastProcessedId for safety
+                // But since rows with embeddings are filtered out by WHERE clause, we can just query from start
+                var memories = await connection.QueryAsync<MemoryRow>(
+                    $@"SELECT id, content FROM memories
+                       WHERE embedding IS NULL
+                       ORDER BY id
+                       LIMIT @BatchSize",
+                    new { BatchSize = batchSize });
+                memoryList = memories.ToList();
+            }
+
             if (memoryList.Count == 0) break;
 
             // Process batch
@@ -88,6 +113,7 @@ class ReembedTool
                         new { Id = memory.id, Embedding = new Pgvector.Vector(embedding) });
 
                     _processedCount++;
+                    lastProcessedId = memory.id;
                 }
                 catch (Exception ex)
                 {
@@ -113,8 +139,6 @@ class ReembedTool
                                   $"| Rate: {rate:F1}/s | ETA: {etaText}    ");
                 }
             }
-
-            processed += memoryList.Count;
         }
 
         stopwatch.Stop();
