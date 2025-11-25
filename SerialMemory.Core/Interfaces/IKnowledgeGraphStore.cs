@@ -10,6 +10,7 @@ public interface IKnowledgeGraphStore
     // Memory operations
     Task<Guid> CreateMemoryAsync(Memory memory, CancellationToken cancellationToken = default);
     Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default);
     Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, CancellationToken cancellationToken = default);
     Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, CancellationToken cancellationToken = default);
 

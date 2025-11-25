@@ -133,6 +133,45 @@ public class KnowledgeGraphService
     }
 
     /// <summary>
+    /// Get recent memories ordered by creation date
+    /// </summary>
+    public async Task<List<MemorySearchResult>> GetRecentMemoriesAsync(
+        int limit = 10,
+        bool includeEntities = true,
+        CancellationToken cancellationToken = default)
+    {
+        var memories = await _store.GetRecentMemoriesAsync(limit, cancellationToken);
+        var results = new List<MemorySearchResult>();
+
+        foreach (var memory in memories)
+        {
+            var result = new MemorySearchResult
+            {
+                Id = memory.Id,
+                Content = memory.Content,
+                CreatedAt = memory.CreatedAt,
+                Source = memory.Source,
+                Entities = []
+            };
+
+            if (includeEntities)
+            {
+                var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
+                result.Entities = entities.Select(e => new EntityInfo
+                {
+                    Id = e.Id,
+                    Name = e.Name,
+                    Type = e.EntityType
+                }).ToList();
+            }
+
+            results.Add(result);
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Search memories using semantic, text, or hybrid search
     /// </summary>
     public async Task<List<MemorySearchResult>> SearchMemoriesAsync(
