@@ -171,6 +171,10 @@ Located in `ops/init.sql`, the knowledge graph uses 8 tables:
 | `memory_multi_hop_search` | Traverse knowledge graph for multi-hop reasoning |
 | `get_integrations` | List available external integrations |
 | `import_from_core` | **Import from CORE MCP** (entities, relations, observations) |
+| `crawl_relationships` | Extract entities/relationships from existing memories |
+| `get_graph_statistics` | Get knowledge graph statistics (counts by type) |
+| `get_model_info` | Get current embedding model info and upgrade options |
+| `reembed_memories` | Re-generate embeddings after switching models |
 
 ### MCP Resources Available
 
@@ -273,26 +277,71 @@ The import will:
 3. Create relationship edges between entities
 4. Generate embeddings for semantic search
 
-## Embedding Service Options
+## Embedding Models
+
+The system supports multiple ONNX embedding models with automatic dimension detection and optimal pooling strategies.
+
+### Supported Models
+
+#### Small Models (384 dimensions) - Fast, good for most use cases
+| Model | Description | Pooling |
+|-------|-------------|---------|
+| **all-MiniLM-L6-v2** | Default, best speed/quality balance | mean |
+| **all-MiniLM-L12-v2** | Better quality, 2x slower | mean |
+| **bge-small-en-v1.5** | Optimized for retrieval | cls |
+| **e5-small-v2** | Good for asymmetric search | mean |
+
+#### Medium Models (768 dimensions) - Better quality, recommended upgrade
+| Model | Description | Pooling |
+|-------|-------------|---------|
+| **all-mpnet-base-v2** | **RECOMMENDED** - Best quality in class | mean |
+| **bge-base-en-v1.5** | Excellent for retrieval | cls |
+| **e5-base-v2** | Strong asymmetric search | mean |
+| **gte-base** | Alibaba's high-quality encoder | mean |
+
+#### Large Models (1024 dimensions) - Highest quality, significant resources
+| Model | Description | Pooling |
+|-------|-------------|---------|
+| **e5-large-v2** | Top-tier quality | mean |
+| **bge-large-en-v1.5** | Best retrieval model | cls |
+| **gte-large** | Highest quality general encoder | mean |
 
 ### Option 1: ONNX (Pure C#, No Python Required) - RECOMMENDED
 
-Use the ONNX embedding service for a pure C# solution:
-
-1. Export the sentence-transformers model to ONNX:
+1. **Export the model to ONNX:**
 ```bash
-pip install optimum[exporters]
-optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2 ./onnx_model/
+pip install optimum[exporters] onnx
+# Export your chosen model (e.g., all-mpnet-base-v2 for better quality)
+optimum-cli export onnx --model sentence-transformers/all-mpnet-base-v2 ./models/all-mpnet-base-v2/
 ```
 
-2. Configure environment variables:
+2. **Configure environment variables:**
 ```json
 {
   "env": {
-    "ONNX_MODEL_PATH": "D:\\models\\all-MiniLM-L6-v2\\model.onnx",
-    "VOCAB_PATH": "D:\\models\\all-MiniLM-L6-v2\\vocab.txt"
+    "ONNX_MODEL_PATH": "D:\\models\\all-mpnet-base-v2\\model.onnx",
+    "VOCAB_PATH": "D:\\models\\all-mpnet-base-v2\\vocab.txt"
   }
 }
+```
+
+The system auto-detects the model type and applies correct pooling strategy.
+
+### Switching to a Better Model
+
+1. **Export the new ONNX model** (see above)
+
+2. **Migrate database dimension** (if changing from 384):
+```bash
+# Edit ops/migrate_embedding_dimension.sql and set EMBEDDING_DIM to 768
+psql -d contextdb -f ops/migrate_embedding_dimension.sql
+```
+
+3. **Update environment and restart** MCP server
+
+4. **Re-embed all memories** using the `reembed_memories` MCP tool:
+```
+Use reembed_memories with force_all: true
 ```
 
 ### Option 2: HTTP Embedding Service (Requires Python)
@@ -312,7 +361,7 @@ from sentence_transformers import SentenceTransformer
 import uvicorn
 
 app = FastAPI()
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')  # Or any model
 
 @app.post("/embed")
 def embed(request: dict):

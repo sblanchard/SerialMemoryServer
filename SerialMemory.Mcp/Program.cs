@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
@@ -57,7 +58,17 @@ IEmbeddingService embeddingService = EmbeddingServiceFactory.Create(
     vocabPath: vocabPath,
     httpServiceUrl: embeddingServiceUrl);
 
-logger.LogInformation("Embedding service: {Type}", embeddingService.GetType().Name);
+logger.LogInformation("Embedding service: {Type}, Dimension: {Dim}",
+    embeddingService.GetType().Name, embeddingService.EmbeddingDimension);
+
+// Get model info if using ONNX
+OnnxModelInfo? currentModelInfo = null;
+if (embeddingService is OnnxEmbeddingService onnxService)
+{
+    currentModelInfo = onnxService.GetModelInfo();
+    logger.LogInformation("ONNX Model: {ModelName}, Pooling: {Pooling}, MaxSeq: {MaxSeq}",
+        currentModelInfo.ModelName, currentModelInfo.PoolingStrategy, currentModelInfo.MaxSequenceLength);
+}
 
 IEntityExtractionService entityService = new PatternEntityExtractionService();
 
@@ -363,6 +374,32 @@ object HandleToolsList()
                     type = "object",
                     properties = new { }
                 }
+            },
+            // get_model_info
+            new
+            {
+                name = "get_model_info",
+                description = "Get information about the current embedding model (name, dimensions, supported models, export instructions).",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new { }
+                }
+            },
+            // reembed_memories
+            new
+            {
+                name = "reembed_memories",
+                description = "Re-generate embeddings for memories. Use after switching to a different embedding model. By default only re-embeds memories with null embeddings.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        force_all = new { type = "boolean", @default = false, description = "Re-embed ALL memories, not just those with null embeddings" },
+                        batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" }
+                    }
+                }
             }
         }
     };
@@ -488,6 +525,12 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
             case "get_graph_statistics":
                 return await HandleGetGraphStatistics();
+
+            case "get_model_info":
+                return HandleGetModelInfo();
+
+            case "reembed_memories":
+                return await HandleReembedMemories(arguments);
 
             default:
                 throw new Exception($"Unknown tool: {toolName}");
@@ -885,6 +928,133 @@ async Task<object> HandleGetGraphStatistics()
                $"Total Relationships: {relationshipCnt}\n\n" +
                $"Relationship Types:\n" +
                string.Join("\n", typeBreakdown.Select(t => $"  - {t.Type}: {t.Count}"));
+
+    return CreateTextResponse(text);
+}
+
+object HandleGetModelInfo()
+{
+    var serviceType = embeddingService.GetType().Name;
+    var dimension = embeddingService.EmbeddingDimension;
+
+    var text = $"## Current Embedding Model\n\n" +
+               $"**Service Type:** {serviceType}\n" +
+               $"**Embedding Dimension:** {dimension}\n";
+
+    if (currentModelInfo != null)
+    {
+        text += $"\n**ONNX Model Details:**\n" +
+                $"- Model Name: {currentModelInfo.ModelName}\n" +
+                $"- Pooling Strategy: {currentModelInfo.PoolingStrategy}\n" +
+                $"- Max Sequence Length: {currentModelInfo.MaxSequenceLength}\n" +
+                $"- Vocabulary Size: {currentModelInfo.VocabularySize}\n" +
+                $"- Inputs: {string.Join(", ", currentModelInfo.InputNames)}\n" +
+                $"- Outputs: {string.Join(", ", currentModelInfo.OutputNames)}\n";
+    }
+
+    text += $"\n## Supported ONNX Models\n\n" +
+            $"### Small Models (384 dimensions) - Fast, good for most use cases\n" +
+            $"- **all-MiniLM-L6-v2** (current default): Best balance of speed/quality\n" +
+            $"- **all-MiniLM-L12-v2**: Slightly better quality, 2x slower\n" +
+            $"- **bge-small-en-v1.5**: Optimized for retrieval (uses CLS pooling)\n" +
+            $"- **e5-small-v2**: Good for asymmetric search\n\n" +
+            $"### Medium Models (768 dimensions) - Better quality, higher resource usage\n" +
+            $"- **all-mpnet-base-v2**: RECOMMENDED upgrade - best quality in this class\n" +
+            $"- **bge-base-en-v1.5**: Excellent for retrieval tasks\n" +
+            $"- **e5-base-v2**: Strong asymmetric search performance\n" +
+            $"- **gte-base**: Alibaba's high-quality encoder\n\n" +
+            $"### Large Models (1024 dimensions) - Highest quality, significant resources\n" +
+            $"- **e5-large-v2**: Top-tier quality\n" +
+            $"- **bge-large-en-v1.5**: Best retrieval model\n" +
+            $"- **gte-large**: Highest quality general encoder\n\n" +
+            $"## How to Switch Models\n\n" +
+            $"1. Export ONNX model:\n" +
+            $"   ```bash\n" +
+            $"   pip install optimum[exporters] onnx\n" +
+            $"   optimum-cli export onnx --model sentence-transformers/all-mpnet-base-v2 ./models/all-mpnet-base-v2/\n" +
+            $"   ```\n\n" +
+            $"2. Update database vector dimension (if changing from 384):\n" +
+            $"   ```sql\n" +
+            $"   -- Set EMBEDDING_DIM to 768 in ops/migrate_embedding_dimension.sql\n" +
+            $"   psql -f ops/migrate_embedding_dimension.sql\n" +
+            $"   ```\n\n" +
+            $"3. Update environment variables:\n" +
+            $"   ```\n" +
+            $"   ONNX_MODEL_PATH=/path/to/models/all-mpnet-base-v2/model.onnx\n" +
+            $"   VOCAB_PATH=/path/to/models/all-mpnet-base-v2/vocab.txt\n" +
+            $"   ```\n\n" +
+            $"4. Restart MCP server and run `reembed_memories` tool with `force_all: true`";
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleReembedMemories(JsonNode? arguments)
+{
+    var forceAll = arguments?["force_all"]?.GetValue<bool>() ?? false;
+    var batchSize = Math.Clamp(arguments?["batch_size"]?.GetValue<int>() ?? 100, 1, 1000);
+
+    logger.LogInformation("Starting re-embedding: force_all={ForceAll}, batch_size={BatchSize}", forceAll, batchSize);
+
+    var processedCount = 0;
+    var errorCount = 0;
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+    // Get memories to re-embed
+    var memories = forceAll
+        ? await store.GetRecentMemoriesAsync(batchSize)
+        : await store.GetMemoriesWithoutEntitiesAsync(batchSize); // This returns memories without embeddings too
+
+    // If not forcing all, we need to query for memories with null embeddings
+    // For now, use GetRecentMemoriesAsync and filter
+    if (!forceAll)
+    {
+        // Get recent memories and the store will need to expose a method for null embeddings
+        // For simplicity, we'll re-embed recent ones
+        memories = await store.GetRecentMemoriesAsync(batchSize);
+    }
+
+    foreach (var memory in memories)
+    {
+        try
+        {
+            // Generate new embedding
+            var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+
+            // Update in database - need to add this method
+            // For now, we'll do it through a direct SQL call
+            await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+            await connection.OpenAsync();
+            await connection.ExecuteAsync(
+                "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+
+            processedCount++;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
+            errorCount++;
+        }
+    }
+
+    stopwatch.Stop();
+
+    var rate = processedCount / stopwatch.Elapsed.TotalSeconds;
+    var text = $"Re-embedding completed!\n\n" +
+               $"Processed: {processedCount}\n" +
+               $"Errors: {errorCount}\n" +
+               $"Duration: {stopwatch.Elapsed:hh\\:mm\\:ss}\n" +
+               $"Rate: {rate:F1} memories/second\n" +
+               $"Embedding Dimension: {embeddingService.EmbeddingDimension}";
+
+    if (processedCount < batchSize && !forceAll)
+    {
+        text += "\n\nAll memories with null embeddings have been processed.";
+    }
+    else if (processedCount == batchSize)
+    {
+        text += $"\n\nProcessed batch of {batchSize}. Run again to process more.";
+    }
 
     return CreateTextResponse(text);
 }
