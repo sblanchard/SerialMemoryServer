@@ -100,11 +100,17 @@ class ReembedTool
                 {
                     var progress = (double)(_processedCount + _errorCount) / totalCount * 100;
                     var elapsed = stopwatch.Elapsed;
-                    var rate = _processedCount / elapsed.TotalSeconds;
-                    var remaining = TimeSpan.FromSeconds((totalCount - _processedCount - _errorCount) / rate);
+                    var rate = elapsed.TotalSeconds > 0 ? _processedCount / elapsed.TotalSeconds : 0;
+
+                    var etaText = "calculating...";
+                    if (rate > 0)
+                    {
+                        var remaining = TimeSpan.FromSeconds((totalCount - _processedCount - _errorCount) / rate);
+                        etaText = remaining.ToString(@"hh\:mm\:ss");
+                    }
 
                     Console.Write($"\rProgress: {progress:F1}% ({_processedCount}/{totalCount}) " +
-                                  $"| Rate: {rate:F1}/s | ETA: {remaining:hh\\:mm\\:ss}    ");
+                                  $"| Rate: {rate:F1}/s | ETA: {etaText}    ");
                 }
             }
 

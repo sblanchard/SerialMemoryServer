@@ -999,6 +999,23 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
     logger.LogInformation("Starting re-embedding: force_all={ForceAll}, batch_size={BatchSize}", forceAll, batchSize);
 
+    // Get total counts to report progress context
+    var totalMemories = await store.GetMemoryCountAsync();
+    long totalToProcess;
+
+    if (forceAll)
+    {
+        totalToProcess = totalMemories;
+    }
+    else
+    {
+        // Count memories with null embeddings
+        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
+        await countConn.OpenAsync();
+        totalToProcess = await countConn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
+    }
+
     var processedCount = 0;
     var errorCount = 0;
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -1015,8 +1032,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
             // Generate new embedding
             var embedding = await embeddingService.EmbedTextAsync(memory.Content);
 
-            // Update in database - need to add this method
-            // For now, we'll do it through a direct SQL call
+            // Update in database
             await using var connection = new Npgsql.NpgsqlConnection(connectionString);
             await connection.OpenAsync();
             await connection.ExecuteAsync(
@@ -1034,21 +1050,25 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
     stopwatch.Stop();
 
-    var rate = processedCount / stopwatch.Elapsed.TotalSeconds;
-    var text = $"Re-embedding completed!\n\n" +
-               $"Processed: {processedCount}\n" +
-               $"Errors: {errorCount}\n" +
-               $"Duration: {stopwatch.Elapsed:hh\\:mm\\:ss}\n" +
-               $"Rate: {rate:F1} memories/second\n" +
-               $"Embedding Dimension: {embeddingService.EmbeddingDimension}";
+    var rate = stopwatch.Elapsed.TotalSeconds > 0 ? processedCount / stopwatch.Elapsed.TotalSeconds : 0;
+    var remaining = totalToProcess - processedCount;
 
-    if (processedCount < batchSize && !forceAll)
+    var text = $"Re-embedding batch completed!\n\n" +
+               $"**This batch:** {processedCount} processed, {errorCount} errors\n" +
+               $"**Total memories:** {totalMemories}\n" +
+               $"**Remaining to process:** {remaining}\n" +
+               $"**Duration:** {stopwatch.Elapsed:hh\\:mm\\:ss}\n" +
+               $"**Rate:** {rate:F1} memories/second\n" +
+               $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}";
+
+    if (remaining > 0)
     {
-        text += "\n\nAll memories with null embeddings have been processed.";
+        var estimatedBatches = (int)Math.Ceiling((double)remaining / batchSize);
+        text += $"\n\n**{remaining} memories remaining.** Run `reembed_memories` {estimatedBatches} more time(s) to complete.";
     }
-    else if (processedCount == batchSize)
+    else
     {
-        text += $"\n\nProcessed batch of {batchSize}. Run again to process more.";
+        text += "\n\n**All memories have been re-embedded.**";
     }
 
     return CreateTextResponse(text);
