@@ -1020,55 +1020,118 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
     var errorCount = 0;
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-    // Get memories to re-embed
-    var memories = forceAll
-        ? await store.GetAllMemoriesAsync(batchSize)
-        : await store.GetMemoriesWithNullEmbeddingsAsync(batchSize);
-
-    foreach (var memory in memories)
+    if (forceAll)
     {
-        try
+        // For force_all mode: iterate through ALL memories using offset-based pagination
+        // Track by rows fetched (not processed) to ensure no rows are skipped on errors
+        var rowsFetched = 0;
+
+        while (true)
         {
-            // Generate new embedding
-            var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+            var memories = await store.GetAllMemoriesAsync(batchSize, rowsFetched);
+            if (memories.Count == 0) break;
 
-            // Update in database
-            await using var connection = new Npgsql.NpgsqlConnection(connectionString);
-            await connection.OpenAsync();
-            await connection.ExecuteAsync(
-                "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
-                new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+            rowsFetched += memories.Count;
 
-            processedCount++;
+            foreach (var memory in memories)
+            {
+                try
+                {
+                    var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+
+                    await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                    await connection.OpenAsync();
+                    await connection.ExecuteAsync(
+                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                        new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+
+                    processedCount++;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
+                    errorCount++;
+                }
+            }
+
+            logger.LogInformation("Re-embedding progress: {Processed}/{Total} ({Errors} errors)",
+                processedCount, totalToProcess, errorCount);
         }
-        catch (Exception ex)
+    }
+    else
+    {
+        // For null-embeddings mode: single batch since rows leave result set after processing
+        // User can call repeatedly until all are processed
+        var memories = await store.GetMemoriesWithNullEmbeddingsAsync(batchSize);
+
+        foreach (var memory in memories)
         {
-            logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
-            errorCount++;
+            try
+            {
+                var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+
+                await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                await connection.OpenAsync();
+                await connection.ExecuteAsync(
+                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                    new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+
+                processedCount++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
+                errorCount++;
+            }
         }
     }
 
     stopwatch.Stop();
 
     var rate = stopwatch.Elapsed.TotalSeconds > 0 ? processedCount / stopwatch.Elapsed.TotalSeconds : 0;
-    var remaining = totalToProcess - processedCount;
 
-    var text = $"Re-embedding batch completed!\n\n" +
-               $"**This batch:** {processedCount} processed, {errorCount} errors\n" +
+    // Recount remaining for accurate reporting
+    long remaining;
+    if (forceAll)
+    {
+        // In force_all mode, we processed everything (errors aside)
+        remaining = errorCount;
+    }
+    else
+    {
+        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
+        await countConn.OpenAsync();
+        remaining = await countConn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
+    }
+
+    var text = $"Re-embedding completed!\n\n" +
+               $"**Processed:** {processedCount} memories\n" +
+               $"**Errors:** {errorCount}\n" +
                $"**Total memories:** {totalMemories}\n" +
-               $"**Remaining to process:** {remaining}\n" +
                $"**Duration:** {stopwatch.Elapsed:hh\\:mm\\:ss}\n" +
                $"**Rate:** {rate:F1} memories/second\n" +
                $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}";
 
-    if (remaining > 0)
+    if (forceAll)
+    {
+        if (errorCount > 0)
+        {
+            text += $"\n\n**{errorCount} memories failed.** Check logs for details.";
+        }
+        else
+        {
+            text += "\n\n**All memories have been re-embedded successfully.**";
+        }
+    }
+    else if (remaining > 0)
     {
         var estimatedBatches = (int)Math.Ceiling((double)remaining / batchSize);
         text += $"\n\n**{remaining} memories remaining.** Run `reembed_memories` {estimatedBatches} more time(s) to complete.";
     }
     else
     {
-        text += "\n\n**All memories have been re-embedded.**";
+        text += "\n\n**All memories have embeddings.**";
     }
 
     return CreateTextResponse(text);
