@@ -32,7 +32,7 @@ public sealed class EventBroadcastService : BackgroundService
 
         try
         {
-            await foreach (var @event in _subscriber.SubscribeAsync(
+            await foreach (var message in _subscriber.SubscribeAsync(
                 "websocket-broadcast",
                 _consumerId,
                 stoppingToken))
@@ -42,19 +42,19 @@ public sealed class EventBroadcastService : BackgroundService
                     // Only broadcast if there are connected clients
                     if (_webSocketHub.ConnectionCount > 0)
                     {
-                        await _webSocketHub.BroadcastEventAsync(@event, stoppingToken);
+                        await _webSocketHub.BroadcastEventAsync(message.Event, stoppingToken);
 
                         _logger.LogDebug(
                             "Broadcasted event {EventId} ({EventType}) to {ConnectionCount} WebSocket clients",
-                            @event.EventId, @event.EventType, _webSocketHub.ConnectionCount);
+                            message.Event.EventId, message.Event.EventType, _webSocketHub.ConnectionCount);
                     }
 
-                    // Acknowledge the message
-                    await _subscriber.AcknowledgeAsync("websocket-broadcast", @event.EventId.ToString(), stoppingToken);
+                    // Acknowledge the message using the Redis stream message ID
+                    await _subscriber.AcknowledgeAsync("websocket-broadcast", message.MessageId, stoppingToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error broadcasting event {EventId}", @event.EventId);
+                    _logger.LogError(ex, "Error broadcasting event {EventId}", message.Event.EventId);
                 }
             }
         }

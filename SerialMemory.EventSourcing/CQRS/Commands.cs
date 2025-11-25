@@ -116,11 +116,90 @@ public sealed record TransitionLayerCommand : ICommand
 }
 
 /// <summary>
-/// Command to apply decay to memories (batch).
+/// Command to apply decay to a single memory.
 /// </summary>
 public sealed record ApplyDecayCommand : ICommand
 {
-    public int BatchSize { get; init; } = 1000;
+    public required Guid MemoryId { get; init; }
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to archive a memory (cold storage).
+/// </summary>
+public sealed record ArchiveMemoryCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public required string Reason { get; init; }
+    public int AccessCount { get; init; }
+    public DateTimeOffset LastAccessedAt { get; init; }
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to record a memory recall event.
+/// </summary>
+public sealed record RecallMemoryCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public string? Query { get; init; }
+    public float SimilarityScore { get; init; }
+    public string? Context { get; init; }
+    public Guid? SessionId { get; init; }
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to record that a memory was ignored.
+/// </summary>
+public sealed record IgnoreMemoryCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public string? Query { get; init; }
+    public required string Reason { get; init; }
+    public Guid? SessionId { get; init; }
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to mark a contradiction between memories.
+/// </summary>
+public sealed record MarkContradictionCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public required Guid[] ContradictingMemoryIds { get; init; }
+    public required string ContradictionType { get; init; }
+    public string? DetectionMethod { get; init; }
+    public float ContradictionConfidence { get; init; } = 1.0f;
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to expire a memory.
+/// </summary>
+public sealed record ExpireMemoryCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public required string ExpirationPolicy { get; init; }
+    public int OriginalTtlDays { get; init; }
+    public string? ActorId { get; init; }
+    public Guid? CorrelationId { get; init; }
+}
+
+/// <summary>
+/// Command to split a memory into children.
+/// </summary>
+public sealed record SplitMemoryCommand : ICommand
+{
+    public required Guid MemoryId { get; init; }
+    public required Guid[] ChildMemoryIds { get; init; }
+    public string? SplitStrategy { get; init; }
+    public string? Reason { get; init; }
     public string? ActorId { get; init; }
     public Guid? CorrelationId { get; init; }
 }

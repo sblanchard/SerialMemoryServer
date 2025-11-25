@@ -71,7 +71,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
         await pub.PublishAsync(RedisChannel.Literal("memory:events:broadcast"), message);
     }
 
-    public async IAsyncEnumerable<StoredEvent> SubscribeAsync(
+    public async IAsyncEnumerable<StreamMessage> SubscribeAsync(
         string consumerGroup,
         string consumerId,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -89,24 +89,49 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
             // Group already exists, ok
         }
 
+        // First, drain any pending (unacknowledged) messages from previous runs
+        var lastPendingId = "0-0";
         while (!cancellationToken.IsCancellationRequested)
         {
-            // Read pending messages first
             var pending = await db.StreamReadGroupAsync(
                 StreamKey, consumerGroup, consumerId,
-                ">", // Only new messages
+                lastPendingId,
                 count: 100);
+
+            if (pending.Length == 0)
+                break;
 
             foreach (var entry in pending)
             {
                 var storedEvent = ParseStreamEntry(entry);
                 if (storedEvent != null)
                 {
-                    yield return storedEvent;
+                    yield return new StreamMessage(entry.Id.ToString(), storedEvent);
+                }
+                lastPendingId = entry.Id.ToString();
+            }
+        }
+
+        _logger.LogDebug("Finished draining pending messages for consumer {ConsumerId}", consumerId);
+
+        // Now process new messages as they arrive
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var entries = await db.StreamReadGroupAsync(
+                StreamKey, consumerGroup, consumerId,
+                ">", // Only new messages not yet delivered to any consumer
+                count: 100);
+
+            foreach (var entry in entries)
+            {
+                var storedEvent = ParseStreamEntry(entry);
+                if (storedEvent != null)
+                {
+                    yield return new StreamMessage(entry.Id.ToString(), storedEvent);
                 }
             }
 
-            if (pending.Length == 0)
+            if (entries.Length == 0)
             {
                 await Task.Delay(100, cancellationToken);
             }

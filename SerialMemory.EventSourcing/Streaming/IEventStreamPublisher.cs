@@ -15,16 +15,23 @@ public interface IEventStreamPublisher
 }
 
 /// <summary>
+/// A stream message containing the event and its Redis stream message ID.
+/// </summary>
+/// <param name="MessageId">The Redis stream message ID (e.g., "1732547123456-0")</param>
+/// <param name="Event">The stored event payload</param>
+public readonly record struct StreamMessage(string MessageId, StoredEvent Event);
+
+/// <summary>
 /// Interface for subscribing to Redis Streams.
 /// </summary>
 public interface IEventStreamSubscriber
 {
-    /// <summary>Subscribe to events from Redis Stream</summary>
-    IAsyncEnumerable<StoredEvent> SubscribeAsync(
+    /// <summary>Subscribe to events from Redis Stream, returning messages with their stream IDs</summary>
+    IAsyncEnumerable<StreamMessage> SubscribeAsync(
         string consumerGroup,
         string consumerId,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Acknowledge processed event</summary>
+    /// <summary>Acknowledge processed event using the Redis stream message ID</summary>
     Task AcknowledgeAsync(string consumerGroup, string messageId, CancellationToken cancellationToken = default);
 }
