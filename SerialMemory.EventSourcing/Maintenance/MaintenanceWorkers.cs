@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using SerialMemory.EventSourcing.CQRS;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Retrieval;
 
@@ -11,23 +12,33 @@ namespace SerialMemory.EventSourcing.Maintenance;
 /// <summary>
 /// Background worker for autonomous memory maintenance operations.
 /// Runs periodic tasks: merge duplicates, detect contradictions, apply decay, reinforce stable, archive cold.
+/// All mutations are performed through commands to maintain event sourcing consistency.
 /// </summary>
 public sealed class MemoryMaintenanceWorker : BackgroundService
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IRetrievalEngine _retrievalEngine;
+    private readonly ICommandHandler<ApplyDecayCommand> _decayHandler;
+    private readonly ICommandHandler<ArchiveMemoryCommand> _archiveHandler;
+    private readonly ICommandHandler<ReinforceMemoryCommand> _reinforceHandler;
     private readonly ILogger<MemoryMaintenanceWorker> _logger;
     private readonly MaintenanceConfig _config;
 
     public MemoryMaintenanceWorker(
         string connectionString,
         IRetrievalEngine retrievalEngine,
+        ICommandHandler<ApplyDecayCommand> decayHandler,
+        ICommandHandler<ArchiveMemoryCommand> archiveHandler,
+        ICommandHandler<ReinforceMemoryCommand> reinforceHandler,
         ILogger<MemoryMaintenanceWorker> logger,
         MaintenanceConfig? config = null)
     {
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         _dataSource = builder.Build();
         _retrievalEngine = retrievalEngine;
+        _decayHandler = decayHandler;
+        _archiveHandler = archiveHandler;
+        _reinforceHandler = reinforceHandler;
         _logger = logger;
         _config = config ?? MaintenanceConfig.Default;
     }
@@ -101,38 +112,45 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
 
     private async Task<int> ApplyDecayAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Update confidence scores based on decay formula
-        var result = await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET
-                confidence_score = confidence_score * POWER(0.5,
-                    EXTRACT(EPOCH FROM (NOW() - last_reinforced_at)) / 86400.0 / half_life_days),
-                updated_at = NOW()
+        // Find memories that need decay applied (query only, no mutation)
+        var memoriesNeedingDecay = await conn.QueryAsync<Guid>(new CommandDefinition(@"
+            SELECT memory_id
+            FROM memory_projections
             WHERE is_active = TRUE
                 AND confidence_score > 0.01
-                AND last_reinforced_at < NOW() - INTERVAL '1 day'",
+                AND last_reinforced_at < NOW() - INTERVAL '1 day'
+            LIMIT 1000",
             cancellationToken: cancellationToken));
 
-        return result;
+        var decayedCount = 0;
+        foreach (var memoryId in memoriesNeedingDecay)
+        {
+            var result = await _decayHandler.HandleAsync(new ApplyDecayCommand
+            {
+                MemoryId = memoryId,
+                ActorId = "maintenance-worker"
+            }, cancellationToken);
+
+            if (result.Success)
+                decayedCount++;
+        }
+
+        return decayedCount;
     }
 
     private async Task<int> ArchiveColdMemoriesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Archive memories that are:
-        // - Below confidence threshold
-        // - Haven't been accessed recently
-        // - Not in critical layers (L3_KNOWLEDGE, L4_HEURISTIC)
-        var result = await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET
-                is_archived = TRUE,
-                updated_at = NOW()
+        // Find memories that should be archived (query only, no mutation)
+        var memoriesForArchive = await conn.QueryAsync<(Guid MemoryId, int AccessCount, DateTimeOffset LastAccessedAt)>(new CommandDefinition(@"
+            SELECT memory_id, access_count, last_accessed_at
+            FROM memory_projections
             WHERE is_active = TRUE
                 AND is_archived = FALSE
                 AND confidence_score < @ArchiveThreshold
                 AND access_count < @MinAccessCount
                 AND last_accessed_at < NOW() - @ColdPeriod::INTERVAL
-                AND layer NOT IN ('L3_KNOWLEDGE', 'L4_HEURISTIC')",
+                AND layer NOT IN ('L3_KNOWLEDGE', 'L4_HEURISTIC')
+            LIMIT 500",
             new
             {
                 ArchiveThreshold = _config.ArchiveConfidenceThreshold,
@@ -141,27 +159,37 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
             },
             cancellationToken: cancellationToken));
 
-        return result;
+        var archivedCount = 0;
+        foreach (var memory in memoriesForArchive)
+        {
+            var result = await _archiveHandler.HandleAsync(new ArchiveMemoryCommand
+            {
+                MemoryId = memory.MemoryId,
+                Reason = "Cold memory: low confidence and access count",
+                AccessCount = memory.AccessCount,
+                LastAccessedAt = memory.LastAccessedAt,
+                ActorId = "maintenance-worker"
+            }, cancellationToken);
+
+            if (result.Success)
+                archivedCount++;
+        }
+
+        return archivedCount;
     }
 
     private async Task<int> ReinforceStableMemoriesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Reinforce memories that are:
-        // - Frequently accessed
-        // - High confidence
-        // - Not recently reinforced
-        var result = await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET
-                confidence_score = LEAST(1.0, confidence_score * 1.1),
-                half_life_days = half_life_days + 7,
-                last_reinforced_at = NOW(),
-                updated_at = NOW()
+        // Find memories that should be reinforced (query only, no mutation)
+        var memoriesForReinforce = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore)>(new CommandDefinition(@"
+            SELECT memory_id, confidence_score
+            FROM memory_projections
             WHERE is_active = TRUE
                 AND confidence_score > @MinConfidence
                 AND access_count > @MinAccessCount
                 AND last_reinforced_at < NOW() - @ReinforceInterval::INTERVAL
-                AND validated_by IS NOT NULL",
+                AND validated_by IS NOT NULL
+            LIMIT 500",
             new
             {
                 MinConfidence = _config.ReinforceMinConfidence,
@@ -170,7 +198,22 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
             },
             cancellationToken: cancellationToken));
 
-        return result;
+        var reinforcedCount = 0;
+        foreach (var memory in memoriesForReinforce)
+        {
+            var result = await _reinforceHandler.HandleAsync(new ReinforceMemoryCommand
+            {
+                MemoryId = memory.MemoryId,
+                NewConfidence = Math.Min(1.0f, memory.ConfidenceScore * 1.1f),
+                Source = "auto-reinforce:stable-memory",
+                ActorId = "maintenance-worker"
+            }, cancellationToken);
+
+            if (result.Success)
+                reinforcedCount++;
+        }
+
+        return reinforcedCount;
     }
 
     private async Task<int> DetectDuplicatesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
@@ -311,21 +354,25 @@ internal sealed class MaintenanceTaskLog
 
 /// <summary>
 /// Worker for processing pending maintenance tasks (merge, resolve contradictions).
+/// All mutations are performed through commands to maintain event sourcing consistency.
 /// </summary>
 public sealed class MaintenanceTaskProcessor : BackgroundService
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IRetrievalEngine _retrievalEngine;
+    private readonly ICommandHandler<InvalidateMemoryCommand> _invalidateHandler;
     private readonly ILogger<MaintenanceTaskProcessor> _logger;
 
     public MaintenanceTaskProcessor(
         string connectionString,
         IRetrievalEngine retrievalEngine,
+        ICommandHandler<InvalidateMemoryCommand> invalidateHandler,
         ILogger<MaintenanceTaskProcessor> logger)
     {
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         _dataSource = builder.Build();
         _retrievalEngine = retrievalEngine;
+        _invalidateHandler = invalidateHandler;
         _logger = logger;
     }
 
@@ -412,9 +459,9 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
         var memoryIds = (Guid[])task.memory_ids;
         if (memoryIds.Length < 2) return false;
 
-        // Get both memories
-        var memories = await conn.QueryAsync<dynamic>(new CommandDefinition(@"
-            SELECT memory_id, content, layer, confidence_score, access_count
+        // Get both memories (query only)
+        var memories = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore, int AccessCount)>(new CommandDefinition(@"
+            SELECT memory_id, confidence_score, access_count
             FROM memory_projections
             WHERE memory_id = ANY(@MemoryIds)",
             new { MemoryIds = memoryIds },
@@ -423,24 +470,25 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
         var memoryList = memories.ToList();
         if (memoryList.Count < 2) return false;
 
-        // Keep the one with higher confidence/access, mark the other as superseded
-        var primary = memoryList.OrderByDescending(m => (float)m.confidence_score * (int)m.access_count).First();
-        var secondary = memoryList.First(m => (Guid)m.memory_id != (Guid)primary.memory_id);
+        // Keep the one with higher confidence/access, invalidate the other as superseded
+        var primary = memoryList.OrderByDescending(m => m.ConfidenceScore * m.AccessCount).First();
+        var secondary = memoryList.First(m => m.MemoryId != primary.MemoryId);
 
-        await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET is_active = FALSE,
-                superseded_by = @PrimaryId,
-                updated_at = NOW()
-            WHERE memory_id = @SecondaryId",
-            new { PrimaryId = (Guid)primary.memory_id, SecondaryId = (Guid)secondary.memory_id },
-            cancellationToken: cancellationToken));
+        // Use command to invalidate the duplicate (preserves event sourcing)
+        var result = await _invalidateHandler.HandleAsync(new InvalidateMemoryCommand
+        {
+            MemoryId = secondary.MemoryId,
+            Reason = "Duplicate detected and superseded",
+            SupersededById = primary.MemoryId,
+            ActorId = "maintenance-worker"
+        }, cancellationToken);
 
-        var secondaryId = (Guid)secondary.memory_id;
-        var primaryId = (Guid)primary.memory_id;
-        _logger.LogInformation("Merged duplicate: {SecondaryId} -> {PrimaryId}", secondaryId, primaryId);
+        if (result.Success)
+        {
+            _logger.LogInformation("Merged duplicate: {SecondaryId} -> {PrimaryId}", secondary.MemoryId, primary.MemoryId);
+        }
 
-        return true;
+        return result.Success;
     }
 
     private async Task<bool> ProcessResolveContradictionAsync(NpgsqlConnection conn, dynamic task, CancellationToken cancellationToken)
@@ -448,32 +496,36 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
         var memoryIds = (Guid[])task.memory_ids;
         if (memoryIds.Length < 2) return false;
 
-        // For now, just mark them as contradicting each other
+        // Get confidence scores to determine which memory to invalidate
+        var memories = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore, int AccessCount)>(new CommandDefinition(@"
+            SELECT memory_id, confidence_score, access_count
+            FROM memory_projections
+            WHERE memory_id = ANY(@MemoryIds)",
+            new { MemoryIds = memoryIds },
+            cancellationToken: cancellationToken));
+
+        var memoryList = memories.ToList();
+        if (memoryList.Count < 2) return false;
+
+        // Invalidate the lower-confidence memory as contradicted by the higher-confidence one
         // A full implementation would use LLM to determine which is correct
-        await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET contradiction_ids = array_cat(
-                COALESCE(contradiction_ids, ARRAY[]::uuid[]),
-                ARRAY[@OtherId]
-            )
-            WHERE memory_id = @MemoryId
-                AND NOT (@OtherId = ANY(COALESCE(contradiction_ids, ARRAY[]::uuid[])))",
-            new { MemoryId = memoryIds[0], OtherId = memoryIds[1] },
-            cancellationToken: cancellationToken));
+        var stronger = memoryList.OrderByDescending(m => m.ConfidenceScore * m.AccessCount).First();
+        var weaker = memoryList.First(m => m.MemoryId != stronger.MemoryId);
 
-        await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE memory_projections
-            SET contradiction_ids = array_cat(
-                COALESCE(contradiction_ids, ARRAY[]::uuid[]),
-                ARRAY[@OtherId]
-            )
-            WHERE memory_id = @MemoryId
-                AND NOT (@OtherId = ANY(COALESCE(contradiction_ids, ARRAY[]::uuid[])))",
-            new { MemoryId = memoryIds[1], OtherId = memoryIds[0] },
-            cancellationToken: cancellationToken));
+        var result = await _invalidateHandler.HandleAsync(new InvalidateMemoryCommand
+        {
+            MemoryId = weaker.MemoryId,
+            Reason = "Contradiction detected with higher-confidence memory",
+            ContradictedByIds = [stronger.MemoryId],
+            ActorId = "maintenance-worker"
+        }, cancellationToken);
 
-        _logger.LogInformation("Marked contradiction between {MemoryA} and {MemoryB}", memoryIds[0], memoryIds[1]);
+        if (result.Success)
+        {
+            _logger.LogInformation("Resolved contradiction: invalidated {WeakerId} (contradicted by {StrongerId})",
+                weaker.MemoryId, stronger.MemoryId);
+        }
 
-        return true;
+        return result.Success;
     }
 }
