@@ -23,8 +23,9 @@
 -- =====================================================
 -- REQUIRED EXTENSIONS
 -- =====================================================
+-- pgcrypto: Provides gen_random_uuid() for PostgreSQL < 13
 -- pgvector: Vector similarity search (required for embedding columns)
--- Note: gen_random_uuid() is built-in for PostgreSQL 13+, or use pgcrypto for older versions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Inference session tracking for deterministic replay
