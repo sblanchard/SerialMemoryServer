@@ -7,6 +7,53 @@ namespace SerialMemory.Tests.ML;
 
 public class EmbeddingServiceTests
 {
+    #region OllamaEmbeddingService Tests
+
+    [Fact]
+    public void OllamaEmbeddingService_Constructor_SetsDefaultValues()
+    {
+        // Act
+        var service = new OllamaEmbeddingService();
+
+        // Assert
+        service.EmbeddingDimension.Should().Be(768);
+    }
+
+    [Fact]
+    public void OllamaEmbeddingService_Constructor_AcceptsCustomValues()
+    {
+        // Act
+        var service = new OllamaEmbeddingService(
+            baseUrl: "http://custom:11434",
+            model: "custom-model",
+            embeddingDimension: 1024);
+
+        // Assert
+        service.EmbeddingDimension.Should().Be(1024);
+    }
+
+    [Fact]
+    public void OllamaEmbeddingService_ImplementsIEmbeddingService()
+    {
+        // Arrange
+        var service = new OllamaEmbeddingService();
+
+        // Assert
+        service.Should().BeAssignableTo<IEmbeddingService>();
+    }
+
+    [Fact]
+    public void OllamaEmbeddingService_ImplementsIDisposable()
+    {
+        // Arrange
+        var service = new OllamaEmbeddingService();
+
+        // Assert
+        service.Should().BeAssignableTo<IDisposable>();
+    }
+
+    #endregion
+
     #region HttpEmbeddingService Tests
 
     [Fact]
@@ -41,95 +88,20 @@ public class EmbeddingServiceTests
 
     #endregion
 
-    #region OnnxEmbeddingService Tests
-
-    [Fact]
-    public void OnnxEmbeddingService_Constructor_ThrowsForMissingModel()
-    {
-        // Arrange
-        var modelPath = "/nonexistent/model.onnx";
-        var vocabPath = "/nonexistent/vocab.txt";
-
-        // Act
-        var act = () => new OnnxEmbeddingService(modelPath, vocabPath);
-
-        // Assert
-        act.Should().Throw<FileNotFoundException>()
-            .WithMessage("*ONNX model not found*");
-    }
-
-    [Fact]
-    public void OnnxEmbeddingService_Constructor_ThrowsForMissingVocab()
-    {
-        // Arrange - Create a temp model file
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        var modelPath = Path.Combine(tempDir, "model.onnx");
-        var vocabPath = Path.Combine(tempDir, "vocab.txt");
-
-        try
-        {
-            // Create a dummy model file
-            File.WriteAllBytes(modelPath, new byte[10]);
-
-            // Act
-            var act = () => new OnnxEmbeddingService(modelPath, vocabPath);
-
-            // Assert
-            act.Should().Throw<FileNotFoundException>()
-                .WithMessage("*Vocabulary file not found*");
-        }
-        finally
-        {
-            // Cleanup
-            Directory.Delete(tempDir, true);
-        }
-    }
-
-    #endregion
-
-    #region EmbeddingServiceFactory Tests
-
-    [Fact]
-    public void EmbeddingServiceFactory_Create_ReturnsHttpServiceWhenOnnxNotAvailable()
-    {
-        // Act
-        var service = EmbeddingServiceFactory.Create(
-            onnxModelPath: null,
-            vocabPath: null,
-            httpServiceUrl: "http://localhost:8765");
-
-        // Assert
-        service.Should().BeOfType<HttpEmbeddingService>();
-    }
-
-    [Fact]
-    public void EmbeddingServiceFactory_Create_ReturnsHttpServiceForMissingOnnxFiles()
-    {
-        // Act
-        var service = EmbeddingServiceFactory.Create(
-            onnxModelPath: "/nonexistent/model.onnx",
-            vocabPath: "/nonexistent/vocab.txt",
-            httpServiceUrl: "http://localhost:8765");
-
-        // Assert
-        service.Should().BeOfType<HttpEmbeddingService>();
-    }
-
-    [Fact]
-    public void EmbeddingServiceFactory_Create_UsesDefaultHttpUrlWhenNotProvided()
-    {
-        // Act
-        var service = EmbeddingServiceFactory.Create();
-
-        // Assert
-        service.Should().BeOfType<HttpEmbeddingService>();
-        service.EmbeddingDimension.Should().Be(384);
-    }
-
-    #endregion
-
     #region Embedding Dimension Tests
+
+    [Theory]
+    [InlineData(384)]
+    [InlineData(768)]
+    [InlineData(1024)]
+    public void OllamaEmbeddingService_EmbeddingDimension_ReturnsConfiguredValue(int dimension)
+    {
+        // Act
+        var service = new OllamaEmbeddingService(embeddingDimension: dimension);
+
+        // Assert
+        service.EmbeddingDimension.Should().Be(dimension);
+    }
 
     [Theory]
     [InlineData(384)]
@@ -147,31 +119,31 @@ public class EmbeddingServiceTests
     #endregion
 }
 
-public class HttpEmbeddingServiceIntegrationTests
+public class OllamaEmbeddingServiceIntegrationTests
 {
-    // These tests require a running embedding service
-    // They are marked with a trait to allow selective running
+    // These tests require a running Ollama service
+    // They are marked with Skip to allow selective running
 
-    [Fact(Skip = "Integration test - requires running embedding service")]
+    [Fact(Skip = "Integration test - requires running Ollama service")]
     public async Task EmbedTextAsync_ReturnsEmbeddingOfCorrectDimension()
     {
         // Arrange
-        var service = new HttpEmbeddingService("http://localhost:8765");
+        var service = new OllamaEmbeddingService();
         var text = "Hello, world!";
 
         // Act
         var embedding = await service.EmbedTextAsync(text);
 
         // Assert
-        embedding.Should().HaveCount(384);
+        embedding.Should().HaveCount(768);
         embedding.Should().OnlyContain(v => !float.IsNaN(v));
     }
 
-    [Fact(Skip = "Integration test - requires running embedding service")]
+    [Fact(Skip = "Integration test - requires running Ollama service")]
     public async Task EmbedBatchAsync_ReturnsEmbeddingsForAllTexts()
     {
         // Arrange
-        var service = new HttpEmbeddingService("http://localhost:8765");
+        var service = new OllamaEmbeddingService();
         var texts = new List<string> { "Hello", "World", "Test" };
 
         // Act
@@ -179,14 +151,14 @@ public class HttpEmbeddingServiceIntegrationTests
 
         // Assert
         embeddings.Should().HaveCount(3);
-        embeddings.Should().OnlyContain(e => e.Length == 384);
+        embeddings.Should().OnlyContain(e => e.Length == 768);
     }
 
-    [Fact(Skip = "Integration test - requires running embedding service")]
+    [Fact(Skip = "Integration test - requires running Ollama service")]
     public async Task EmbedTextAsync_SimilarTextsShouldHaveSimilarEmbeddings()
     {
         // Arrange
-        var service = new HttpEmbeddingService("http://localhost:8765");
+        var service = new OllamaEmbeddingService();
         var text1 = "The quick brown fox";
         var text2 = "A fast brown fox";
         var text3 = "Machine learning algorithms";

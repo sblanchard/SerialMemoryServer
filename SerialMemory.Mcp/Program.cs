@@ -27,15 +27,11 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration
-// Option 1: ONNX (pure C#, no Python required) - set ONNX_MODEL_PATH and VOCAB_PATH
-// Option 2: HTTP (requires Python embedding service) - set EMBEDDING_SERVICE_URL
-var onnxModelPath = configuration["ONNX_MODEL_PATH"];
-var vocabPath = configuration["VOCAB_PATH"];
-var ollamaUrl = configuration["OLLAMA_URL"];
-var ollamaModel = configuration["OLLAMA_MODEL"];
+// Embedding service configuration - Ollama
+var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
+var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
-var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765"; 
+
 // Entity extraction service configuration
 // Option 1: Pattern-based (default, no external dependencies)
 // Option 2: HTTP/Ollama (requires extraction_http_service.py) - set EXTRACTION_SERVICE_URL
@@ -67,38 +63,9 @@ logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgr
 IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
 
 
-// Create embedding service (ONNX > Ollama > HTTP)
-IEmbeddingService embeddingService;
-if (!string.IsNullOrEmpty(onnxModelPath) && !string.IsNullOrEmpty(vocabPath) &&
-    File.Exists(onnxModelPath) && File.Exists(vocabPath))
-{
-    embeddingService = new OnnxEmbeddingService(onnxModelPath, vocabPath);
-    logger.LogInformation("Using ONNX embedding service");
-}
-else if (!string.IsNullOrEmpty(ollamaUrl) || !string.IsNullOrEmpty(ollamaModel))
-{
-    var url = ollamaUrl ?? "http://localhost:11434";
-    var model = ollamaModel ?? "nomic-embed-text";
-    embeddingService = new OllamaEmbeddingService(url, model, ollamaEmbeddingDim);
-    logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", model, url, ollamaEmbeddingDim);
-}
-else
-{
-    embeddingService = new HttpEmbeddingService(embeddingServiceUrl);
-    logger.LogInformation("Using HTTP embedding service at {Url}", embeddingServiceUrl);
-}
-
-logger.LogInformation("Embedding service: {Type}, Dimension: {Dim}",
-    embeddingService.GetType().Name, embeddingService.EmbeddingDimension);
-
-// Get model info if using ONNX
-OnnxModelInfo? currentModelInfo = null;
-if (embeddingService is OnnxEmbeddingService onnxService)
-{
-    currentModelInfo = onnxService.GetModelInfo();
-    logger.LogInformation("ONNX Model: {ModelName}, Pooling: {Pooling}, MaxSeq: {MaxSeq}",
-        currentModelInfo.ModelName, currentModelInfo.PoolingStrategy, currentModelInfo.MaxSequenceLength);
-}
+// Create embedding service - Ollama
+IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
 
 // Create entity extraction service (Pattern-based or HTTP/Ollama)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
@@ -992,56 +959,30 @@ async Task<object> HandleGetGraphStatistics()
 
 object HandleGetModelInfo()
 {
-    var serviceType = embeddingService.GetType().Name;
-    var dimension = embeddingService.EmbeddingDimension;
-
     var text = $"## Current Embedding Model\n\n" +
-               $"**Service Type:** {serviceType}\n" +
-               $"**Embedding Dimension:** {dimension}\n";
-
-    if (currentModelInfo != null)
-    {
-        text += $"\n**ONNX Model Details:**\n" +
-                $"- Model Name: {currentModelInfo.ModelName}\n" +
-                $"- Pooling Strategy: {currentModelInfo.PoolingStrategy}\n" +
-                $"- Max Sequence Length: {currentModelInfo.MaxSequenceLength}\n" +
-                $"- Vocabulary Size: {currentModelInfo.VocabularySize}\n" +
-                $"- Inputs: {string.Join(", ", currentModelInfo.InputNames)}\n" +
-                $"- Outputs: {string.Join(", ", currentModelInfo.OutputNames)}\n";
-    }
-
-    text += $"\n## Supported ONNX Models\n\n" +
-            $"### Small Models (384 dimensions) - Fast, good for most use cases\n" +
-            $"- **all-MiniLM-L6-v2** (current default): Best balance of speed/quality\n" +
-            $"- **all-MiniLM-L12-v2**: Slightly better quality, 2x slower\n" +
-            $"- **bge-small-en-v1.5**: Optimized for retrieval (uses CLS pooling)\n" +
-            $"- **e5-small-v2**: Good for asymmetric search\n\n" +
-            $"### Medium Models (768 dimensions) - Better quality, higher resource usage\n" +
-            $"- **all-mpnet-base-v2**: RECOMMENDED upgrade - best quality in this class\n" +
-            $"- **bge-base-en-v1.5**: Excellent for retrieval tasks\n" +
-            $"- **e5-base-v2**: Strong asymmetric search performance\n" +
-            $"- **gte-base**: Alibaba's high-quality encoder\n\n" +
-            $"### Large Models (1024 dimensions) - Highest quality, significant resources\n" +
-            $"- **e5-large-v2**: Top-tier quality\n" +
-            $"- **bge-large-en-v1.5**: Best retrieval model\n" +
-            $"- **gte-large**: Highest quality general encoder\n\n" +
-            $"## How to Switch Models\n\n" +
-            $"1. Export ONNX model:\n" +
-            $"   ```bash\n" +
-            $"   pip install optimum[exporters] onnx\n" +
-            $"   optimum-cli export onnx --model sentence-transformers/all-mpnet-base-v2 ./models/all-mpnet-base-v2/\n" +
-            $"   ```\n\n" +
-            $"2. Update database vector dimension (if changing from 384):\n" +
-            $"   ```sql\n" +
-            $"   -- Set EMBEDDING_DIM to 768 in ops/migrate_embedding_dimension.sql\n" +
-            $"   psql -f ops/migrate_embedding_dimension.sql\n" +
-            $"   ```\n\n" +
-            $"3. Update environment variables:\n" +
-            $"   ```\n" +
-            $"   ONNX_MODEL_PATH=/path/to/models/all-mpnet-base-v2/model.onnx\n" +
-            $"   VOCAB_PATH=/path/to/models/all-mpnet-base-v2/vocab.txt\n" +
-            $"   ```\n\n" +
-            $"4. Restart MCP server and run `reembed_memories` tool with `force_all: true`";
+               $"**Service:** Ollama\n" +
+               $"**Model:** {ollamaModel}\n" +
+               $"**URL:** {ollamaUrl}\n" +
+               $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}\n\n" +
+               $"## Supported Ollama Models\n\n" +
+               $"| Model | Dimensions | Notes |\n" +
+               $"|-------|------------|-------|\n" +
+               $"| nomic-embed-text | 768 | Default, good quality |\n" +
+               $"| mxbai-embed-large | 1024 | Higher quality, slower |\n" +
+               $"| all-minilm | 384 | Fast, smaller vectors |\n\n" +
+               $"## How to Switch Models\n\n" +
+               $"1. Pull the new model: `ollama pull <model-name>`\n" +
+               $"2. Update environment variables:\n" +
+               $"   ```\n" +
+               $"   OLLAMA_MODEL=<model-name>\n" +
+               $"   OLLAMA_EMBEDDING_DIM=<dimension>\n" +
+               $"   ```\n" +
+               $"3. If dimension changed, migrate database:\n" +
+               $"   ```sql\n" +
+               $"   -- Set EMBEDDING_DIM in ops/migrate_embedding_dimension.sql\n" +
+               $"   psql -f ops/migrate_embedding_dimension.sql\n" +
+               $"   ```\n" +
+               $"4. Restart MCP server and run `reembed_memories` with `force_all: true`";
 
     return CreateTextResponse(text);
 }
