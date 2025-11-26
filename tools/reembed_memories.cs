@@ -2,14 +2,16 @@
 // Re-embedding tool for SerialMemoryServer
 // Regenerates embeddings for all memories when switching to a new model
 //
+// This standalone script uses an HTTP embedding service for inference.
+// For direct ONNX inference, use the MCP tool `reembed_memories` instead.
+//
 // Usage:
-//   dotnet script reembed_memories.cs -- --model-path /path/to/model.onnx --vocab-path /path/to/vocab.txt
 //   dotnet script reembed_memories.cs -- --http-service http://localhost:8765
+//   dotnet script reembed_memories.cs -- --http-service http://localhost:8765 --force-all
 //   dotnet script reembed_memories.cs -- --help
 
 #r "nuget: Npgsql, 8.0.0"
 #r "nuget: Dapper, 2.1.24"
-#r "nuget: Microsoft.ML.OnnxRuntime, 1.16.3"
 #r "nuget: Pgvector, 0.2.0"
 
 using System;
@@ -200,8 +202,6 @@ class ReembedTool
 
 // Parse arguments
 var args = Args.ToList();
-string? modelPath = null;
-string? vocabPath = null;
 string? httpService = null;
 int batchSize = 100;
 bool forceAll = false;
@@ -211,12 +211,6 @@ for (int i = 0; i < args.Count; i++)
 {
     switch (args[i])
     {
-        case "--model-path":
-            modelPath = args[++i];
-            break;
-        case "--vocab-path":
-            vocabPath = args[++i];
-            break;
         case "--http-service":
             httpService = args[++i];
             break;
@@ -230,6 +224,14 @@ for (int i = 0; i < args.Count; i++)
         case "-h":
             showHelp = true;
             break;
+        default:
+            if (args[i].StartsWith("--"))
+            {
+                Console.WriteLine($"Unknown option: {args[i]}");
+                Console.WriteLine("Run with --help for usage information.");
+                return;
+            }
+            break;
     }
 }
 
@@ -240,23 +242,23 @@ Re-embedding Tool for SerialMemoryServer
 =========================================
 
 Regenerates embeddings for all memories when switching to a new ONNX model.
+This standalone script uses an HTTP embedding service for inference.
+
+For direct ONNX inference without HTTP, use the MCP tool `reembed_memories`
+which has full ONNX support via the SerialMemory.ML library.
 
 Usage:
   dotnet script reembed_memories.cs -- [options]
 
 Options:
-  --model-path <path>     Path to ONNX model file
-  --vocab-path <path>     Path to vocab.txt file
-  --http-service <url>    Use HTTP embedding service instead of ONNX
+  --http-service <url>    HTTP embedding service URL (required)
   --batch-size <n>        Number of memories per batch (default: 100)
   --force-all             Re-embed all memories, even those with embeddings
   --help, -h              Show this help message
 
 Examples:
-  # Using ONNX model
-  dotnet script reembed_memories.cs -- \
-    --model-path ./models/all-mpnet-base-v2/model.onnx \
-    --vocab-path ./models/all-mpnet-base-v2/vocab.txt
+  # Start the embedding service first (in another terminal):
+  cd SerialMemory.Mcp.Python && python tools/embedding_http_service.py
 
   # Using HTTP service
   dotnet script reembed_memories.cs -- --http-service http://localhost:8765
@@ -282,51 +284,50 @@ var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postg
 var database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb";
 var connectionString = $"Host={host};Port={port};Username={user};Password={password};Database={database}";
 
-// Create embedding function based on mode
-Func<string, Task<float[]>> embedFunc;
-int embeddingDimension;
-
-if (!string.IsNullOrEmpty(httpService))
+// Validate required arguments
+if (string.IsNullOrEmpty(httpService))
 {
-    Console.WriteLine($"Using HTTP embedding service: {httpService}");
-    var client = new HttpClient { BaseAddress = new Uri(httpService) };
-
-    // Detect dimension
-    var testResponse = await client.PostAsync("/embed",
-        new StringContent(JsonSerializer.Serialize(new { text = "test" }),
-        Encoding.UTF8, "application/json"));
-    var testResult = await JsonSerializer.DeserializeAsync<EmbedResponse>(
-        await testResponse.Content.ReadAsStreamAsync());
-    embeddingDimension = testResult?.embedding?.Length ?? 384;
-
-    Console.WriteLine($"Detected embedding dimension: {embeddingDimension}");
-
-    embedFunc = async (text) =>
-    {
-        var response = await client.PostAsync("/embed",
-            new StringContent(JsonSerializer.Serialize(new { text }),
-            Encoding.UTF8, "application/json"));
-        response.EnsureSuccessStatusCode();
-        var result = await JsonSerializer.DeserializeAsync<EmbedResponse>(
-            await response.Content.ReadAsStreamAsync());
-        return result?.embedding ?? throw new Exception("Empty embedding response");
-    };
-}
-else if (!string.IsNullOrEmpty(modelPath) && !string.IsNullOrEmpty(vocabPath))
-{
-    Console.WriteLine($"Using ONNX model: {modelPath}");
-    Console.WriteLine("Note: For large-scale re-embedding, consider using the HTTP service for better performance.");
-
-    // We'd need to load the actual ONNX service here
-    // For simplicity, this example uses HTTP
-    throw new Exception("ONNX mode requires referencing SerialMemory.ML project. Use --http-service instead.");
-}
-else
-{
-    Console.WriteLine("Error: Must specify either --model-path/--vocab-path or --http-service");
+    Console.WriteLine("Error: --http-service is required");
     Console.WriteLine("Run with --help for usage information.");
     return;
 }
+
+// Create embedding function using HTTP service
+Console.WriteLine($"Using HTTP embedding service: {httpService}");
+var client = new HttpClient { BaseAddress = new Uri(httpService) };
+
+// Detect dimension by making a test request
+int embeddingDimension;
+try
+{
+    var testResponse = await client.PostAsync("/embed",
+        new StringContent(JsonSerializer.Serialize(new { text = "test" }),
+        Encoding.UTF8, "application/json"));
+    testResponse.EnsureSuccessStatusCode();
+    var testResult = await JsonSerializer.DeserializeAsync<EmbedResponse>(
+        await testResponse.Content.ReadAsStreamAsync());
+    embeddingDimension = testResult?.embedding?.Length ?? 384;
+    Console.WriteLine($"Detected embedding dimension: {embeddingDimension}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Error: Failed to connect to embedding service at {httpService}");
+    Console.WriteLine($"Details: {ex.Message}");
+    Console.WriteLine("\nMake sure the embedding service is running:");
+    Console.WriteLine("  cd SerialMemory.Mcp.Python && python tools/embedding_http_service.py");
+    return;
+}
+
+Func<string, Task<float[]>> embedFunc = async (text) =>
+{
+    var response = await client.PostAsync("/embed",
+        new StringContent(JsonSerializer.Serialize(new { text }),
+        Encoding.UTF8, "application/json"));
+    response.EnsureSuccessStatusCode();
+    var result = await JsonSerializer.DeserializeAsync<EmbedResponse>(
+        await response.Content.ReadAsStreamAsync());
+    return result?.embedding ?? throw new Exception("Empty embedding response");
+};
 
 var tool = new ReembedTool(connectionString, embedFunc, embeddingDimension);
 await tool.RunAsync(batchSize, forceAll);
