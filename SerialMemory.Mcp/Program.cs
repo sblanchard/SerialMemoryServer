@@ -10,6 +10,8 @@ using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
 using SerialMemory.ML;
+using SerialMemory.Mcp.Tools;
+using SerialMemory.EventSourcing.Store;
 
 // MCP STDIO Server for Serial Memory - CORE-like Temporal Knowledge Graph
 // Implements Model Context Protocol over STDIN/STDOUT
@@ -75,10 +77,19 @@ logger.LogInformation("Entity extraction service: {Type}",
 
 var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
 
+// Initialize event store for lifecycle operations
+IEventStore eventStore = new PostgresEventStore(connectionString, loggerFactory.CreateLogger<PostgresEventStore>());
+
+// Initialize tool handlers
+var lifecycleTools = new MemoryLifecycleTools(eventStore, embeddingService, logger);
+var observabilityTools = new MemoryObservabilityTools(eventStore, connectionString, logger);
+var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
+var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
+
 // Session state
 Guid? currentSessionId = null;
 
-logger.LogInformation("Services initialized successfully");
+logger.LogInformation("Services initialized successfully (v2.0 with lifecycle, observability, safety, export tools)");
 
 #endregion
 
@@ -168,10 +179,8 @@ object HandleInitialize()
 
 object HandleToolsList()
 {
-    return new
+    var coreTools = new object[]
     {
-        tools = new object[]
-        {
             // memory_search
             new
             {
@@ -402,8 +411,17 @@ object HandleToolsList()
                     }
                 }
             }
-        }
     };
+
+    // Combine core tools with lifecycle, observability, safety, and export tools
+    var allTools = coreTools
+        .Concat(ToolDefinitions.GetLifecycleTools())
+        .Concat(ToolDefinitions.GetObservabilityTools())
+        .Concat(ToolDefinitions.GetSafetyTools())
+        .Concat(ToolDefinitions.GetExportTools())
+        .ToArray();
+
+    return new { tools = allTools };
 }
 
 object HandleResourcesList()
@@ -532,6 +550,52 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
             case "reembed_memories":
                 return await HandleReembedMemories(arguments);
+
+            // Lifecycle tools
+            case "memory_update":
+                return await lifecycleTools.HandleMemoryUpdate(arguments);
+            case "memory_delete":
+                return await lifecycleTools.HandleMemoryDelete(arguments);
+            case "memory_merge":
+                return await lifecycleTools.HandleMemoryMerge(arguments);
+            case "memory_split":
+                return await lifecycleTools.HandleMemorySplit(arguments);
+            case "memory_decay":
+                return await lifecycleTools.HandleMemoryDecay(arguments);
+            case "memory_reinforce":
+                return await lifecycleTools.HandleMemoryReinforce(arguments);
+            case "memory_expire":
+                return await lifecycleTools.HandleMemoryExpire(arguments);
+
+            // Observability tools
+            case "memory_trace":
+                return await observabilityTools.HandleMemoryTrace(arguments);
+            case "memory_lineage":
+                return await observabilityTools.HandleMemoryLineage(arguments);
+            case "memory_explain":
+                return await observabilityTools.HandleMemoryExplain(arguments);
+            case "memory_conflicts":
+                return await observabilityTools.HandleMemoryConflicts(arguments);
+
+            // Safety tools
+            case "detect_contradictions":
+                return await safetyTools.HandleDetectContradictions(arguments);
+            case "detect_hallucinations":
+                return await safetyTools.HandleDetectHallucinations(arguments);
+            case "verify_memory_integrity":
+                return await safetyTools.HandleVerifyIntegrity(arguments);
+            case "scan_loops":
+                return await safetyTools.HandleScanLoops(arguments);
+
+            // Export tools
+            case "export_workspace":
+                return await exportTools.HandleExportWorkspace(arguments);
+            case "export_memories":
+                return await exportTools.HandleExportMemories(arguments);
+            case "export_graph":
+                return await exportTools.HandleExportGraph(arguments);
+            case "export_user_profile":
+                return await exportTools.HandleExportUserProfile(arguments);
 
             default:
                 throw new Exception($"Unknown tool: {toolName}");
