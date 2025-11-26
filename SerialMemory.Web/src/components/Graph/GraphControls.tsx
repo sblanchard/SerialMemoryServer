@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { Search, Filter, RotateCcw, Box, Grid3X3 } from 'lucide-react';
+import { Search, Filter, RotateCcw, X } from 'lucide-react';
 import { ENTITY_COLORS } from '../../types/graph';
 
 interface GraphControlsProps {
   onSearch: (query: string) => void;
   onFilterChange: (types: string[]) => void;
   onReset: () => void;
-  on2DToggle?: () => void;
-  is3D?: boolean;
 }
 
 const ENTITY_TYPES = Object.keys(ENTITY_COLORS).filter(k => k !== 'default');
@@ -16,8 +14,6 @@ export function GraphControls({
   onSearch,
   onFilterChange,
   onReset,
-  on2DToggle,
-  is3D = true,
 }: GraphControlsProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(ENTITY_TYPES));
@@ -53,9 +49,9 @@ export function GraphControls({
   };
 
   return (
-    <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+    <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 items-start">
       {/* Search */}
-      <div className="flex gap-2">
+      <div className="graph-controls flex gap-2">
         <div className="relative">
           <input
             type="text"
@@ -63,13 +59,13 @@ export function GraphControls({
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search graph..."
-            className="bg-bg-secondary border border-gray-600 rounded-lg px-4 py-2 pl-10 text-sm w-64 focus:outline-none focus:border-primary"
+            className="graph-search w-48 pl-9 pr-3 py-2 text-sm"
           />
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-graphite" />
         </div>
         <button
           onClick={handleSearch}
-          className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm transition-colors"
+          className="btn-primary px-4 py-2"
         >
           Search
         </button>
@@ -79,9 +75,7 @@ export function GraphControls({
       <div className="flex gap-2">
         <button
           onClick={() => setShowFilters(!showFilters)}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-            showFilters ? 'bg-primary text-white' : 'bg-bg-secondary text-gray-300 hover:bg-bg-tertiary'
-          }`}
+          className={`graph-control-btn ${showFilters ? 'active' : ''}`}
         >
           <Filter className="w-4 h-4" />
           Filters
@@ -89,34 +83,30 @@ export function GraphControls({
 
         <button
           onClick={onReset}
-          className="flex items-center gap-2 bg-bg-secondary text-gray-300 hover:bg-bg-tertiary px-3 py-2 rounded-lg text-sm transition-colors"
+          className="graph-control-btn"
         >
           <RotateCcw className="w-4 h-4" />
           Reset
         </button>
-
-        {on2DToggle && (
-          <button
-            onClick={on2DToggle}
-            className="flex items-center gap-2 bg-bg-secondary text-gray-300 hover:bg-bg-tertiary px-3 py-2 rounded-lg text-sm transition-colors"
-          >
-            {is3D ? <Grid3X3 className="w-4 h-4" /> : <Box className="w-4 h-4" />}
-            {is3D ? '2D' : '3D'}
-          </button>
-        )}
       </div>
 
       {/* Filter panel */}
       {showFilters && (
-        <div className="bg-bg-secondary border border-gray-600 rounded-lg p-4 mt-2 w-72">
+        <div className="graph-controls w-72 animate-in slide-in-from-top-2 duration-200">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-sm font-medium">Entity Types</span>
-            <div className="flex gap-2">
-              <button onClick={selectAll} className="text-xs text-primary hover:underline">
+            <span className="text-sm font-medium text-soft-white">Entity Types</span>
+            <div className="flex items-center gap-3">
+              <button onClick={selectAll} className="text-xs text-electric hover:text-cyan transition-colors">
                 All
               </button>
-              <button onClick={selectNone} className="text-xs text-gray-400 hover:underline">
+              <button onClick={selectNone} className="text-xs text-graphite hover:text-soft-white transition-colors">
                 None
+              </button>
+              <button
+                onClick={() => setShowFilters(false)}
+                className="text-graphite hover:text-soft-white transition-colors"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -124,19 +114,29 @@ export function GraphControls({
             {ENTITY_TYPES.map(type => (
               <label
                 key={type}
-                className="flex items-center gap-2 cursor-pointer text-sm"
+                className={`flex items-center gap-2 cursor-pointer text-sm p-2 rounded-lg transition-all ${
+                  activeFilters.has(type)
+                    ? 'bg-slate/20 text-soft-white'
+                    : 'text-graphite hover:bg-slate/10'
+                }`}
               >
                 <input
                   type="checkbox"
                   checked={activeFilters.has(type)}
                   onChange={() => toggleFilter(type)}
-                  className="rounded border-gray-600"
+                  className="hidden"
                 />
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: ENTITY_COLORS[type] }}
+                <div
+                  className={`w-3 h-3 rounded-full ring-2 ring-offset-1 ring-offset-navy transition-all ${
+                    activeFilters.has(type) ? 'ring-opacity-100' : 'ring-opacity-30'
+                  }`}
+                  style={{
+                    backgroundColor: activeFilters.has(type) ? ENTITY_COLORS[type] : 'transparent',
+                    borderColor: ENTITY_COLORS[type],
+                    boxShadow: activeFilters.has(type) ? `0 0 8px ${ENTITY_COLORS[type]}60` : 'none'
+                  }}
                 />
-                <span className="text-gray-300">{type}</span>
+                <span className="capitalize">{type}</span>
               </label>
             ))}
           </div>

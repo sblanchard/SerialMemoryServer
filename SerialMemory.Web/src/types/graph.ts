@@ -93,6 +93,7 @@ export interface ForceGraphLink {
   target: string | ForceGraphNode;
   label?: string;
   color?: string;
+  value?: number;
 }
 
 // THREE.js type for node objects
