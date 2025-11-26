@@ -14,7 +14,11 @@
 -- Usage: psql -v EMBEDDING_DIM=768 -f deterministic_memory_schema.sql
 -- Or set before running: \set EMBEDDING_DIM 768
 -- =====================================================
-\set EMBEDDING_DIM COALESCE(:'EMBEDDING_DIM', '384')
+-- Set default if not provided via -v flag
+\if :{?EMBEDDING_DIM}
+\else
+\set EMBEDDING_DIM 384
+\endif
 
 -- Inference session tracking for deterministic replay
 CREATE TABLE IF NOT EXISTS inference_sessions (
