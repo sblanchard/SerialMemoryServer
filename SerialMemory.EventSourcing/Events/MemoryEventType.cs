@@ -6,6 +6,7 @@ namespace SerialMemory.EventSourcing.Events;
 /// </summary>
 public enum MemoryEventType
 {
+    // Lifecycle events
     MemoryCreated,
     MemoryUpdated,
     MemoryMerged,
@@ -18,5 +19,13 @@ public enum MemoryEventType
     MemoryIgnored,
     MemoryContradicted,
     MemoryExpired,
-    MemorySplit
+    MemorySplit,
+
+    // Safety events
+    ContradictionDetected,
+    HallucinationFlagged,
+    IntegrityCheckFailed,
+
+    // Export events
+    ExportCompleted
 }
