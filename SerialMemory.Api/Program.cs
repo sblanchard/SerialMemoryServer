@@ -70,7 +70,14 @@ else
     Console.WriteLine($"Using HTTP embedding service: {embeddingServiceUrl}");
     builder.Services.AddSingleton<IEmbeddingService>(_ => new HttpEmbeddingService(embeddingServiceUrl));
 }
-builder.Services.AddSingleton<IEntityExtractionService, PatternEntityExtractionService>();
+
+// Entity extraction service - use HTTP/Ollama if configured, otherwise pattern-based
+var extractionServiceUrl = builder.Configuration["ExtractionServiceUrl"]
+    ?? Environment.GetEnvironmentVariable("EXTRACTION_SERVICE_URL");
+
+var entityExtractionService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
+Console.WriteLine($"Using entity extraction service: {entityExtractionService.GetType().Name}");
+builder.Services.AddSingleton<IEntityExtractionService>(_ => entityExtractionService);
 builder.Services.AddSingleton<KnowledgeGraphService>();
 builder.Services.AddSingleton<RelationshipDiscoveryService>();
 
