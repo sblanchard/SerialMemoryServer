@@ -45,65 +45,127 @@ public sealed class RelationshipCrawler
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
-        // Get memories that haven't been processed for relationships
-        var sql = @"
-            SELECT m.id, m.content, m.created_at
-            FROM memories m
-            WHERE NOT EXISTS (
-                SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-            )
-            OR @ForceReprocess = TRUE
-            ORDER BY m.created_at DESC
-            LIMIT @BatchSize";
+        // Get total count for progress reporting
+        var countSql = options.ForceReprocess
+            ? "SELECT COUNT(*) FROM memories"
+            : "SELECT COUNT(*) FROM memories m WHERE NOT EXISTS (SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id)";
+        var totalToProcess = await connection.ExecuteScalarAsync<long>(countSql);
 
-        var memories = (await connection.QueryAsync<MemoryRow>(sql, new
-        {
-            ForceReprocess = options.ForceReprocess,
-            BatchSize = options.BatchSize
-        })).ToList();
-
-        _logger.LogInformation("Found {Count} memories to process for relationship extraction", memories.Count);
+        _logger.LogInformation("Found {Count} memories to process for relationship extraction", totalToProcess);
 
         var totalEntities = 0;
         var totalRelationships = 0;
         var processedMemories = 0;
         var errors = new List<CrawlError>();
 
-        foreach (var memory in memories)
+        // Track failed IDs to prevent infinite loop when ForceReprocess=false
+        var failedIds = new HashSet<Guid>();
+
+        // Track offset for ForceReprocess=true (offset-based pagination)
+        var rowsFetched = 0L;
+
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            try
+            // Fetch batch - different strategies based on ForceReprocess
+            List<MemoryRow> memories;
+
+            if (options.ForceReprocess)
             {
-                var result = await ProcessMemoryAsync(connection, memory, cancellationToken);
-                totalEntities += result.EntitiesCreated;
-                totalRelationships += result.RelationshipsCreated;
-                processedMemories++;
+                // ForceReprocess=true: use offset-based pagination (rows stay in result set)
+                var sql = @"
+                    SELECT m.id, m.content, m.created_at
+                    FROM memories m
+                    ORDER BY m.id
+                    LIMIT @BatchSize OFFSET @Offset";
 
-                progress?.Report(new CrawlProgress(
-                    processedMemories,
-                    memories.Count,
-                    totalEntities,
-                    totalRelationships));
-
-                if (options.DelayBetweenMemories > TimeSpan.Zero)
+                memories = (await connection.QueryAsync<MemoryRow>(sql, new
                 {
-                    await Task.Delay(options.DelayBetweenMemories, cancellationToken);
-                }
+                    BatchSize = options.BatchSize,
+                    Offset = rowsFetched
+                })).ToList();
+
+                rowsFetched += memories.Count;
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.id);
-                errors.Add(new CrawlError(memory.id, ex.Message));
+                // ForceReprocess=false: rows leave result set after processing, query from offset 0
+                // Exclude failed IDs to prevent infinite loop on persistent failures
+                string sql;
+                object parameters;
 
-                if (errors.Count >= options.MaxErrors)
+                if (failedIds.Count > 0)
                 {
-                    _logger.LogError("Max errors reached ({Count}), stopping crawl", errors.Count);
-                    break;
+                    sql = @"
+                        SELECT m.id, m.content, m.created_at
+                        FROM memories m
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                        )
+                        AND m.id != ALL(@FailedIds)
+                        ORDER BY m.created_at DESC
+                        LIMIT @BatchSize";
+                    parameters = new { BatchSize = options.BatchSize, FailedIds = failedIds.ToArray() };
+                }
+                else
+                {
+                    sql = @"
+                        SELECT m.id, m.content, m.created_at
+                        FROM memories m
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                        )
+                        ORDER BY m.created_at DESC
+                        LIMIT @BatchSize";
+                    parameters = new { BatchSize = options.BatchSize };
+                }
+
+                memories = (await connection.QueryAsync<MemoryRow>(sql, parameters)).ToList();
+            }
+
+            if (memories.Count == 0) break;
+
+            _logger.LogDebug("Processing batch of {Count} memories (total processed: {Total})", memories.Count, processedMemories);
+
+            foreach (var memory in memories)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var result = await ProcessMemoryAsync(connection, memory, cancellationToken);
+                    totalEntities += result.EntitiesCreated;
+                    totalRelationships += result.RelationshipsCreated;
+                    processedMemories++;
+
+                    progress?.Report(new CrawlProgress(
+                        processedMemories,
+                        (int)totalToProcess,
+                        totalEntities,
+                        totalRelationships));
+
+                    if (options.DelayBetweenMemories > TimeSpan.Zero)
+                    {
+                        await Task.Delay(options.DelayBetweenMemories, cancellationToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.id);
+                    errors.Add(new CrawlError(memory.id, ex.Message));
+                    failedIds.Add(memory.id);
+
+                    if (errors.Count >= options.MaxErrors)
+                    {
+                        _logger.LogError("Max errors reached ({Count}), stopping crawl", errors.Count);
+                        goto crawlComplete; // Break out of both loops
+                    }
                 }
             }
         }
 
+        crawlComplete:
         stopwatch.Stop();
 
         _logger.LogInformation(
