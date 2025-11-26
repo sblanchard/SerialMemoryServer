@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
 using SerialMemory.ML;
@@ -92,10 +94,15 @@ var observabilityTools = new MemoryObservabilityTools(eventStore, connectionStri
 var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
 var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
 
+// Initialize usage service (non-blocking metering)
+var usageLogger = loggerFactory.CreateLogger<UsageService>();
+using var usageService = new UsageService(connectionString, usageLogger, tenantId: "self", workspaceId: "default");
+logger.LogInformation("Usage metering service initialized");
+
 // Session state
 Guid? currentSessionId = null;
 
-logger.LogInformation("Services initialized successfully (v2.0 with lifecycle, observability, safety, export tools)");
+logger.LogInformation("Services initialized successfully (v2.1 with lifecycle, observability, safety, export, usage metering)");
 
 #endregion
 
@@ -513,104 +520,105 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 {
     var toolName = @params?["name"]?.GetValue<string>();
     var arguments = @params?["arguments"];
+    var sw = Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
 
     try
     {
-        switch (toolName)
+        var result = toolName switch
         {
-            case "memory_search":
-                return await HandleMemorySearch(arguments);
-
-            case "memory_ingest":
-                return await HandleMemoryIngest(arguments);
-
-            case "memory_about_user":
-                return await HandleMemoryAboutUser(arguments);
-
-            case "initialise_conversation_session":
-                return await HandleInitialiseSession(arguments);
-
-            case "end_conversation_session":
-                return await HandleEndSession();
-
-            case "memory_multi_hop_search":
-                return await HandleMultiHopSearch(arguments);
-
-            case "get_integrations":
-                return HandleGetIntegrations();
-
-            case "import_from_core":
-                return await HandleImportFromCore(arguments);
-
-            case "set_user_persona":
-                return await HandleSetUserPersona(arguments);
-
-            case "crawl_relationships":
-                return await HandleCrawlRelationships(arguments);
-
-            case "get_graph_statistics":
-                return await HandleGetGraphStatistics();
-
-            case "get_model_info":
-                return HandleGetModelInfo();
-
-            case "reembed_memories":
-                return await HandleReembedMemories(arguments);
+            "memory_search" => await HandleMemorySearch(arguments),
+            "memory_ingest" => await HandleMemoryIngest(arguments),
+            "memory_about_user" => await HandleMemoryAboutUser(arguments),
+            "initialise_conversation_session" => await HandleInitialiseSession(arguments),
+            "end_conversation_session" => await HandleEndSession(),
+            "memory_multi_hop_search" => await HandleMultiHopSearch(arguments),
+            "get_integrations" => HandleGetIntegrations(),
+            "import_from_core" => await HandleImportFromCore(arguments),
+            "set_user_persona" => await HandleSetUserPersona(arguments),
+            "crawl_relationships" => await HandleCrawlRelationships(arguments),
+            "get_graph_statistics" => await HandleGetGraphStatistics(),
+            "get_model_info" => HandleGetModelInfo(),
+            "reembed_memories" => await HandleReembedMemories(arguments),
 
             // Lifecycle tools
-            case "memory_update":
-                return await lifecycleTools.HandleMemoryUpdate(arguments);
-            case "memory_delete":
-                return await lifecycleTools.HandleMemoryDelete(arguments);
-            case "memory_merge":
-                return await lifecycleTools.HandleMemoryMerge(arguments);
-            case "memory_split":
-                return await lifecycleTools.HandleMemorySplit(arguments);
-            case "memory_decay":
-                return await lifecycleTools.HandleMemoryDecay(arguments);
-            case "memory_reinforce":
-                return await lifecycleTools.HandleMemoryReinforce(arguments);
-            case "memory_expire":
-                return await lifecycleTools.HandleMemoryExpire(arguments);
+            "memory_update" => await lifecycleTools.HandleMemoryUpdate(arguments),
+            "memory_delete" => await lifecycleTools.HandleMemoryDelete(arguments),
+            "memory_merge" => await lifecycleTools.HandleMemoryMerge(arguments),
+            "memory_split" => await lifecycleTools.HandleMemorySplit(arguments),
+            "memory_decay" => await lifecycleTools.HandleMemoryDecay(arguments),
+            "memory_reinforce" => await lifecycleTools.HandleMemoryReinforce(arguments),
+            "memory_expire" => await lifecycleTools.HandleMemoryExpire(arguments),
 
             // Observability tools
-            case "memory_trace":
-                return await observabilityTools.HandleMemoryTrace(arguments);
-            case "memory_lineage":
-                return await observabilityTools.HandleMemoryLineage(arguments);
-            case "memory_explain":
-                return await observabilityTools.HandleMemoryExplain(arguments);
-            case "memory_conflicts":
-                return await observabilityTools.HandleMemoryConflicts(arguments);
+            "memory_trace" => await observabilityTools.HandleMemoryTrace(arguments),
+            "memory_lineage" => await observabilityTools.HandleMemoryLineage(arguments),
+            "memory_explain" => await observabilityTools.HandleMemoryExplain(arguments),
+            "memory_conflicts" => await observabilityTools.HandleMemoryConflicts(arguments),
 
             // Safety tools
-            case "detect_contradictions":
-                return await safetyTools.HandleDetectContradictions(arguments);
-            case "detect_hallucinations":
-                return await safetyTools.HandleDetectHallucinations(arguments);
-            case "verify_memory_integrity":
-                return await safetyTools.HandleVerifyIntegrity(arguments);
-            case "scan_loops":
-                return await safetyTools.HandleScanLoops(arguments);
+            "detect_contradictions" => await safetyTools.HandleDetectContradictions(arguments),
+            "detect_hallucinations" => await safetyTools.HandleDetectHallucinations(arguments),
+            "verify_memory_integrity" => await safetyTools.HandleVerifyIntegrity(arguments),
+            "scan_loops" => await safetyTools.HandleScanLoops(arguments),
 
             // Export tools
-            case "export_workspace":
-                return await exportTools.HandleExportWorkspace(arguments);
-            case "export_memories":
-                return await exportTools.HandleExportMemories(arguments);
-            case "export_graph":
-                return await exportTools.HandleExportGraph(arguments);
-            case "export_user_profile":
-                return await exportTools.HandleExportUserProfile(arguments);
+            "export_workspace" => await exportTools.HandleExportWorkspace(arguments),
+            "export_memories" => await exportTools.HandleExportMemories(arguments),
+            "export_graph" => await exportTools.HandleExportGraph(arguments),
+            "export_user_profile" => await exportTools.HandleExportUserProfile(arguments),
 
-            default:
-                throw new Exception($"Unknown tool: {toolName}");
-        }
+            _ => throw new Exception($"Unknown tool: {toolName}")
+        };
+
+        return result;
     }
     catch (Exception ex)
     {
+        success = false;
+        errorMessage = ex.Message;
         logger.LogError(ex, "Error executing tool {ToolName}", toolName);
         return CreateErrorResponse(ex.Message);
+    }
+    finally
+    {
+        sw.Stop();
+        // Track usage for metered tools (non-blocking)
+        TrackToolUsage(toolName, (int)sw.ElapsedMilliseconds, success, errorMessage);
+    }
+}
+
+void TrackToolUsage(string? toolName, int latencyMs, bool success, string? errorMessage)
+{
+    UsageEventType? eventType = toolName switch
+    {
+        "memory_ingest" => UsageEventType.MemoryIngest,
+        "memory_search" => UsageEventType.MemorySearch,
+        "memory_multi_hop_search" => UsageEventType.MemoryMultiHopSearch,
+        "memory_update" => UsageEventType.MemoryUpdate,
+        "memory_delete" => UsageEventType.MemoryDelete,
+        "memory_merge" => UsageEventType.MemoryMerge,
+        "memory_split" => UsageEventType.MemorySplit,
+        "memory_decay" => UsageEventType.MemoryDecay,
+        "memory_reinforce" => UsageEventType.MemoryReinforce,
+        "memory_expire" => UsageEventType.MemoryExpire,
+        "crawl_relationships" => UsageEventType.CrawlRelationships,
+        "export_workspace" => UsageEventType.ExportWorkspace,
+        "export_memories" => UsageEventType.ExportMemories,
+        "export_graph" => UsageEventType.ExportGraph,
+        "reembed_memories" => UsageEventType.ReembedMemories,
+        _ => null
+    };
+
+    if (eventType.HasValue)
+    {
+        usageService.TrackUsage(
+            eventType.Value,
+            sessionId: currentSessionId,
+            latencyMs: latencyMs,
+            success: success,
+            errorMessage: errorMessage);
     }
 }
 

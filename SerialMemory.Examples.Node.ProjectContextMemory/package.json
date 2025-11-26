@@ -1,0 +1,12 @@
+{
+  "name": "project-context-memory-example",
+  "version": "1.0.0",
+  "description": "Example: Using SerialMemory SDK for project-scoped context memory",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

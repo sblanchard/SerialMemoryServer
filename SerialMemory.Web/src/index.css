@@ -1,18 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-tertiary: #0f3460;
+  --midnight: #0B0F1A;
+  --navy: #11162A;
+  --electric: #3B82F6;
+  --cyan: #22D3EE;
+  --graphite: #6B7280;
+  --slate: #374151;
+  --soft-white: #E5E7EB;
+  --success: #22C55E;
+  --warning: #FACC15;
+  --danger: #EF4444;
+
+  /* Legacy aliases */
+  --bg-primary: #0B0F1A;
+  --bg-secondary: #11162A;
+  --bg-tertiary: #1a1f3a;
 }
 
 body {
   margin: 0;
-  background-color: var(--bg-primary);
-  color: #eaeaea;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background-color: var(--midnight);
+  color: var(--soft-white);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 #root {
@@ -27,14 +41,66 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
+  background: var(--navy);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
+  background: var(--slate);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5a5a7a;
+  background: var(--graphite);
+}
+
+/* Utility classes */
+.gradient-text {
+  background: linear-gradient(90deg, var(--electric), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
+}
+
+.card {
+  background-color: var(--navy);
+  border: 1px solid var(--slate);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  transition: all 0.3s ease;
+}
+
+.card:hover {
+  border-color: var(--electric);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(90deg, var(--electric), #2563eb);
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Badge styles */
+.badge {
+  background: rgba(34, 211, 238, 0.1);
+  color: var(--cyan);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
 }

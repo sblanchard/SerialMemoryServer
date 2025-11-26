@@ -11,24 +11,16 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.ContextOptimization;
 
-public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
+public sealed class ContextBudgetOptimizer(
+    NpgsqlDataSource dataSource,
+    ILogger<ContextBudgetOptimizer> logger)
+    : IContextBudgetOptimizer
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<ContextBudgetOptimizer> _logger;
-
     // Approximate tokens per character ratio (conservative estimate)
     private const float TokensPerCharacter = 0.3f;
 
     // Token overhead for memory formatting
     private const int MemoryFormatOverhead = 20;
-
-    public ContextBudgetOptimizer(
-        NpgsqlDataSource dataSource,
-        ILogger<ContextBudgetOptimizer> logger)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-    }
 
     public async Task<ContextBudget> CreateBudgetAsync(
         int maxTokens,
@@ -39,7 +31,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
     {
         var budgetId = Guid.CreateVersion7();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO context_budgets (
@@ -59,7 +51,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
             PriorityWeights = JsonSerializer.Serialize(weights)
         });
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Created context budget {BudgetId}: {MaxTokens} max, {Reserved} reserved",
             budgetId, maxTokens, systemReservedTokens);
 
@@ -102,7 +94,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         var inclusionOrder = 0;
         var totalTokensUsed = 0;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         foreach (var (candidate, priorityScore) in scoredCandidates)
         {
@@ -199,7 +191,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         var capturedPriority = includedMemories.Sum(m => m.PriorityScore);
         var coverageScore = totalPossiblePriority > 0 ? capturedPriority / totalPossiblePriority : 1f;
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Packed context for budget {BudgetId}: {Included}/{Total} memories, {Tokens} tokens, {Coverage:P2} coverage",
             budgetId, includedMemories.Count, candidateList.Count, totalTokensUsed, coverageScore);
 
@@ -226,7 +218,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         Guid budgetId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT budget_id, session_id, max_tokens, system_reserved_tokens,

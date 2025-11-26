@@ -11,25 +11,15 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.DeterministicInference;
 
-public sealed class EmbeddingCache : IEmbeddingCache
+public sealed class EmbeddingCache(
+    NpgsqlDataSource dataSource,
+    ILogger<EmbeddingCache> logger,
+    string modelVersion = "onnx-minilm-v2")
+    : IEmbeddingCache
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<EmbeddingCache> _logger;
-    private readonly string _modelVersion;
-
-    public EmbeddingCache(
-        NpgsqlDataSource dataSource,
-        ILogger<EmbeddingCache> logger,
-        string modelVersion = "onnx-minilm-v2")
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-        _modelVersion = modelVersion;
-    }
-
     public async Task<float[]?> GetAsync(string contentHash, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var cacheKey = ComputeCacheKey(contentHash);
 
@@ -41,13 +31,13 @@ public sealed class EmbeddingCache : IEmbeddingCache
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("CacheKey", cacheKey);
-        cmd.Parameters.AddWithValue("ModelVersion", _modelVersion);
+        cmd.Parameters.AddWithValue("ModelVersion", modelVersion);
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken))
         {
             var vector = reader.GetFieldValue<Vector>(0);
-            _logger.LogDebug("Cache hit for embedding {CacheKey}", cacheKey);
+            logger.LogDebug("Cache hit for embedding {CacheKey}", cacheKey);
             return vector.ToArray();
         }
 
@@ -60,7 +50,7 @@ public sealed class EmbeddingCache : IEmbeddingCache
         string modelVersion,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var cacheKey = ComputeCacheKey(contentHash);
 
@@ -81,12 +71,12 @@ public sealed class EmbeddingCache : IEmbeddingCache
         cmd.Parameters.AddWithValue("ModelVersion", modelVersion);
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
-        _logger.LogDebug("Cached embedding {CacheKey}", cacheKey);
+        logger.LogDebug("Cached embedding {CacheKey}", cacheKey);
     }
 
     public async Task<bool> ExistsAsync(string contentHash, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var cacheKey = ComputeCacheKey(contentHash);
 
@@ -98,12 +88,12 @@ public sealed class EmbeddingCache : IEmbeddingCache
 
         return await connection.ExecuteScalarAsync<bool>(
             sql,
-            new { CacheKey = cacheKey, ModelVersion = _modelVersion });
+            new { CacheKey = cacheKey, ModelVersion = modelVersion });
     }
 
     public async Task MarkCompiledAsync(string contentHash, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var cacheKey = ComputeCacheKey(contentHash);
 
@@ -112,23 +102,23 @@ public sealed class EmbeddingCache : IEmbeddingCache
             SET is_compiled = TRUE
             WHERE cache_key = @CacheKey AND model_version = @ModelVersion";
 
-        await connection.ExecuteAsync(sql, new { CacheKey = cacheKey, ModelVersion = _modelVersion });
+        await connection.ExecuteAsync(sql, new { CacheKey = cacheKey, ModelVersion = modelVersion });
     }
 
     public async Task<int> GetCompiledCountAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT COUNT(*) FROM embedding_cache
             WHERE is_compiled = TRUE AND model_version = @ModelVersion";
 
-        return await connection.ExecuteScalarAsync<int>(sql, new { ModelVersion = _modelVersion });
+        return await connection.ExecuteScalarAsync<int>(sql, new { ModelVersion = modelVersion });
     }
 
     public async Task PruneUnusedAsync(TimeSpan maxAge, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             DELETE FROM embedding_cache
@@ -142,7 +132,7 @@ public sealed class EmbeddingCache : IEmbeddingCache
 
         if (deleted > 0)
         {
-            _logger.LogInformation("Pruned {Count} unused embedding cache entries", deleted);
+            logger.LogInformation("Pruned {Count} unused embedding cache entries", deleted);
         }
     }
 

@@ -17,29 +17,19 @@ namespace SerialMemory.Infrastructure.Reasoning;
 /// Pass 1: Generate draft response based on retrieved memories
 /// Pass 2: Critique and repair the draft using semantic analysis
 /// </summary>
-public sealed class DualPassReasoningEngine : IDualPassReasoning
+public sealed class DualPassReasoningEngine(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    IHybridRetrievalEngine retrievalEngine,
+    ILogger<DualPassReasoningEngine> logger)
+    : IDualPassReasoning
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly IHybridRetrievalEngine _retrievalEngine;
-    private readonly ILogger<DualPassReasoningEngine> _logger;
+    private readonly IHybridRetrievalEngine _retrievalEngine = retrievalEngine;
 
     // Semantic similarity thresholds for reasoning
     private const float HighConfidenceThreshold = 0.85f;
     private const float MediumConfidenceThreshold = 0.70f;
     private const float LowConfidenceThreshold = 0.55f;
-
-    public DualPassReasoningEngine(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        IHybridRetrievalEngine retrievalEngine,
-        ILogger<DualPassReasoningEngine> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _retrievalEngine = retrievalEngine;
-        _logger = logger;
-    }
 
     public async Task<DualPassResult> ReasonAsync(
         DualPassInput input,
@@ -81,7 +71,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
             pass2Duration,
             cancellationToken);
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Dual-pass reasoning completed in {Duration}ms: confidence {Before:F2} -> {After:F2}",
             stopwatch.ElapsedMilliseconds, confidenceBefore, confidenceAfter);
 
@@ -105,7 +95,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         var stopwatch = Stopwatch.StartNew();
 
         // Generate query embedding
-        var queryEmbedding = await _embeddingService.EmbedTextAsync(input.Query);
+        var queryEmbedding = await embeddingService.EmbedTextAsync(input.Query);
 
         // Analyze retrieved memories for relevance and extract key information
         var analyzedMemories = new List<AnalyzedMemory>();
@@ -188,7 +178,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         CancellationToken cancellationToken)
     {
         // Re-embed memory content for precise comparison
-        var memoryEmbedding = await _embeddingService.EmbedTextAsync(memory.Content);
+        var memoryEmbedding = await embeddingService.EmbedTextAsync(memory.Content);
 
         // Compute semantic similarity
         var semanticSimilarity = CosineSimilarity(queryEmbedding, memoryEmbedding);
@@ -354,12 +344,12 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         // Embed each fact and check against source memories
         foreach (var fact in draft.Facts)
         {
-            var factEmbedding = await _embeddingService.EmbedTextAsync(fact);
+            var factEmbedding = await embeddingService.EmbedTextAsync(fact);
             var maxSimilarity = 0f;
 
             foreach (var memory in memories)
             {
-                var memoryEmbedding = await _embeddingService.EmbedTextAsync(memory.Content);
+                var memoryEmbedding = await embeddingService.EmbedTextAsync(memory.Content);
                 var similarity = CosineSimilarity(factEmbedding, memoryEmbedding);
                 maxSimilarity = Math.Max(maxSimilarity, similarity);
             }
@@ -478,8 +468,8 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         {
             for (int j = i + 1; j < draft.Facts.Count; j++)
             {
-                var emb1 = await _embeddingService.EmbedTextAsync(draft.Facts[i]);
-                var emb2 = await _embeddingService.EmbedTextAsync(draft.Facts[j]);
+                var emb1 = await embeddingService.EmbedTextAsync(draft.Facts[i]);
+                var emb2 = await embeddingService.EmbedTextAsync(draft.Facts[j]);
 
                 var similarity = CosineSimilarity(emb1, emb2);
 
@@ -522,11 +512,11 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
             return null;
         }
 
-        var topicEmbedding = await _embeddingService.EmbedTextAsync(topic);
+        var topicEmbedding = await embeddingService.EmbedTextAsync(topic);
 
         foreach (var memory in memories)
         {
-            var memoryEmbedding = await _embeddingService.EmbedTextAsync(memory.Content);
+            var memoryEmbedding = await embeddingService.EmbedTextAsync(memory.Content);
             var similarity = CosineSimilarity(topicEmbedding, memoryEmbedding);
 
             if (similarity > MediumConfidenceThreshold)
@@ -535,7 +525,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
                 var sentences = memory.Content.Split(new[] { '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var sentence in sentences)
                 {
-                    var sentenceEmbedding = await _embeddingService.EmbedTextAsync(sentence.Trim());
+                    var sentenceEmbedding = await embeddingService.EmbedTextAsync(sentence.Trim());
                     if (CosineSimilarity(topicEmbedding, sentenceEmbedding) > MediumConfidenceThreshold)
                     {
                         return sentence.Trim();
@@ -711,7 +701,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         int pass2Duration,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var inputHash = ComputeHash(JsonSerializer.Serialize(input));
         var outputHash = ComputeHash(JsonSerializer.Serialize(finalOutput));
@@ -748,7 +738,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
         Guid reasoningId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT session_id, draft_output::text, critique::text, final_output::text,

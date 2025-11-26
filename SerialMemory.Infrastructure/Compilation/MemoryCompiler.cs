@@ -15,21 +15,13 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.Compilation;
 
-public sealed class MemoryCompiler : IMemoryCompiler
+public sealed class MemoryCompiler(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILogger<MemoryCompiler> logger)
+    : IMemoryCompiler
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<MemoryCompiler> _logger;
-
-    public MemoryCompiler(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILogger<MemoryCompiler> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
+    private readonly IEmbeddingService _embeddingService = embeddingService;
 
     public async Task<CompilationResult> CompileAsync(
         CompilationOptions options,
@@ -48,7 +40,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
             if (memories.Count < options.MinClusterSize)
             {
-                _logger.LogWarning("Not enough memories ({Count}) for clustering", memories.Count);
+                logger.LogWarning("Not enough memories ({Count}) for clustering", memories.Count);
                 await CompleteCompilationTaskAsync(taskId, 0, cancellationToken);
                 return new CompilationResult(0, 0, 0, 0, stopwatch.Elapsed, 0);
             }
@@ -86,7 +78,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
             stopwatch.Stop();
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Full compilation completed: {Memories} memories, {ClustersCreated} clusters created, " +
                 "{ClustersUpdated} updated, {IndexEntries} index entries in {Duration}ms",
                 memories.Count, clustersCreated, clustersUpdated, indexEntriesCreated, stopwatch.ElapsedMilliseconds);
@@ -123,7 +115,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
             if (newMemories.Count == 0)
             {
-                _logger.LogInformation("No new memories to compile since {Since}", since);
+                logger.LogInformation("No new memories to compile since {Since}", since);
                 await CompleteCompilationTaskAsync(taskId, 0, cancellationToken);
                 return new CompilationResult(0, 0, 0, 0, stopwatch.Elapsed, await GetCompilationVersionAsync(cancellationToken));
             }
@@ -175,7 +167,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
             var version = await GetCompilationVersionAsync(cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Incremental compilation completed: {Memories} memories, {ClustersCreated} new clusters in {Duration}ms",
                 newMemories.Count, clustersCreated, stopwatch.ElapsedMilliseconds);
 
@@ -196,7 +188,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     public async Task<IReadOnlyList<MemoryCluster>> GetClustersAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT cluster_id, cluster_name, centroid, cluster_radius, memory_count,
@@ -232,7 +224,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         Guid clusterId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT memory_id
@@ -246,7 +238,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     public async Task InvalidateClusterAsync(Guid clusterId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             UPDATE memory_clusters
@@ -255,13 +247,13 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
         await connection.ExecuteAsync(sql, new { ClusterId = clusterId });
 
-        _logger.LogInformation("Invalidated cluster {ClusterId}", clusterId);
+        logger.LogInformation("Invalidated cluster {ClusterId}", clusterId);
     }
 
     private async Task<List<MemoryWithEmbedding>> LoadMemoriesWithEmbeddingsAsync(
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT id, content, embedding, created_at
@@ -291,7 +283,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         DateTime since,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT id, content, embedding, created_at
@@ -426,7 +418,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
                 members.Select(m => (m.Memory.Id, m.Distance)).ToList()));
         }
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Computed {ClusterCount} clusters from {MemoryCount} memories in {Iterations} iterations",
             clusters.Count, memories.Count, iterations);
 
@@ -547,7 +539,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         List<ComputedCluster> clusters,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var version = await GetCompilationVersionAsync(cancellationToken) + 1;
 
         int created = 0, updated = 0;
@@ -612,7 +604,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         Dictionary<Guid, (Guid ClusterId, float Distance)> assignments,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO memory_cluster_members (memory_id, cluster_id, distance_to_centroid, membership_score)
@@ -651,7 +643,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         List<ComputedCluster> clusters,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Clear existing index
         await connection.ExecuteAsync("TRUNCATE semantic_index");
@@ -731,7 +723,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
         List<MemoryWithEmbedding> memories,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var version = await GetCompilationVersionAsync(cancellationToken) + 1;
         int entriesUpdated = 0;
@@ -779,7 +771,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     private async Task MarkEmbeddingsCompiledAsync(List<Guid> memoryIds, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             UPDATE embedding_cache
@@ -795,7 +787,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     private async Task<int> GetCompilationVersionAsync(CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT COALESCE(MAX(compilation_version), 0)
@@ -806,7 +798,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     private async Task<Guid> CreateCompilationTaskAsync(string taskType, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var taskId = Guid.CreateVersion7();
 
@@ -821,7 +813,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     private async Task CompleteCompilationTaskAsync(Guid taskId, int itemsProcessed, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             UPDATE compilation_tasks
@@ -833,7 +825,7 @@ public sealed class MemoryCompiler : IMemoryCompiler
 
     private async Task FailCompilationTaskAsync(Guid taskId, string error, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             UPDATE compilation_tasks

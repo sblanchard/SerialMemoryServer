@@ -12,17 +12,9 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.DeterministicInference;
 
-public sealed class InferenceSessionManager : IInferenceSessionManager
+public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger<InferenceSessionManager> logger)
+    : IInferenceSessionManager
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<InferenceSessionManager> _logger;
-
-    public InferenceSessionManager(NpgsqlDataSource dataSource, ILogger<InferenceSessionManager> logger)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-    }
-
     public async Task<IInferenceSession> CreateSessionAsync(
         long? seed = null,
         InferenceConfig? config = null,
@@ -36,7 +28,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
         var inputHash = ComputeHash($"{actualSeed}:{JsonSerializer.Serialize(configSnapshot)}");
         var sessionHash = ComputeHash($"{sessionId}:{actualSeed}:{inputHash}");
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO inference_sessions (
@@ -57,7 +49,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             ParentSessionId = parentSessionId
         });
 
-        _logger.LogInformation("Created inference session {SessionId} with seed {Seed}", sessionId, actualSeed);
+        logger.LogInformation("Created inference session {SessionId} with seed {Seed}", sessionId, actualSeed);
 
         return new InferenceSession(
             sessionId,
@@ -65,8 +57,8 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             sessionHash,
             configSnapshot,
             parentSessionId,
-            _dataSource,
-            _logger);
+            dataSource,
+            logger);
     }
 
     public async Task<IInferenceSession> ReplaySessionAsync(
@@ -74,7 +66,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
         long? overrideSeed = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string getSourceSql = @"
             SELECT seed, config_snapshot::text as config_snapshot
@@ -106,7 +98,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             SessionId = replaySession.SessionId
         });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Created replay session {ReplaySessionId} from source {SourceSessionId}",
             replaySession.SessionId,
             sourceSessionId);
@@ -118,7 +110,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
         Guid sessionId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT session_id, seed, session_hash, config_snapshot::text as config_snapshot,
@@ -149,8 +141,8 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             row.session_hash,
             config!,
             row.parent_session_id,
-            _dataSource,
-            _logger,
+            dataSource,
+            logger,
             Enum.Parse<InferenceSessionStatus>(row.status, true),
             maxStepSequence);
     }
@@ -160,7 +152,7 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
         Guid replaySessionId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string getStepsSql = @"
             SELECT step_sequence, step_type, input_hash, output_hash, output_data::text as output_data

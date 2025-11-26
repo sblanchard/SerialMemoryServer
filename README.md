@@ -7,138 +7,134 @@ A **temporal knowledge graph memory system** implementing the Model Context Prot
 ## ✨ Key Features
 
 🧠 **Temporal Knowledge Graph** - Track who said what, when, and why with full provenance
-🔍 **Semantic Search** - Find memories by meaning using sentence-transformers embeddings
-🕸️ **Relationship Extraction** - Automatically extract entities and relationships using spaCy
+🔍 **Semantic Search** - Find memories by meaning using embeddings (Ollama or ONNX)
+🕸️ **Relationship Extraction** - Automatically extract entities and relationships
 🎯 **Multi-Hop Reasoning** - Traverse knowledge graph connections for complex queries
 👤 **User Personas** - Learn and recall user preferences, skills, and background
-📊 **Conversation Sessions** - Track context across interactions
-⚡ **Local-First** - No API keys required, runs entirely offline with local ML models
+📊 **Event Sourcing** - Full audit trail with confidence decay and memory lifecycle
+🏢 **Multi-Tenant** - Row-level security, usage metering, and tenant isolation
+⚡ **Production Ready** - Rate limiting, circuit breakers, and comprehensive monitoring
 
 ## 🚀 Quick Start
 
-### Option 1: Local Development (Recommended for AI Integration)
-
-1. **Start infrastructure services:**
-```bash
-docker compose up -d postgres redis rabbitmq
-```
-
-2. **Install Python dependencies:**
-```bash
-cd SerialMemory.Mcp.Python
-pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-```
-
-3. **Run the MCP server:**
-```bash
-python -m src.main
-```
-
-### Option 2: Full Docker Stack (Demo/Testing)
+### One-Command Setup (Recommended)
 
 ```bash
-# Start everything including .NET API/Worker
-docker compose up --build
+# Windows (PowerShell)
+.\dev-bootstrap.ps1
+
+# Linux/macOS
+./dev-bootstrap.sh
 ```
 
-## 📊 Services
+This script starts all services and outputs configuration for Claude Desktop.
 
-Once running, access:
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **API (Swagger)** | http://localhost:5000/swagger | - |
-| **API Metrics** | http://localhost:5000/metrics | - |
-| **Worker Metrics** | http://localhost:8081/metrics | - |
-| **RabbitMQ Management** | http://localhost:15672 | guest/guest |
-| **Prometheus** | http://localhost:9090 | - |
-| **Grafana** | http://localhost:3000 | admin/admin |
-| **Redis** | localhost:6379 | - |
-| **PostgreSQL** | localhost:5432 | postgres/postgres |
-
-## 🏗️ Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  MCP Server (Python/STDIO)                   │
-│         ┌────────────────────────────────────┐               │
-│         │  sentence-transformers (embeddings)│               │
-│         │  spaCy (entity extraction)         │               │
-│         │  Knowledge Graph Service           │               │
-│         └────────────────────────────────────┘               │
-│                         ↓                                     │
-│         ┌────────────────────────────────────┐               │
-│         │  PostgreSQL + pgvector             │               │
-│         │  - memories (with embeddings)      │               │
-│         │  - entities & relationships        │               │
-│         │  - user personas                   │               │
-│         │  - conversation sessions           │               │
-│         └────────────────────────────────────┘               │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Data Flow
-
-**Memory Ingestion:**
-1. Client sends memory via `memory_ingest` tool
-2. Generate embedding using sentence-transformers
-3. Extract entities and relationships using spaCy
-4. Store memory, entities, and relationships in PostgreSQL
-5. Link entities to memory via many-to-many relationship
-
-**Semantic Search:**
-1. Client queries via `memory_search` tool
-2. Generate query embedding
-3. Search memories using pgvector cosine similarity
-4. Optionally combine with full-text search (hybrid mode)
-5. Enrich results with linked entities and relationships
-
-**Multi-Hop Reasoning:**
-1. Find initial memories matching query
-2. Extract entities from those memories
-3. Traverse entity relationships
-4. Find connected memories via related entities
-5. Return graph of memories, entities, and relationships
-
-### Components
-
-- **Python MCP Server** - Temporal knowledge graph with semantic search
-- **PostgreSQL + pgvector** - Graph storage with vector similarity search
-- **sentence-transformers** - Local embedding generation (384-dim vectors)
-- **spaCy** - Entity extraction and relationship detection
-- **Redis** (optional) - Caching layer for hot memories
-- **.NET API/Worker** (optional) - HTTP REST API and real-time SignalR updates
-
-## 🔧 Development
+### Manual Setup
 
 ```bash
-# Build solution
-dotnet build SerialMemoryServer.sln
+# Start infrastructure
+docker compose -f docker-compose.dev.yml up -d
 
-# Run locally (requires Redis + RabbitMQ running)
-dotnet run --project SerialMemory.Api
-dotnet run --project SerialMemory.Worker
+# Pull embedding model
+docker exec serialmemory-ollama ollama pull nomic-embed-text
+
+# Run MCP server
 dotnet run --project SerialMemory.Mcp
 ```
 
-## 🤖 MCP Integration
+📚 See [Local Development Guide](./docs/LOCAL_DEVELOPMENT.md) for detailed instructions.
 
-Add to your Claude Desktop `claude_desktop_config.json`:
+## 📦 Client SDKs
+
+Official client libraries with built-in retry, rate limiting, and circuit breaker:
+
+### .NET SDK
+
+```bash
+dotnet add package SerialMemory.Client
+```
+
+```csharp
+var client = new SerialMemoryClient(new SerialMemoryOptions
+{
+    BaseUrl = "http://localhost:5000",
+    ApiKey = "your-api-key"
+});
+
+// Ingest a memory
+var result = await client.IngestAsync("John works at Acme Corp as an engineer.");
+
+// Search for memories
+var search = await client.SearchAsync("Who works at Acme?");
+```
+
+📚 [.NET SDK Documentation](./sdks/dotnet/SerialMemory.Client/README.md)
+
+### Node.js / TypeScript SDK
+
+```bash
+npm install @serialmemory/client
+```
+
+```typescript
+import { SerialMemoryClient } from '@serialmemory/client';
+
+const client = new SerialMemoryClient({
+  baseUrl: 'http://localhost:5000',
+  apiKey: 'your-api-key'
+});
+
+// Ingest a memory
+const result = await client.ingest('John works at Acme Corp as an engineer.');
+
+// Search for memories
+const search = await client.search('Who works at Acme?');
+```
+
+📚 [Node.js SDK Documentation](./sdks/node/README.md)
+
+## 📖 Examples
+
+### [AI Second Brain](./examples/ai-second-brain/)
+
+Use SerialMemory as a persistent "second brain" for AI assistants:
+- Store notes, decisions, and learnings
+- Semantic search for relevant context
+- User persona management
+
+```bash
+cd examples/ai-second-brain/dotnet && dotnet run
+```
+
+### [Project Context Memory](./examples/project-context-memory/)
+
+Isolated memory contexts per project:
+- Multi-project memory isolation
+- Cross-project search when needed
+- IDE/editor integration patterns
+
+```bash
+cd examples/project-context-memory/node && npm start
+```
+
+## 🤖 Claude Desktop Integration
+
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "serial-memory": {
-      "command": "python",
-      "args": ["-m", "src.main"],
-      "cwd": "D:\\DEV\\SerialMemoryServer\\SerialMemory.Mcp.Python",
+    "serialmemory": {
+      "command": "dotnet",
+      "args": ["run", "--project", "D:\\DEV\\SerialMemoryServer\\SerialMemory.Mcp"],
       "env": {
         "POSTGRES_HOST": "localhost",
         "POSTGRES_PORT": "5432",
         "POSTGRES_USER": "postgres",
         "POSTGRES_PASSWORD": "postgres",
-        "POSTGRES_DB": "contextdb"
+        "POSTGRES_DB": "contextdb",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "SERIALMEMORY_MODE": "self-hosted"
       }
     }
   }
@@ -149,153 +145,128 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 
 | Tool | Description |
 |------|-------------|
-| **memory_search** | Search memories using semantic/text/hybrid search with entity enrichment |
-| **memory_ingest** | Add new memories with automatic entity/relationship extraction |
-| **memory_about_user** | Retrieve user persona (preferences, skills, background) |
-| **initialise_conversation_session** | Start a new conversation session for context tracking |
-| **end_conversation_session** | End the current conversation session |
-| **memory_multi_hop_search** | Traverse knowledge graph for multi-hop reasoning |
-| **get_integrations** | List available external integrations |
+| `memory_search` | Search memories using semantic/text/hybrid search |
+| `memory_ingest` | Add memories with automatic entity extraction |
+| `memory_update` | Update memory content (creates new version) |
+| `memory_delete` | Soft delete with audit trail |
+| `memory_multi_hop_search` | Traverse knowledge graph for related context |
+| `memory_about_user` | Retrieve user persona |
+| `set_user_persona` | Set user preferences/skills/goals |
+| `get_graph_statistics` | Knowledge graph stats |
+| `detect_contradictions` | Find conflicting memories |
+| `export_workspace` | Export all memories (JSON/encrypted) |
 
-### Available MCP Resources
+See [CLAUDE.md](./CLAUDE.md) for the full list of 33 MCP tools.
 
-| Resource | Description |
-|----------|-------------|
-| **memory://recent** | List of recently added memories (JSON) |
-| **memory://sessions** | List of recent conversation sessions (JSON) |
+## 🏗️ Architecture
 
-### Example Usage
-
-```python
-# Add a memory
-memory_ingest({
-  "content": "I met John Smith at the conference. He works at Acme Corp on AI research.",
-  "source": "claude-desktop"
-})
-# → Automatically extracts entities: John Smith (PERSON), Acme Corp (ORG)
-# → Extracts relationship: John Smith WORKS_AT Acme Corp
-
-# Search semantically
-memory_search({
-  "query": "Who did I meet at the conference?",
-  "mode": "hybrid",
-  "limit": 5
-})
-# → Returns relevant memories with entities and similarity scores
-
-# Multi-hop reasoning
-memory_multi_hop_search({
-  "query": "AI research",
-  "hops": 2
-})
-# → Finds memories about AI research
-# → Follows entity relationships to find connected memories
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    MCP Server (C#/STDIO)                      │
+│         ┌────────────────────────────────────┐               │
+│         │  Ollama embeddings (nomic-embed)   │               │
+│         │  Entity extraction (patterns/LLM)  │               │
+│         │  Event sourcing & CQRS            │               │
+│         └────────────────────────────────────┘               │
+│                         ↓                                     │
+│         ┌────────────────────────────────────┐               │
+│         │  PostgreSQL + pgvector             │               │
+│         │  - memories (with embeddings)      │               │
+│         │  - entities & relationships        │               │
+│         │  - event store (audit trail)       │               │
+│         │  - usage metering & rate limits    │               │
+│         └────────────────────────────────────┘               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## 📡 API Examples
+### Components
 
-```bash
-# List all contexts
-curl http://localhost:5000/context
+| Component | Description |
+|-----------|-------------|
+| `SerialMemory.Mcp` | Main MCP server (C#, recommended) |
+| `SerialMemory.Core` | Domain models and interfaces |
+| `SerialMemory.Infrastructure` | PostgreSQL + pgvector implementation |
+| `SerialMemory.EventSourcing` | Event sourcing with CQRS |
+| `SerialMemory.Api` | REST API with SignalR (optional) |
+| `SerialMemory.Api.Dashboard` | Tenant self-service API |
 
-# Get specific context
-curl http://localhost:5000/context/mykey
+## 📊 Services (Development Stack)
 
-# Set context
-curl -X POST http://localhost:5000/context/mykey -d "my value"
+| Service | URL | Description |
+|---------|-----|-------------|
+| PostgreSQL | `localhost:5432` | Database with pgvector |
+| Ollama | `http://localhost:11434` | Local embeddings |
+| Redis | `localhost:6379` | Caching & rate limiting |
+| Prometheus | `http://localhost:9090` | Metrics |
+| Grafana | `http://localhost:3001` | Dashboards |
 
-# Delete context
-curl -X DELETE http://localhost:5000/context/mykey
+## 🔬 SaaS Hardening (Phases 1-8 Complete)
 
-# View metrics
-curl http://localhost:5000/metrics
-curl http://localhost:8081/metrics
-```
+Production-ready features for multi-tenant deployment:
 
-## 📈 Observability
+- ✅ **Multi-Tenant Isolation** - Row-level security, tenant_id on all tables
+- ✅ **JWT Authentication** - Scope-based access control
+- ✅ **Usage Metering** - Credit-based billing, plan limits
+- ✅ **Rate Limiting** - Per-tenant RPM limits with backoff
+- ✅ **Admin Audit Log** - Tamper-evident hash chains
+- ✅ **Abuse Protection** - Context size limits, input validation
+- ✅ **Dashboard APIs** - Tenant self-service endpoints
+- ✅ **Proof Endpoints** - Usage verification for billing
 
-**Custom Metrics:**
-- `rabbit_published_total` - Events published to RabbitMQ
-- `rabbit_consumed_total` - Events consumed by Worker
-- `redis_latency_ms` - Redis operation latency histogram
-
-**Built-in Metrics:**
-- Runtime instrumentation (GC, memory, threads)
-- Process instrumentation (CPU, handles)
-- HTTP instrumentation (request duration, status codes)
+See [PLAN.md](./PLAN.md) for implementation details.
 
 ## 🛠️ Technology Stack
 
-### Python MCP Server (Primary)
-- **Python 3.11+**
-- **MCP SDK** - Model Context Protocol implementation
-- **sentence-transformers** - Semantic embeddings (all-MiniLM-L6-v2)
-- **spaCy** - NLP and entity extraction (en_core_web_sm)
-- **pgvector** - Vector similarity search
-- **psycopg** - Async PostgreSQL driver
-- **PyTorch** - ML framework backend
+### Core
+- **.NET 9** with C# 12
+- **PostgreSQL 17 + pgvector** - Vector storage
+- **Ollama** - Local embedding generation
+- **Redis** - Caching and rate limiting
 
-### Infrastructure
-- **PostgreSQL 17 + pgvector** - Knowledge graph storage
-- **Redis 7** - Optional caching layer
-- **RabbitMQ 3** - Optional event streaming (for .NET API)
+### SDKs
+- **.NET SDK** - Full-featured with Polly resilience
+- **Node.js SDK** - TypeScript with zero dependencies
 
-### .NET Services (Optional)
-- **.NET 9** with C# 13
-- **SignalR** - Real-time WebSocket updates
-- **OpenTelemetry** - Metrics & tracing
-- **Prometheus + Grafana** - Observability
+### Observability
+- **Prometheus** - Metrics collection
+- **Grafana** - Dashboards
+- **OpenTelemetry** - Distributed tracing
 
-## 🎯 Technical Highlights
+## 📈 Comparison with CORE
 
-This project demonstrates:
-
-✅ **Temporal Knowledge Graphs** - Entity-relationship models with provenance tracking
-✅ **Semantic Search** - Vector embeddings + pgvector for similarity search
-✅ **NLP Pipeline** - Entity extraction, relationship detection, dependency parsing
-✅ **Model Context Protocol** - STDIO server for AI agent integration
-✅ **Multi-Hop Reasoning** - Graph traversal for complex queries
-✅ **Local-First ML** - No external API dependencies
-✅ **Clean Architecture** - Layered design (DB → Services → Tools → Server)
-✅ **Async/Await** - Fully async Python with connection pooling
-✅ **Containerization** - Docker Compose orchestration
-
-## 📊 Database Schema
-
-The knowledge graph uses 8 core tables:
-
-- **memories** - Core episodes with embeddings (vector(384))
-- **entities** - Extracted entities (PERSON, ORG, GPE, DATE, etc.)
-- **entity_relationships** - Relationships between entities
-- **memory_entities** - Many-to-many memory↔entity links
-- **user_personas** - User preferences, skills, background
-- **conversation_sessions** - Session tracking
-- **integrations** + **integration_actions** - External tool registry
-
-Indexes: pgvector IVFFlat, full-text search (tsvector), foreign keys
-
-## 🔬 Comparison with CORE
-
-| Feature | CORE (getcore.me) | SerialMemoryServer |
-|---------|-------------------|-------------------|
+| Feature | CORE (getcore.me) | SerialMemory |
+|---------|-------------------|--------------|
 | Temporal knowledge graph | ✅ | ✅ |
 | Semantic search | ✅ | ✅ (pgvector) |
-| Entity extraction | ✅ | ✅ (spaCy) |
-| Relationship tracking | ✅ | ✅ |
+| Entity extraction | ✅ | ✅ |
 | Multi-hop reasoning | ✅ | ✅ |
-| User personas | ✅ | ✅ |
+| Event sourcing | ? | ✅ |
+| Confidence decay | ? | ✅ |
 | MCP integration | ✅ | ✅ |
+| Client SDKs | ? | ✅ (.NET, Node.js) |
 | Open source | ❌ | ✅ |
 | Self-hosted | Paid | ✅ Free |
-| Local-first (no APIs) | ❌ | ✅ |
-| LoCoMo benchmark | 88.24% | Not tested |
 
-## 📝 Notes
+## 📚 Documentation
 
-- Multi-hop reasoning is partially implemented (traversal logic can be enhanced)
-- User persona extraction is rule-based (could be improved with LLM)
-- No authentication/authorization (demo purposes)
-- Redis integration is optional (can be removed if not needed)
+- [Local Development Guide](./docs/LOCAL_DEVELOPMENT.md) - Setup & configuration
+- [CLAUDE.md](./CLAUDE.md) - Complete MCP tool reference
+- [SDK Documentation](./sdks/) - Client library guides
+- [Examples](./examples/) - Ready-to-run demo projects
+- [PLAN.md](./PLAN.md) - SaaS hardening roadmap
+
+## 🔧 Development
+
+```bash
+# Build solution
+dotnet build SerialMemoryServer.sln
+
+# Run tests
+dotnet test
+
+# Run MCP server with hot reload
+dotnet watch run --project SerialMemory.Mcp
+```
 
 ## 📄 License
 

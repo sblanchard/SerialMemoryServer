@@ -8,31 +8,21 @@ namespace SerialMemory.EventSourcing.Streaming;
 /// Background service that subscribes to Redis Streams and broadcasts events to WebSocket clients.
 /// Bridges the Redis event stream to real-time WebSocket notifications.
 /// </summary>
-public sealed class EventBroadcastService : BackgroundService
+public sealed class EventBroadcastService(
+    IEventStreamSubscriber subscriber,
+    WebSocketEventHub webSocketHub,
+    ILogger<EventBroadcastService> logger)
+    : BackgroundService
 {
-    private readonly IEventStreamSubscriber _subscriber;
-    private readonly WebSocketEventHub _webSocketHub;
-    private readonly ILogger<EventBroadcastService> _logger;
-    private readonly string _consumerId;
-
-    public EventBroadcastService(
-        IEventStreamSubscriber subscriber,
-        WebSocketEventHub webSocketHub,
-        ILogger<EventBroadcastService> logger)
-    {
-        _subscriber = subscriber;
-        _webSocketHub = webSocketHub;
-        _logger = logger;
-        _consumerId = $"broadcast-{Environment.MachineName}-{Guid.CreateVersion7():N}";
-    }
+    private readonly string _consumerId = $"broadcast-{Environment.MachineName}-{Guid.CreateVersion7():N}";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Event broadcast service starting with consumer ID: {ConsumerId}", _consumerId);
+        logger.LogInformation("Event broadcast service starting with consumer ID: {ConsumerId}", _consumerId);
 
         try
         {
-            await foreach (var message in _subscriber.SubscribeAsync(
+            await foreach (var message in subscriber.SubscribeAsync(
                 "websocket-broadcast",
                 _consumerId,
                 stoppingToken))
@@ -40,31 +30,31 @@ public sealed class EventBroadcastService : BackgroundService
                 try
                 {
                     // Only broadcast if there are connected clients
-                    if (_webSocketHub.ConnectionCount > 0)
+                    if (webSocketHub.ConnectionCount > 0)
                     {
-                        await _webSocketHub.BroadcastEventAsync(message.Event, stoppingToken);
+                        await webSocketHub.BroadcastEventAsync(message.Event, stoppingToken);
 
-                        _logger.LogDebug(
+                        logger.LogDebug(
                             "Broadcasted event {EventId} ({EventType}) to {ConnectionCount} WebSocket clients",
-                            message.Event.EventId, message.Event.EventType, _webSocketHub.ConnectionCount);
+                            message.Event.EventId, message.Event.EventType, webSocketHub.ConnectionCount);
                     }
 
                     // Acknowledge the message using the Redis stream message ID
-                    await _subscriber.AcknowledgeAsync("websocket-broadcast", message.MessageId, stoppingToken);
+                    await subscriber.AcknowledgeAsync("websocket-broadcast", message.MessageId, stoppingToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error broadcasting event {EventId}", message.Event.EventId);
+                    logger.LogError(ex, "Error broadcasting event {EventId}", message.Event.EventId);
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Event broadcast service stopping");
+            logger.LogInformation("Event broadcast service stopping");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Event broadcast service failed");
+            logger.LogError(ex, "Event broadcast service failed");
             throw;
         }
     }

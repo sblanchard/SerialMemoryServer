@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "serial-memory": {
-      "command": "D:\DEV\SerialMemoryServer\SerialMemory.Mcp\bin\Release\net10.0\win-x64\publish\SerialMemory.Mcp.exe",
+    "serialmemory-memory": {
+      "command": "D:\\DEV\\SerialMemoryServer\\publish\\mcp\\SerialMemory.Mcp.exe",
       "args": [],
       "env": {
         "POSTGRES_HOST": "localhost",
@@ -9,9 +9,9 @@
         "POSTGRES_USER": "postgres",
         "POSTGRES_PASSWORD": "postgres",
         "POSTGRES_DB": "contextdb",
-        "OLLAMA_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "nomic-embed-text",
-        "OLLAMA_EMBEDDING_DIM": "768"
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_EMBEDDING_MODEL": "nomic-embed-text",
+        "OLLAMA_ENTITY_MODEL": "qwen2.5:7b"
       }
     }
   }

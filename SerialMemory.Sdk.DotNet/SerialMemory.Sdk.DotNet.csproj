@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <LangVersion>12</LangVersion>
+
+        <!-- NuGet Package Metadata -->
+        <PackageId>SerialMemory.Sdk</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>SerialMemory</Authors>
+        <Description>Lightweight .NET SDK for SerialMemory - a temporal knowledge graph memory system</Description>
+        <PackageTags>memory;knowledge-graph;ai;mcp;semantic-search</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!-- Dependency-light: Only System.Text.Json (built-in for .NET 8+) -->
+
+</Project>

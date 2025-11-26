@@ -12,28 +12,20 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.Security;
 
-public sealed class LocalEncryptionService : ILocalEncryption
+public sealed class LocalEncryptionService(
+    NpgsqlDataSource dataSource,
+    ILogger<LocalEncryptionService> logger,
+    byte[]? masterKey = null)
+    : ILocalEncryption
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<LocalEncryptionService> _logger;
-    private readonly byte[] _masterKey;
+    private readonly byte[] _masterKey = masterKey ?? GetOrCreateMasterKey();
 
     private const string DefaultAlgorithm = "AES-256-GCM";
     private const int KeySizeBytes = 32;
     private const int IvSizeBytes = 12;
     private const int TagSizeBytes = 16;
 
-    public LocalEncryptionService(
-        NpgsqlDataSource dataSource,
-        ILogger<LocalEncryptionService> logger,
-        byte[]? masterKey = null)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-
-        // Master key from environment or generate deterministically from machine identity
-        _masterKey = masterKey ?? GetOrCreateMasterKey();
-    }
+    // Master key from environment or generate deterministically from machine identity
 
     private static byte[] GetOrCreateMasterKey()
     {
@@ -62,7 +54,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
         var keyId = Guid.CreateVersion7();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO encryption_keys (
@@ -82,7 +74,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
             KeyAlgorithm = DefaultAlgorithm
         });
 
-        _logger.LogInformation("Created encryption key {KeyName} ({KeyId})", keyName, keyId);
+        logger.LogInformation("Created encryption key {KeyName} ({KeyId})", keyName, keyId);
 
         // Clear the unencrypted key from memory
         Array.Clear(dataKey, 0, dataKey.Length);
@@ -101,7 +93,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
         string keyName,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT key_id, key_name, key_algorithm, key_version,
@@ -130,7 +122,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
     public async Task RotateKeyAsync(string keyName, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         try
@@ -186,7 +178,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Rotated encryption key {KeyName} from version {OldVersion} to {NewVersion}",
                 keyName, current.key_version, current.key_version + 1);
 
@@ -282,7 +274,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
         var contentBytes = Encoding.UTF8.GetBytes(content);
         var encrypted = await EncryptAsync(contentBytes, keyId, cancellationToken);
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO encrypted_memories (
@@ -310,7 +302,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
             ContentHash = encrypted.ContentHash
         });
 
-        _logger.LogDebug("Stored encrypted memory {MemoryId}", memoryId);
+        logger.LogDebug("Stored encrypted memory {MemoryId}", memoryId);
 
         return memoryId;
     }
@@ -319,7 +311,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT encrypted_content, encryption_key_id, encryption_algorithm,
@@ -391,7 +383,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
         Guid keyId,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT encrypted_key
