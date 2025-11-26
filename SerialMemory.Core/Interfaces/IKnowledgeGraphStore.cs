@@ -41,4 +41,11 @@ public interface IKnowledgeGraphStore
     Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default);
     Task<long> GetEntityCountAsync(CancellationToken cancellationToken = default);
     Task<long> GetRelationshipCountAsync(CancellationToken cancellationToken = default);
+
+    // Batch operations for crawling
+    Task<List<Memory>> GetMemoriesWithoutEntitiesAsync(int limit = 100, CancellationToken cancellationToken = default);
+
+    // Batch operations for re-embedding
+    Task<List<Memory>> GetMemoriesWithNullEmbeddingsAsync(int limit = 100, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default);
 }
