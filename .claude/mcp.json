@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "serial-memory": {
+      "command": "D:\DEV\SerialMemoryServer\SerialMemory.Mcp\bin\Release\net10.0\win-x64\publish\SerialMemory.Mcp.exe",
+      "args": [],
+      "env": {
+        "POSTGRES_HOST": "localhost",
+        "POSTGRES_PORT": "5435",
+        "POSTGRES_USER": "postgres",
+        "POSTGRES_PASSWORD": "postgres",
+        "POSTGRES_DB": "contextdb",
+        "OLLAMA_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "nomic-embed-text",
+        "OLLAMA_EMBEDDING_DIM": "768"
+      }
+    }
+  }
+}
