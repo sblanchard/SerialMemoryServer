@@ -68,6 +68,8 @@ class ReembedTool
 
         // Track failed memory IDs for retry (transient failures like network timeouts)
         var failedMemories = new List<(Guid id, string content, int attempts)>();
+        // Track IDs that failed in main loop to exclude from subsequent queries (prevents infinite loop)
+        var failedIds = new HashSet<Guid>();
         const int maxRetries = 3;
 
         // Track position for offset-based pagination (forceAll mode)
@@ -78,6 +80,7 @@ class ReembedTool
         {
             // Fetch batch
             // When forceAll=false: rows leave result set when processed, so always query from offset 0
+            //   BUT we must exclude failed IDs to prevent infinite loop
             // When forceAll=true: use offset based on rows fetched (not processed) to ensure all rows are visited
             List<MemoryRow> memoryList;
 
@@ -94,14 +97,28 @@ class ReembedTool
             }
             else
             {
-                // Rows leave result set when processed, so always get from beginning
-                var memories = await connection.QueryAsync<MemoryRow>(
-                    $@"SELECT id, content FROM memories
-                       WHERE embedding IS NULL
-                       ORDER BY id
-                       LIMIT @BatchSize",
-                    new { BatchSize = batchSize });
-                memoryList = memories.ToList();
+                // Rows leave result set when processed (embedding set), so query from beginning
+                // Exclude failed IDs to prevent infinite loop on persistent failures
+                if (failedIds.Count > 0)
+                {
+                    var memories = await connection.QueryAsync<MemoryRow>(
+                        $@"SELECT id, content FROM memories
+                           WHERE embedding IS NULL AND id != ALL(@FailedIds)
+                           ORDER BY id
+                           LIMIT @BatchSize",
+                        new { BatchSize = batchSize, FailedIds = failedIds.ToArray() });
+                    memoryList = memories.ToList();
+                }
+                else
+                {
+                    var memories = await connection.QueryAsync<MemoryRow>(
+                        $@"SELECT id, content FROM memories
+                           WHERE embedding IS NULL
+                           ORDER BY id
+                           LIMIT @BatchSize",
+                        new { BatchSize = batchSize });
+                    memoryList = memories.ToList();
+                }
             }
 
             if (memoryList.Count == 0) break;
@@ -112,8 +129,9 @@ class ReembedTool
                 var success = await ProcessMemoryAsync(connection, memory.id, memory.content, totalCount, stopwatch);
                 if (!success)
                 {
-                    // Queue for retry
+                    // Queue for retry and track to exclude from main loop queries
                     failedMemories.Add((memory.id, memory.content, 1));
+                    failedIds.Add(memory.id);
                 }
             }
         }
