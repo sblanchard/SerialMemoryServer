@@ -20,6 +20,13 @@
 \set EMBEDDING_DIM 384
 \endif
 
+-- =====================================================
+-- REQUIRED EXTENSIONS
+-- =====================================================
+-- pgvector: Vector similarity search (required for embedding columns)
+-- Note: gen_random_uuid() is built-in for PostgreSQL 13+, or use pgcrypto for older versions
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- Inference session tracking for deterministic replay
 CREATE TABLE IF NOT EXISTS inference_sessions (
     session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
