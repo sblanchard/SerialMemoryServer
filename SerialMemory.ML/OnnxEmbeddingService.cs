@@ -304,19 +304,57 @@ public partial class OnnxEmbeddingService : IEmbeddingService, IDisposable
 
         using var results = _session.Run(inputs);
 
-        // Get the output tensor
-        var outputName = _session.OutputMetadata.Keys.First();
+        // Get the output tensor - prefer sentence_embedding if available (pre-pooled)
+        // Otherwise fall back to last_hidden_state or first output
+        var outputNames = _session.OutputMetadata.Keys.ToList();
+        string outputName;
+
+        if (outputNames.Contains("sentence_embedding"))
+        {
+            outputName = "sentence_embedding";
+        }
+        else if (outputNames.Contains("last_hidden_state"))
+        {
+            outputName = "last_hidden_state";
+        }
+        else
+        {
+            outputName = outputNames.First();
+        }
+
         var output = results.First(r => r.Name == outputName);
         var outputTensor = output.AsTensor<float>();
 
-        // Apply pooling strategy
-        var pooled = _config.PoolingStrategy.ToLowerInvariant() switch
+        // Check tensor dimensions to determine if pooling is needed
+        // 2D output [batch, hidden] = already pooled, skip pooling
+        // 3D output [batch, seq, hidden] = needs pooling
+        float[] pooled;
+        if (outputTensor.Dimensions.Length == 2)
         {
-            "cls" => ClsPooling(outputTensor),
-            "max" => MaxPooling(outputTensor, seqLen),
-            "last" => LastTokenPooling(outputTensor, seqLen),
-            _ => MeanPooling(outputTensor, seqLen)  // Default to mean
-        };
+            // Already pooled (e.g., sentence_embedding output from optimum export)
+            _logger?.LogDebug("Output is 2D (pre-pooled), skipping pooling strategy");
+            pooled = new float[_embeddingDimension];
+            for (int j = 0; j < _embeddingDimension; j++)
+            {
+                pooled[j] = outputTensor[0, j];
+            }
+        }
+        else if (outputTensor.Dimensions.Length == 3)
+        {
+            // Apply pooling strategy to token-level embeddings
+            pooled = _config.PoolingStrategy.ToLowerInvariant() switch
+            {
+                "cls" => ClsPooling(outputTensor),
+                "max" => MaxPooling(outputTensor, seqLen),
+                "last" => LastTokenPooling(outputTensor, seqLen),
+                _ => MeanPooling(outputTensor, seqLen)  // Default to mean
+            };
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Unexpected output tensor dimensions: {outputTensor.Dimensions.Length}. Expected 2 (pre-pooled) or 3 (token-level).");
+        }
 
         // Normalize if configured
         return _config.NormalizeOutput ? Normalize(pooled) : pooled;
