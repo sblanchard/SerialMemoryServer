@@ -218,13 +218,13 @@ public sealed class RelationshipCrawler
         {
             var entityId = await CreateOrUpdateEntityAsync(
                 connection,
-                entity.Name,
-                entity.Type,
+                entity.Text,
+                entity.Label,
                 memory.id,
                 entity.Confidence,
                 cancellationToken);
 
-            entityIdMap[entity.Name] = entityId;
+            entityIdMap[entity.Text] = entityId;
             entitiesCreated++;
 
             // Link entity to memory
@@ -266,7 +266,7 @@ public sealed class RelationshipCrawler
                 connection,
                 sourceId,
                 targetId,
-                rel.RelationshipType,
+                rel.RelationType,
                 rel.Confidence,
                 memory.id,
                 cancellationToken);
@@ -300,17 +300,17 @@ public sealed class RelationshipCrawler
         var created = 0;
 
         // Create MENTIONED_WITH relationships for entities that appear together
-        var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
-        var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
-        var locationEntities = entities.Where(e => e.Type == "GPE").ToList();
+        var personEntities = entities.Where(e => e.Label == "PERSON").ToList();
+        var orgEntities = entities.Where(e => e.Label == "ORG").ToList();
+        var locationEntities = entities.Where(e => e.Label == "GPE").ToList();
 
         // Person-Org co-occurrence suggests association
         foreach (var person in personEntities)
         {
             foreach (var org in orgEntities)
             {
-                if (entityIdMap.TryGetValue(person.Name, out var personId) &&
-                    entityIdMap.TryGetValue(org.Name, out var orgId))
+                if (entityIdMap.TryGetValue(person.Text, out var personId) &&
+                    entityIdMap.TryGetValue(org.Text, out var orgId))
                 {
                     await CreateRelationshipAsync(
                         connection,
@@ -330,8 +330,8 @@ public sealed class RelationshipCrawler
         {
             foreach (var location in locationEntities)
             {
-                if (entityIdMap.TryGetValue(person.Name, out var personId) &&
-                    entityIdMap.TryGetValue(location.Name, out var locationId))
+                if (entityIdMap.TryGetValue(person.Text, out var personId) &&
+                    entityIdMap.TryGetValue(location.Text, out var locationId))
                 {
                     await CreateRelationshipAsync(
                         connection,
@@ -351,8 +351,8 @@ public sealed class RelationshipCrawler
         {
             for (int j = i + 1; j < personEntities.Count; j++)
             {
-                if (entityIdMap.TryGetValue(personEntities[i].Name, out var id1) &&
-                    entityIdMap.TryGetValue(personEntities[j].Name, out var id2))
+                if (entityIdMap.TryGetValue(personEntities[i].Text, out var id1) &&
+                    entityIdMap.TryGetValue(personEntities[j].Text, out var id2))
                 {
                     await CreateRelationshipAsync(
                         connection,

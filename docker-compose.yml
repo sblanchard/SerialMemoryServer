@@ -34,12 +34,11 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - ONNX_MODEL_PATH=/models/model.onnx
-      - VOCAB_PATH=/models/vocab.txt
+      - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
       - RabbitMq__Host=rabbitmq
       - ConnectionStrings__Redis=redis:6379
-    volumes:
-      - models:/models:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - postgres
       - redis
@@ -55,12 +54,11 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - ONNX_MODEL_PATH=/models/model.onnx
-      - VOCAB_PATH=/models/vocab.txt
+      - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
       - RabbitMq__Host=rabbitmq
       - ConnectionStrings__Redis=redis:6379
-    volumes:
-      - models:/models:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - postgres
       - redis
@@ -94,7 +92,6 @@ services:
 
 volumes:
   postgres_data:
-  models:
-    # To use local models, set MODELS_PATH environment variable or bind mount manually:
-    # docker compose -f docker-compose.yml -f docker-compose.override.yml up
-    # Or create a docker-compose.override.yml with your local models path
+  # models volume removed - using HTTP embedding service instead of ONNX
+  # To use ONNX models, add: ONNX_MODEL_PATH and VOCAB_PATH env vars
+  # and bind mount your local models directory

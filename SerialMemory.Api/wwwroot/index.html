@@ -463,6 +463,10 @@
                         <div class="stat-value" id="stat-entities">-</div>
                         <div class="stat-label">Entities</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-relationships">-</div>
+                        <div class="stat-label">Relations</div>
+                    </div>
                 </div>
             </div>
 
@@ -597,13 +601,26 @@
                         to: { enabled: true, scaleFactor: 0.5 }
                     }
                 },
+                layout: {
+                    improvedLayout: false,
+                    hierarchical: false
+                },
                 physics: {
-                    stabilization: { iterations: 100 },
+                    enabled: true,
+                    stabilization: {
+                        enabled: true,
+                        iterations: 150,
+                        updateInterval: 25
+                    },
                     barnesHut: {
-                        gravitationalConstant: -2000,
-                        centralGravity: 0.3,
-                        springLength: 150
-                    }
+                        gravitationalConstant: -3000,
+                        centralGravity: 0.5,
+                        springLength: 100,
+                        springConstant: 0.04,
+                        damping: 0.09
+                    },
+                    maxVelocity: 50,
+                    minVelocity: 0.1
                 },
                 interaction: {
                     hover: true,
@@ -638,7 +655,7 @@
             try {
                 const url = query
                     ? `${API_BASE}/api/graph?query=${encodeURIComponent(query)}&hops=2&limit=20`
-                    : `${API_BASE}/api/graph?limit=50`;
+                    : `${API_BASE}/api/graph?limit=20`;
 
                 const response = await fetch(url);
                 if (!response.ok) throw new Error('Failed to load graph data');
@@ -672,9 +689,22 @@
             }, 100);
         }
 
-        function updateStats() {
-            document.getElementById('stat-memories').textContent = graphData.memories?.length || 0;
-            document.getElementById('stat-entities').textContent = graphData.nodes?.length || 0;
+        async function updateStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                if (response.ok) {
+                    const stats = await response.json();
+                    document.getElementById('stat-memories').textContent = stats.memories || 0;
+                    document.getElementById('stat-entities').textContent = stats.entities || 0;
+                    document.getElementById('stat-relationships').textContent = stats.relationships || 0;
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                // Fallback to graph data counts
+                document.getElementById('stat-memories').textContent = graphData.memories?.length || 0;
+                document.getElementById('stat-entities').textContent = graphData.nodes?.length || 0;
+                document.getElementById('stat-relationships').textContent = graphData.edges?.length || 0;
+            }
         }
 
         async function searchMemories() {

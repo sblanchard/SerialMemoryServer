@@ -419,22 +419,278 @@ Configure with:
 - **Pattern-based NER** for entity extraction
 - **MCP Protocol** over STDIO
 
+## Event-Sourced Memory Engine (`SerialMemory.EventSourcing/`)
+
+A fully event-sourced cognitive memory platform with layered memory, confidence decay, multi-axis retrieval, and autonomous self-healing.
+
+### Event Types
+
+All memory mutations are append-only events (never modified or deleted):
+
+| Event | Description |
+|-------|-------------|
+| `MemoryCreated` | New memory added to the system |
+| `MemoryUpdated` | Memory content was modified |
+| `MemoryMerged` | Two or more memories combined |
+| `MemoryInvalidated` | Memory soft-deleted (superseded/contradicted) |
+| `MemoryDecayed` | Confidence decreased due to time |
+| `MemoryReinforced` | Memory validated, decay reset |
+| `MemoryLayerTransitioned` | Memory moved between layers |
+| `MemoryArchived` | Memory moved to cold storage |
+| `MemoryRecalled` | Memory was accessed during retrieval |
+| `MemoryIgnored` | Memory was present but skipped |
+| `MemoryContradicted` | Contradiction detected with another memory |
+| `MemoryExpired` | TTL policy triggered expiration |
+| `MemorySplit` | Memory decomposed into children |
+
+### Memory Layers
+
+Each memory belongs to exactly one cognitive layer:
+
+| Layer | Description |
+|-------|-------------|
+| `L0_RAW` | Raw transcript or input data |
+| `L1_CONTEXT` | Contextual understanding of raw input |
+| `L2_SUMMARY` | Summarized information |
+| `L3_KNOWLEDGE` | Extracted knowledge and facts |
+| `L4_HEURISTIC` | Heuristics and learned patterns |
+
+### Confidence & Decay
+
+Each memory stores:
+- `confidenceScore` (0.0–1.0) - Current confidence level
+- `halfLifeDays` (integer) - Decay rate
+- `lastReinforcedAt` (UTC timestamp) - Last validation time
+
+Decay is calculated as: `confidence * 0.5^(daysSinceReinforcement / halfLifeDays)`
+
+### Multi-Axis Retrieval Engine
+
+Retrieval scoring combines multiple factors with weighted aggregation:
+
+| Score Component | Description | Default Weight |
+|-----------------|-------------|----------------|
+| `semanticScore` | Vector similarity (pgvector) | 0.35 |
+| `recencyScore` | Age-based decay | 0.15 |
+| `confidenceScore` | Current confidence after decay | 0.20 |
+| `userAffinityScore` | User-specific relevance | 0.15 |
+| `directiveMatchScore` | Match to current goals | 0.15 |
+| `contradictionPenalty` | Penalty per contradiction | -0.10 |
+
+**Final Score** = Σ(score × weight) - (contradictions × penalty)
+
+### Memory Integrity
+
+Every memory includes:
+- `contentHash` - SHA-256 hash verified on read
+- `causalParents[]` - Links to parent memories
+- `validatedBy[]` - Memories that validated this one
+
+### CQRS Commands
+
+Write commands (all produce events):
+
+| Command | Description |
+|---------|-------------|
+| `CreateMemoryCommand` | Create new memory with embedding |
+| `UpdateMemoryCommand` | Update memory content |
+| `ReinforceMemoryCommand` | Reset decay, boost confidence |
+| `InvalidateMemoryCommand` | Soft-delete (superseded/contradicted) |
+| `MergeMemoriesCommand` | Combine multiple memories |
+| `TransitionLayerCommand` | Move memory between layers |
+| `ApplyDecayCommand` | Apply time-based decay |
+| `ArchiveMemoryCommand` | Move to cold storage |
+| `RecallMemoryCommand` | Record retrieval event |
+| `MarkContradictionCommand` | Flag contradiction |
+| `ExpireMemoryCommand` | Apply TTL expiration |
+| `SplitMemoryCommand` | Decompose into children |
+
+### CQRS Queries
+
+Read queries (from projections):
+
+| Query | Description |
+|-------|-------------|
+| `SearchMemoriesQuery` | Multi-axis semantic search |
+| `GetMemoryByIdQuery` | Get by ID with integrity check |
+| `GetRelatedMemoriesQuery` | Traverse causal graph |
+| `FindDuplicatesQuery` | Find similar memories |
+| `GetLayerStatisticsQuery` | Stats by memory layer |
+| `GetRecentMemoriesQuery` | Recent memories list |
+| `GetCognitiveStageLogsQuery` | Query cognitive stage logs |
+
+### Streaming
+
+**Redis Streams** (`RedisEventStreamPublisher`):
+- Durable, ordered event delivery
+- Consumer groups for scaling
+- Stream key: `memory:events`
+- Auto-creates `projections` and `maintenance` consumer groups
+
+**WebSocket** (`WebSocketEventHub`):
+- Real-time event broadcasting
+- Subscription filtering by event type and stream ID
+- Commands: `subscribe`, `ping`
+
+### Autonomous Maintenance Workers
+
+**MemoryMaintenanceWorker** (background service):
+- Runs periodic maintenance cycles
+- Apply decay to old memories
+- Archive cold memories (low access, low confidence)
+- Reinforce stable memories (frequently accessed)
+- Detect potential duplicates
+- Detect potential contradictions
+- All mutations via commands (event sourcing preserved)
+
+**MaintenanceTaskProcessor** (background service):
+- Processes pending maintenance tasks
+- Merge detected duplicates
+- Resolve contradictions
+- Uses `FOR UPDATE SKIP LOCKED` for concurrent processing
+
+Configuration (`MaintenanceConfig`):
+```csharp
+CycleInterval = TimeSpan.FromHours(1)
+ArchiveConfidenceThreshold = 0.1f
+MinAccessCountForRetention = 3
+ColdPeriodDays = 30
+ReinforceMinConfidence = 0.7f
+ReinforceMinAccessCount = 10
+ReinforceIntervalDays = 7
+DuplicateSimilarityThreshold = 0.95f
+```
+
+### Export System
+
+**Full JSON Export**:
+```csharp
+var exporter = new MemoryExporter(connectionString, logger);
+var result = await exporter.ExportFullJsonAsync("export.json", new ExportOptions
+{
+    IncludeEntities = true,
+    IncludeRelationships = true,
+    IncludeEvents = false,
+    ActiveOnly = true,
+    EncryptionKey = "optional-key",  // AES-256 encryption
+    Compress = true                   // GZip compression
+});
+```
+
+**Chunked Export** (resumable):
+```csharp
+await foreach (var chunk in exporter.ExportChunkedAsync(chunkSize: 1000, fromSequence: 0))
+{
+    // Process chunk.Memories
+    // Resume from chunk.ToSequence if interrupted
+}
+```
+
+**Events Export** (for replay):
+```csharp
+await exporter.ExportEventsAsync("events.json", fromSequence: 0);
+```
+
+### Event Store
+
+**PostgresEventStore** features:
+- Append-only semantics
+- Optimistic concurrency control
+- Global sequence for ordering
+- Stream subscription for projections
+- Content hash verification
+
+## Claude Code Hooks Integration
+
+For automatic memory integration, add to your `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'Memory System Active. Use mcp__serial-memory__memory_search for context.'"
+      }]
+    }],
+    "UserPromptSubmit": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'CONTEXT: Use mcp__serial-memory__memory_search to find relevant context.'"
+      }]
+    }],
+    "PreCompact": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'WARNING: Context compacting! Save critical context with mcp__serial-memory__memory_ingest NOW.'"
+      }]
+    }],
+    "Stop": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'Consider: mcp__serial-memory__memory_ingest for important insights.'"
+      }]
+    }],
+    "SessionEnd": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'Session ending. Save summary with mcp__serial-memory__memory_ingest.'"
+      }]
+    }]
+  }
+}
+```
+
+**Available Hook Events:**
+- `SessionStart` - Session begins
+- `UserPromptSubmit` - User submits prompt
+- `PreToolUse` - Before tool executes
+- `PostToolUse` - After tool completes
+- `PermissionRequest` - Permission dialog shown
+- `Notification` - Notifications triggered
+- `Stop` - Main agent finishes
+- `SubagentStop` - Subagent finishes
+- `PreCompact` - Before context compaction (critical!)
+- `SessionEnd` - Session terminates
+
 ## Current Implementation Status
 
-**Completed:**
+**Core MCP Server:**
 - ✅ Full C# MCP Server with knowledge graph tools
 - ✅ KnowledgeGraphService orchestration layer
 - ✅ PostgresKnowledgeGraphStore (complete CRUD)
 - ✅ Pattern-based entity extraction
-- ✅ HTTP embedding service integration
+- ✅ HTTP/ONNX embedding service integration
 - ✅ CORE import functionality
 - ✅ Multi-hop graph traversal
 - ✅ User persona management
 - ✅ Conversation session tracking
-- ✅ PostgreSQL schema with pgvector
+
+**Event-Sourced Engine:**
+- ✅ Full event sourcing with 13 event types
+- ✅ 5-layer memory hierarchy (L0-L4)
+- ✅ Confidence decay with half-life
+- ✅ Multi-axis retrieval (6 scoring factors)
+- ✅ SHA-256 content integrity verification
+- ✅ CQRS command/query separation
+- ✅ PostgreSQL event store with global sequence
+- ✅ Redis Streams for durable messaging
+- ✅ WebSocket real-time broadcasting
+- ✅ Autonomous maintenance workers
+- ✅ Duplicate detection & merging
+- ✅ Contradiction detection
+- ✅ Full/chunked/encrypted exports
 
 **Architecture:**
 - ✅ Clean Architecture (Core → Infrastructure → Mcp)
+- ✅ Event sourcing (append-only, immutable)
+- ✅ CQRS (separate read/write paths)
 - ✅ Async/await throughout
 - ✅ Connection pooling
-- ✅ Proper error handling and logging
+- ✅ Optimistic concurrency control
+- ✅ Restart-safe background workers

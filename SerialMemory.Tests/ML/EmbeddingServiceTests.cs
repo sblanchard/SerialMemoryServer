@@ -1,6 +1,7 @@
 using FluentAssertions;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.ML;
+using Xunit;
 
 namespace SerialMemory.Tests.ML;
 
