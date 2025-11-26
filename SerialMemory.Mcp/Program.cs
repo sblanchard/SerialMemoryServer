@@ -793,112 +793,132 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
     var totalRelationships = 0;
     var processedMemories = 0;
 
-    // Get memories to process
-    // force_reprocess=true: process all memories (re-extract entities/relationships)
-    // force_reprocess=false: only process memories without existing entity links
-    var memories = forceReprocess
-        ? await store.GetAllMemoriesAsync(batchSize)
-        : await store.GetMemoriesWithoutEntitiesAsync(batchSize);
+    // Track position for offset-based pagination (forceReprocess mode)
+    var rowsFetched = 0;
 
-    foreach (var memory in memories)
+    while (true)
     {
-        // Extract entities and relationships
-        var (entities, relationships) = await entityService.ExtractAllAsync(memory.Content);
+        // Get memories to process
+        // force_reprocess=true: process all memories (re-extract entities/relationships)
+        // force_reprocess=false: only process memories without existing entity links (rows leave result set after processing)
+        List<SerialMemory.Core.Models.Memory> memories;
 
-        // Create entities and link to memory
-        var entityIdMap = new Dictionary<string, Guid>();
-        foreach (var entity in entities)
+        if (forceReprocess)
         {
-            var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
-            {
-                Id = Guid.CreateVersion7(),
-                Name = entity.Name,
-                EntityType = entity.Type,
-                CanonicalName = entity.Name.ToLowerInvariant(),
-                FirstSeenMemoryId = memory.Id,
-                CreatedAt = DateTime.UtcNow
-            });
-
-            entityIdMap[entity.Name] = entityId;
-            await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
-            totalEntities++;
+            // Offset-based: track position by rows fetched to ensure all rows are visited
+            memories = await store.GetAllMemoriesAsync(batchSize, rowsFetched);
+            rowsFetched += memories.Count;
+        }
+        else
+        {
+            // Rows leave result set when processed (entities linked), so always query from offset 0
+            memories = await store.GetMemoriesWithoutEntitiesAsync(batchSize);
         }
 
-        // Create relationships
-        foreach (var rel in relationships)
-        {
-            Guid sourceId, targetId;
+        if (memories.Count == 0) break;
 
-            if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
+        logger.LogInformation("Processing batch of {Count} memories (total processed: {Total})", memories.Count, processedMemories);
+
+        foreach (var memory in memories)
+        {
+            // Extract entities and relationships
+            var (entities, relationships) = await entityService.ExtractAllAsync(memory.Content);
+
+            // Create entities and link to memory
+            var entityIdMap = new Dictionary<string, Guid>();
+            foreach (var entity in entities)
             {
-                sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
                 {
                     Id = Guid.CreateVersion7(),
-                    Name = rel.SourceEntity,
-                    EntityType = "UNKNOWN",
-                    CanonicalName = rel.SourceEntity.ToLowerInvariant(),
+                    Name = entity.Name,
+                    EntityType = entity.Type,
+                    CanonicalName = entity.Name.ToLowerInvariant(),
                     FirstSeenMemoryId = memory.Id,
                     CreatedAt = DateTime.UtcNow
                 });
-                entityIdMap[rel.SourceEntity] = sourceId;
+
+                entityIdMap[entity.Name] = entityId;
+                await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
                 totalEntities++;
             }
 
-            if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+            // Create relationships
+            foreach (var rel in relationships)
             {
-                targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                Guid sourceId, targetId;
+
+                if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
                 {
-                    Id = Guid.CreateVersion7(),
-                    Name = rel.TargetEntity,
-                    EntityType = "UNKNOWN",
-                    CanonicalName = rel.TargetEntity.ToLowerInvariant(),
-                    FirstSeenMemoryId = memory.Id,
-                    CreatedAt = DateTime.UtcNow
-                });
-                entityIdMap[rel.TargetEntity] = targetId;
-                totalEntities++;
-            }
-
-            await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
-            {
-                Id = Guid.CreateVersion7(),
-                SourceEntityId = sourceId,
-                TargetEntityId = targetId,
-                RelationshipType = rel.RelationshipType,
-                Confidence = rel.Confidence,
-                FirstSeenMemoryId = memory.Id,
-                CreatedAt = DateTime.UtcNow
-            });
-            totalRelationships++;
-        }
-
-        // Infer co-occurrence relationships for entities in same memory
-        var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
-        var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
-
-        foreach (var person in personEntities)
-        {
-            foreach (var org in orgEntities)
-            {
-                if (entityIdMap.TryGetValue(person.Name, out var personId) &&
-                    entityIdMap.TryGetValue(org.Name, out var orgId))
-                {
-                    await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                    sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
                     {
                         Id = Guid.CreateVersion7(),
-                        SourceEntityId = personId,
-                        TargetEntityId = orgId,
-                        RelationshipType = "MENTIONED_WITH",
-                        Confidence = 0.5f,
+                        Name = rel.SourceEntity,
+                        EntityType = "UNKNOWN",
+                        CanonicalName = rel.SourceEntity.ToLowerInvariant(),
                         FirstSeenMemoryId = memory.Id,
                         CreatedAt = DateTime.UtcNow
                     });
-                    totalRelationships++;
+                    entityIdMap[rel.SourceEntity] = sourceId;
+                    totalEntities++;
+                }
+
+                if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+                {
+                    targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    {
+                        Id = Guid.CreateVersion7(),
+                        Name = rel.TargetEntity,
+                        EntityType = "UNKNOWN",
+                        CanonicalName = rel.TargetEntity.ToLowerInvariant(),
+                        FirstSeenMemoryId = memory.Id,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    entityIdMap[rel.TargetEntity] = targetId;
+                    totalEntities++;
+                }
+
+                await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                {
+                    Id = Guid.CreateVersion7(),
+                    SourceEntityId = sourceId,
+                    TargetEntityId = targetId,
+                    RelationshipType = rel.RelationshipType,
+                    Confidence = rel.Confidence,
+                    FirstSeenMemoryId = memory.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+                totalRelationships++;
+            }
+
+            // Infer co-occurrence relationships for entities in same memory
+            var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
+            var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
+
+            foreach (var person in personEntities)
+            {
+                foreach (var org in orgEntities)
+                {
+                    if (entityIdMap.TryGetValue(person.Name, out var personId) &&
+                        entityIdMap.TryGetValue(org.Name, out var orgId))
+                    {
+                        await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                        {
+                            Id = Guid.CreateVersion7(),
+                            SourceEntityId = personId,
+                            TargetEntityId = orgId,
+                            RelationshipType = "MENTIONED_WITH",
+                            Confidence = 0.5f,
+                            FirstSeenMemoryId = memory.Id,
+                            CreatedAt = DateTime.UtcNow
+                        });
+                        totalRelationships++;
+                    }
                 }
             }
-        }
 
-        processedMemories++;
+            processedMemories++;
+        }
     }
 
     var text = $"Relationship crawl completed!\n\n" +
