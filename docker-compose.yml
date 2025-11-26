@@ -35,6 +35,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
       - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
+      - EXTRACTION_SERVICE_URL=http://host.docker.internal:8766
       - RabbitMq__Host=rabbitmq
       - ConnectionStrings__Redis=redis:6379
     extra_hosts:
@@ -55,6 +56,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
       - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
+      - EXTRACTION_SERVICE_URL=http://host.docker.internal:8766
       - RabbitMq__Host=rabbitmq
       - ConnectionStrings__Redis=redis:6379
     extra_hosts:
