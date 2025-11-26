@@ -1,99 +1,188 @@
+# =============================================================================
+# SerialMemory Complete Stack
+# =============================================================================
+# Production-ready deployment with all services.
+#
+# Quick Start:
+#   docker compose up -d
+#   scripts/bootstrap-dev.ps1  (Windows)
+#   scripts/bootstrap-dev.sh   (Linux/Mac)
+#
+# Services:
+#   - PostgreSQL + pgvector:    localhost:5435
+#   - SerialMemory MCP Core:    stdio (for Claude)
+#   - SerialMemory API:         localhost:5000
+#   - Dashboard API:            localhost:5001
+#   - Ollama (embeddings):      localhost:11434
+#   - Redis:                    localhost:6379
+#   - Prometheus:               localhost:9090
+#   - Grafana:                  localhost:3001
+#
+# =============================================================================
+
 services:
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # Management UI
-    environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
-
+  # ---------------------------------------------------------------------------
+  # Database: PostgreSQL with pgvector
+  # ---------------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg17
+    container_name: serialmemory-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: contextdb
-    ports: ["5435:5432"]
+    ports:
+      - "5435:5432"
     volumes:
-      - ./ops/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./ops/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./ops/eventsourcing_schema.sql:/docker-entrypoint-initdb.d/02-eventsourcing.sql:ro
+      - ./ops/multi_tenant_schema.sql:/docker-entrypoint-initdb.d/03-multi-tenant.sql:ro
+      - ./ops/rls_policies.sql:/docker-entrypoint-initdb.d/04-rls.sql:ro
+      - ./ops/usage_metering_schema.sql:/docker-entrypoint-initdb.d/05-usage-metering.sql:ro
+      - ./ops/admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin-actions.sql:ro
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d contextdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Embeddings: Ollama
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: serialmemory-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for NVIDIA GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------------
+  # SerialMemory API (REST endpoints)
+  # ---------------------------------------------------------------------------
   api:
     build:
       context: .
       dockerfile: SerialMemory.Api/Dockerfile
-    ports: ["5100:8080"]
+    container_name: serialmemory-api
+    ports:
+      - "5000:8080"
     environment:
+      - ASPNETCORE_ENVIRONMENT=Development
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
-      - EXTRACTION_SERVICE_URL=http://host.docker.internal:8766
-      - RabbitMq__Host=rabbitmq
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       - ConnectionStrings__Redis=redis:6379
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - RabbitMq__Host=rabbitmq
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
+      - JWT_ISSUER=serialmemory
+      - JWT_AUDIENCE=serialmemory-api
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  worker:
+  # ---------------------------------------------------------------------------
+  # Dashboard API (Tenant Self-Service + Signup)
+  # ---------------------------------------------------------------------------
+  dashboard-api:
     build:
       context: .
-      dockerfile: SerialMemory.Worker/Dockerfile
+      dockerfile: SerialMemory.Api.Dashboard/Dockerfile
+    container_name: serialmemory-dashboard
+    ports:
+      - "5001:8080"
     environment:
+      - ASPNETCORE_ENVIRONMENT=Development
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - EMBEDDING_SERVICE_URL=http://host.docker.internal:8765
-      - EXTRACTION_SERVICE_URL=http://host.docker.internal:8766
-      - RabbitMq__Host=rabbitmq
-      - ConnectionStrings__Redis=redis:6379
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
+      - JWT_ISSUER=serialmemory
+      - JWT_AUDIENCE=serialmemory-api
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
+      postgres:
+        condition: service_healthy
 
+  # ---------------------------------------------------------------------------
+  # Redis (caching, rate limiting)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: serialmemory-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # ---------------------------------------------------------------------------
+  # Message Queue: RabbitMQ
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: serialmemory-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v2.55.0
+    container_name: serialmemory-prometheus
+    ports:
+      - "9090:9090"
     volumes:
       - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports: ["9090:9090"]
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
 
   grafana:
     image: grafana/grafana:11.2.0
-    ports: ["3001:3000"]
+    container_name: serialmemory-grafana
+    ports:
+      - "3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-    depends_on: [prometheus]
-
-  web:
-    build:
-      context: ./SerialMemory.Web
-      dockerfile: Dockerfile
-    ports: ["3002:80"]
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
-      - api
+      - prometheus
 
 volumes:
   postgres_data:
-  # models volume removed - using HTTP embedding service instead of ONNX
-  # To use ONNX models, add: ONNX_MODEL_PATH and VOCAB_PATH env vars
-  # and bind mount your local models directory
+  ollama_data:
+  redis_data:
