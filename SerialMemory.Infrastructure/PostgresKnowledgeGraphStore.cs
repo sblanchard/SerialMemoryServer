@@ -640,4 +640,105 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     }
 
     #endregion
+
+    #region Batch Operations
+
+    public async Task<List<Memory>> GetMemoriesWithoutEntitiesAsync(int limit = 100, CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT m.id, m.content, m.created_at, m.updated_at, m.source,
+                   m.conversation_session_id, m.metadata::text
+            FROM memories m
+            WHERE NOT EXISTS (
+                SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+            )
+            ORDER BY m.created_at DESC
+            LIMIT @Limit";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(row => new Memory
+        {
+            Id = row.id,
+            Content = row.content,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at,
+            Source = row.source,
+            ConversationSessionId = row.conversation_session_id,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null
+        }).ToList();
+    }
+
+    public async Task<List<Memory>> GetMemoriesWithNullEmbeddingsAsync(int limit = 100, CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text
+            FROM memories
+            WHERE embedding IS NULL
+            ORDER BY created_at DESC
+            LIMIT @Limit";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(row => new Memory
+        {
+            Id = row.id,
+            Content = row.content,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at,
+            Source = row.source,
+            ConversationSessionId = row.conversation_session_id,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null
+        }).ToList();
+    }
+
+    public async Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text
+            FROM memories
+            ORDER BY created_at DESC
+            LIMIT @Limit OFFSET @Offset";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Limit = limit, Offset = offset },
+            cancellationToken: cancellationToken));
+
+        return results.Select(row => new Memory
+        {
+            Id = row.id,
+            Content = row.content,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at,
+            Source = row.source,
+            ConversationSessionId = row.conversation_session_id,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null
+        }).ToList();
+    }
+
+    #endregion
 }

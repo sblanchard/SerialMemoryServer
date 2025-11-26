@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
@@ -57,7 +58,17 @@ IEmbeddingService embeddingService = EmbeddingServiceFactory.Create(
     vocabPath: vocabPath,
     httpServiceUrl: embeddingServiceUrl);
 
-logger.LogInformation("Embedding service: {Type}", embeddingService.GetType().Name);
+logger.LogInformation("Embedding service: {Type}, Dimension: {Dim}",
+    embeddingService.GetType().Name, embeddingService.EmbeddingDimension);
+
+// Get model info if using ONNX
+OnnxModelInfo? currentModelInfo = null;
+if (embeddingService is OnnxEmbeddingService onnxService)
+{
+    currentModelInfo = onnxService.GetModelInfo();
+    logger.LogInformation("ONNX Model: {ModelName}, Pooling: {Pooling}, MaxSeq: {MaxSeq}",
+        currentModelInfo.ModelName, currentModelInfo.PoolingStrategy, currentModelInfo.MaxSequenceLength);
+}
 
 IEntityExtractionService entityService = new PatternEntityExtractionService();
 
@@ -337,6 +348,58 @@ object HandleToolsList()
                     },
                     required = new[] { "attribute_type", "attribute_key", "attribute_value" }
                 }
+            },
+            // crawl_relationships
+            new
+            {
+                name = "crawl_relationships",
+                description = "Crawl existing memories to extract entities and relationships. Useful for populating the knowledge graph from memories that were ingested without entity extraction.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" },
+                        force_reprocess = new { type = "boolean", @default = false, description = "Reprocess memories that already have entities" }
+                    }
+                }
+            },
+            // get_graph_statistics
+            new
+            {
+                name = "get_graph_statistics",
+                description = "Get statistics about the knowledge graph including entity and relationship counts by type.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new { }
+                }
+            },
+            // get_model_info
+            new
+            {
+                name = "get_model_info",
+                description = "Get information about the current embedding model (name, dimensions, supported models, export instructions).",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new { }
+                }
+            },
+            // reembed_memories
+            new
+            {
+                name = "reembed_memories",
+                description = "Re-generate embeddings for memories. Use after switching to a different embedding model. By default only re-embeds memories with null embeddings.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        force_all = new { type = "boolean", @default = false, description = "Re-embed ALL memories, not just those with null embeddings" },
+                        batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" }
+                    }
+                }
             }
         }
     };
@@ -456,6 +519,18 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
             case "set_user_persona":
                 return await HandleSetUserPersona(arguments);
+
+            case "crawl_relationships":
+                return await HandleCrawlRelationships(arguments);
+
+            case "get_graph_statistics":
+                return await HandleGetGraphStatistics();
+
+            case "get_model_info":
+                return HandleGetModelInfo();
+
+            case "reembed_memories":
+                return await HandleReembedMemories(arguments);
 
             default:
                 throw new Exception($"Unknown tool: {toolName}");
@@ -705,6 +780,381 @@ async Task<object> HandleSetUserPersona(JsonNode? arguments)
     await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
 
     return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
+}
+
+async Task<object> HandleCrawlRelationships(JsonNode? arguments)
+{
+    var batchSize = Math.Clamp(arguments?["batch_size"]?.GetValue<int>() ?? 100, 1, 1000);
+    var forceReprocess = arguments?["force_reprocess"]?.GetValue<bool>() ?? false;
+
+    logger.LogInformation("Starting relationship crawl: batch_size={BatchSize}, force_reprocess={Force}", batchSize, forceReprocess);
+
+    var totalEntities = 0;
+    var totalRelationships = 0;
+    var processedMemories = 0;
+
+    // Track position for offset-based pagination (forceReprocess mode)
+    var rowsFetched = 0;
+
+    while (true)
+    {
+        // Get memories to process
+        // force_reprocess=true: process all memories (re-extract entities/relationships)
+        // force_reprocess=false: only process memories without existing entity links (rows leave result set after processing)
+        List<SerialMemory.Core.Models.Memory> memories;
+
+        if (forceReprocess)
+        {
+            // Offset-based: track position by rows fetched to ensure all rows are visited
+            memories = await store.GetAllMemoriesAsync(batchSize, rowsFetched);
+            rowsFetched += memories.Count;
+        }
+        else
+        {
+            // Rows leave result set when processed (entities linked), so always query from offset 0
+            memories = await store.GetMemoriesWithoutEntitiesAsync(batchSize);
+        }
+
+        if (memories.Count == 0) break;
+
+        logger.LogInformation("Processing batch of {Count} memories (total processed: {Total})", memories.Count, processedMemories);
+
+        foreach (var memory in memories)
+        {
+            // Extract entities and relationships
+            var (entities, relationships) = await entityService.ExtractAllAsync(memory.Content);
+
+            // Create entities and link to memory
+            var entityIdMap = new Dictionary<string, Guid>();
+            foreach (var entity in entities)
+            {
+                var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                {
+                    Id = Guid.CreateVersion7(),
+                    Name = entity.Name,
+                    EntityType = entity.Type,
+                    CanonicalName = entity.Name.ToLowerInvariant(),
+                    FirstSeenMemoryId = memory.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                entityIdMap[entity.Name] = entityId;
+                await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
+                totalEntities++;
+            }
+
+            // Create relationships
+            foreach (var rel in relationships)
+            {
+                Guid sourceId, targetId;
+
+                if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
+                {
+                    sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    {
+                        Id = Guid.CreateVersion7(),
+                        Name = rel.SourceEntity,
+                        EntityType = "UNKNOWN",
+                        CanonicalName = rel.SourceEntity.ToLowerInvariant(),
+                        FirstSeenMemoryId = memory.Id,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    entityIdMap[rel.SourceEntity] = sourceId;
+                    totalEntities++;
+                }
+
+                if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+                {
+                    targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    {
+                        Id = Guid.CreateVersion7(),
+                        Name = rel.TargetEntity,
+                        EntityType = "UNKNOWN",
+                        CanonicalName = rel.TargetEntity.ToLowerInvariant(),
+                        FirstSeenMemoryId = memory.Id,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    entityIdMap[rel.TargetEntity] = targetId;
+                    totalEntities++;
+                }
+
+                await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                {
+                    Id = Guid.CreateVersion7(),
+                    SourceEntityId = sourceId,
+                    TargetEntityId = targetId,
+                    RelationshipType = rel.RelationshipType,
+                    Confidence = rel.Confidence,
+                    FirstSeenMemoryId = memory.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+                totalRelationships++;
+            }
+
+            // Infer co-occurrence relationships for entities in same memory
+            var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
+            var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
+
+            foreach (var person in personEntities)
+            {
+                foreach (var org in orgEntities)
+                {
+                    if (entityIdMap.TryGetValue(person.Name, out var personId) &&
+                        entityIdMap.TryGetValue(org.Name, out var orgId))
+                    {
+                        await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                        {
+                            Id = Guid.CreateVersion7(),
+                            SourceEntityId = personId,
+                            TargetEntityId = orgId,
+                            RelationshipType = "MENTIONED_WITH",
+                            Confidence = 0.5f,
+                            FirstSeenMemoryId = memory.Id,
+                            CreatedAt = DateTime.UtcNow
+                        });
+                        totalRelationships++;
+                    }
+                }
+            }
+
+            processedMemories++;
+        }
+    }
+
+    var text = $"Relationship crawl completed!\n\n" +
+               $"Memories processed: {processedMemories}\n" +
+               $"Entities created: {totalEntities}\n" +
+               $"Relationships created: {totalRelationships}";
+
+    logger.LogInformation("Crawl completed: {Memories} memories, {Entities} entities, {Relationships} relationships",
+        processedMemories, totalEntities, totalRelationships);
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleGetGraphStatistics()
+{
+    var memoryCnt = await store.GetMemoryCountAsync();
+    var entityCnt = await store.GetEntityCountAsync();
+    var relationshipCnt = await store.GetRelationshipCountAsync();
+
+    // Get relationship type breakdown
+    var relationships = await store.GetAllRelationshipsAsync(1000);
+    var typeBreakdown = relationships
+        .GroupBy(r => r.RelationshipType)
+        .Select(g => new { Type = g.Key, Count = g.Count() })
+        .OrderByDescending(x => x.Count)
+        .ToList();
+
+    var text = $"Knowledge Graph Statistics\n\n" +
+               $"Total Memories: {memoryCnt}\n" +
+               $"Total Entities: {entityCnt}\n" +
+               $"Total Relationships: {relationshipCnt}\n\n" +
+               $"Relationship Types:\n" +
+               string.Join("\n", typeBreakdown.Select(t => $"  - {t.Type}: {t.Count}"));
+
+    return CreateTextResponse(text);
+}
+
+object HandleGetModelInfo()
+{
+    var serviceType = embeddingService.GetType().Name;
+    var dimension = embeddingService.EmbeddingDimension;
+
+    var text = $"## Current Embedding Model\n\n" +
+               $"**Service Type:** {serviceType}\n" +
+               $"**Embedding Dimension:** {dimension}\n";
+
+    if (currentModelInfo != null)
+    {
+        text += $"\n**ONNX Model Details:**\n" +
+                $"- Model Name: {currentModelInfo.ModelName}\n" +
+                $"- Pooling Strategy: {currentModelInfo.PoolingStrategy}\n" +
+                $"- Max Sequence Length: {currentModelInfo.MaxSequenceLength}\n" +
+                $"- Vocabulary Size: {currentModelInfo.VocabularySize}\n" +
+                $"- Inputs: {string.Join(", ", currentModelInfo.InputNames)}\n" +
+                $"- Outputs: {string.Join(", ", currentModelInfo.OutputNames)}\n";
+    }
+
+    text += $"\n## Supported ONNX Models\n\n" +
+            $"### Small Models (384 dimensions) - Fast, good for most use cases\n" +
+            $"- **all-MiniLM-L6-v2** (current default): Best balance of speed/quality\n" +
+            $"- **all-MiniLM-L12-v2**: Slightly better quality, 2x slower\n" +
+            $"- **bge-small-en-v1.5**: Optimized for retrieval (uses CLS pooling)\n" +
+            $"- **e5-small-v2**: Good for asymmetric search\n\n" +
+            $"### Medium Models (768 dimensions) - Better quality, higher resource usage\n" +
+            $"- **all-mpnet-base-v2**: RECOMMENDED upgrade - best quality in this class\n" +
+            $"- **bge-base-en-v1.5**: Excellent for retrieval tasks\n" +
+            $"- **e5-base-v2**: Strong asymmetric search performance\n" +
+            $"- **gte-base**: Alibaba's high-quality encoder\n\n" +
+            $"### Large Models (1024 dimensions) - Highest quality, significant resources\n" +
+            $"- **e5-large-v2**: Top-tier quality\n" +
+            $"- **bge-large-en-v1.5**: Best retrieval model\n" +
+            $"- **gte-large**: Highest quality general encoder\n\n" +
+            $"## How to Switch Models\n\n" +
+            $"1. Export ONNX model:\n" +
+            $"   ```bash\n" +
+            $"   pip install optimum[exporters] onnx\n" +
+            $"   optimum-cli export onnx --model sentence-transformers/all-mpnet-base-v2 ./models/all-mpnet-base-v2/\n" +
+            $"   ```\n\n" +
+            $"2. Update database vector dimension (if changing from 384):\n" +
+            $"   ```sql\n" +
+            $"   -- Set EMBEDDING_DIM to 768 in ops/migrate_embedding_dimension.sql\n" +
+            $"   psql -f ops/migrate_embedding_dimension.sql\n" +
+            $"   ```\n\n" +
+            $"3. Update environment variables:\n" +
+            $"   ```\n" +
+            $"   ONNX_MODEL_PATH=/path/to/models/all-mpnet-base-v2/model.onnx\n" +
+            $"   VOCAB_PATH=/path/to/models/all-mpnet-base-v2/vocab.txt\n" +
+            $"   ```\n\n" +
+            $"4. Restart MCP server and run `reembed_memories` tool with `force_all: true`";
+
+    return CreateTextResponse(text);
+}
+
+async Task<object> HandleReembedMemories(JsonNode? arguments)
+{
+    var forceAll = arguments?["force_all"]?.GetValue<bool>() ?? false;
+    var batchSize = Math.Clamp(arguments?["batch_size"]?.GetValue<int>() ?? 100, 1, 1000);
+
+    logger.LogInformation("Starting re-embedding: force_all={ForceAll}, batch_size={BatchSize}", forceAll, batchSize);
+
+    // Get total counts to report progress context
+    var totalMemories = await store.GetMemoryCountAsync();
+    long totalToProcess;
+
+    if (forceAll)
+    {
+        totalToProcess = totalMemories;
+    }
+    else
+    {
+        // Count memories with null embeddings
+        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
+        await countConn.OpenAsync();
+        totalToProcess = await countConn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
+    }
+
+    var processedCount = 0;
+    var errorCount = 0;
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+    if (forceAll)
+    {
+        // For force_all mode: iterate through ALL memories using offset-based pagination
+        // Track by rows fetched (not processed) to ensure no rows are skipped on errors
+        var rowsFetched = 0;
+
+        while (true)
+        {
+            var memories = await store.GetAllMemoriesAsync(batchSize, rowsFetched);
+            if (memories.Count == 0) break;
+
+            rowsFetched += memories.Count;
+
+            foreach (var memory in memories)
+            {
+                try
+                {
+                    var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+
+                    await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                    await connection.OpenAsync();
+                    await connection.ExecuteAsync(
+                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                        new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+
+                    processedCount++;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
+                    errorCount++;
+                }
+            }
+
+            logger.LogInformation("Re-embedding progress: {Processed}/{Total} ({Errors} errors)",
+                processedCount, totalToProcess, errorCount);
+        }
+    }
+    else
+    {
+        // For null-embeddings mode: single batch since rows leave result set after processing
+        // User can call repeatedly until all are processed
+        var memories = await store.GetMemoriesWithNullEmbeddingsAsync(batchSize);
+
+        foreach (var memory in memories)
+        {
+            try
+            {
+                var embedding = await embeddingService.EmbedTextAsync(memory.Content);
+
+                await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                await connection.OpenAsync();
+                await connection.ExecuteAsync(
+                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
+                    new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+
+                processedCount++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to re-embed memory {MemoryId}", memory.Id);
+                errorCount++;
+            }
+        }
+    }
+
+    stopwatch.Stop();
+
+    var rate = stopwatch.Elapsed.TotalSeconds > 0 ? processedCount / stopwatch.Elapsed.TotalSeconds : 0;
+
+    // Recount remaining for accurate reporting
+    long remaining;
+    if (forceAll)
+    {
+        // In force_all mode, we processed everything (errors aside)
+        remaining = errorCount;
+    }
+    else
+    {
+        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
+        await countConn.OpenAsync();
+        remaining = await countConn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
+    }
+
+    var text = $"Re-embedding completed!\n\n" +
+               $"**Processed:** {processedCount} memories\n" +
+               $"**Errors:** {errorCount}\n" +
+               $"**Total memories:** {totalMemories}\n" +
+               $"**Duration:** {stopwatch.Elapsed:hh\\:mm\\:ss}\n" +
+               $"**Rate:** {rate:F1} memories/second\n" +
+               $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}";
+
+    if (forceAll)
+    {
+        if (errorCount > 0)
+        {
+            text += $"\n\n**{errorCount} memories failed.** Check logs for details.";
+        }
+        else
+        {
+            text += "\n\n**All memories have been re-embedded successfully.**";
+        }
+    }
+    else if (remaining > 0)
+    {
+        var estimatedBatches = (int)Math.Ceiling((double)remaining / batchSize);
+        text += $"\n\n**{remaining} memories remaining.** Run `reembed_memories` {estimatedBatches} more time(s) to complete.";
+    }
+    else
+    {
+        text += "\n\n**All memories have embeddings.**";
+    }
+
+    return CreateTextResponse(text);
 }
 
 object CreateTextResponse(string text)
