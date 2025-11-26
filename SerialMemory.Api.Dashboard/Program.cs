@@ -112,7 +112,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Helper to extract tenant info from claims
-static (Guid TenantId, string UserId, string WorkspaceId) polGetTenantContext(ClaimsPrincipal user, bool selfHosted)
+static (Guid TenantId, string UserId, string WorkspaceId) GetTenantContext(ClaimsPrincipal user, bool selfHosted)
 {
     if (selfHosted)
     {
