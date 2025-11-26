@@ -49,27 +49,21 @@ var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
        $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
        $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
 
-// Embedding Service - prefer ONNX, fallback to HTTP
-var onnxModelPath = builder.Configuration["Embedding:OnnxModelPath"]
-    ?? Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
-var vocabPath = builder.Configuration["Embedding:VocabPath"]
-    ?? Environment.GetEnvironmentVariable("VOCAB_PATH");
-var embeddingServiceUrl = builder.Configuration["EmbeddingServiceUrl"]
-    ?? Environment.GetEnvironmentVariable("EMBEDDING_SERVICE_URL")
-    ?? "http://localhost:8765";
+// Embedding Service - Ollama
+var ollamaUrl = builder.Configuration["Ollama:Url"]
+    ?? Environment.GetEnvironmentVariable("OLLAMA_URL")
+    ?? "http://localhost:11434";
+var ollamaModel = builder.Configuration["Ollama:Model"]
+    ?? Environment.GetEnvironmentVariable("OLLAMA_MODEL")
+    ?? "nomic-embed-text";
+var ollamaEmbeddingDim = int.TryParse(
+    builder.Configuration["Ollama:EmbeddingDim"] ?? Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_DIM"),
+    out var dim) ? dim : 768;
 
 builder.Services.AddSingleton<IKnowledgeGraphStore>(_ => new PostgresKnowledgeGraphStore(pgConnectionString));
 
-if (!string.IsNullOrEmpty(onnxModelPath) && !string.IsNullOrEmpty(vocabPath) && File.Exists(onnxModelPath))
-{
-    Console.WriteLine($"Using ONNX embedding service: {onnxModelPath}");
-    builder.Services.AddSingleton<IEmbeddingService>(_ => new OnnxEmbeddingService(onnxModelPath, vocabPath));
-}
-else
-{
-    Console.WriteLine($"Using HTTP embedding service: {embeddingServiceUrl}");
-    builder.Services.AddSingleton<IEmbeddingService>(_ => new HttpEmbeddingService(embeddingServiceUrl));
-}
+Console.WriteLine($"Using Ollama embedding service: {ollamaModel} at {ollamaUrl} (dim={ollamaEmbeddingDim})");
+builder.Services.AddSingleton<IEmbeddingService>(_ => new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
 
 // Entity extraction service - use HTTP/Ollama if configured, otherwise pattern-based
 var extractionServiceUrl = builder.Configuration["ExtractionServiceUrl"]
