@@ -14,28 +14,18 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.Retrieval;
 
-public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
+public sealed class HybridRetrievalEngine(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILogger<HybridRetrievalEngine> logger)
+    : IHybridRetrievalEngine
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<HybridRetrievalEngine> _logger;
-
     private readonly RetrievalScoreBreakdown _defaultWeights = new(
         SemanticWeight: 0.35f,
         SymbolicWeight: 0.15f,
         GraphWeight: 0.20f,
         TemporalWeight: 0.15f,
         ConfidenceWeight: 0.15f);
-
-    public HybridRetrievalEngine(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILogger<HybridRetrievalEngine> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
 
     public async Task<HybridRetrievalResult> RetrieveAsync(
         HybridRetrievalQuery query,
@@ -44,7 +34,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
         var stopwatch = Stopwatch.StartNew();
 
         // Generate query embedding if not provided
-        var queryEmbedding = query.QueryEmbedding ?? await _embeddingService.EmbedTextAsync(query.QueryText);
+        var queryEmbedding = query.QueryEmbedding ?? await embeddingService.EmbedTextAsync(query.QueryText);
 
         // Run all retrieval strategies in parallel
         var semanticTask = GetSemanticMatchesAsync(queryEmbedding, query.Limit * 2, query.SemanticThreshold, cancellationToken);
@@ -120,7 +110,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
 
         stopwatch.Stop();
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Hybrid retrieval completed in {Duration}ms: {Count} results",
             stopwatch.ElapsedMilliseconds,
             scoredMemories.Count);
@@ -139,7 +129,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
         float threshold,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT id, 1 - (embedding <=> @QueryEmbedding::vector) as similarity
@@ -178,7 +168,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
         var appliedRules = new List<string>();
         var results = new Dictionary<Guid, (float Score, List<string> Rules)>();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         foreach (var rule in rules.OrderByDescending(r => r.Priority))
         {
@@ -266,7 +256,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to evaluate rule condition: {Condition}", rule.ConditionExpression);
+            logger.LogWarning(ex, "Failed to evaluate rule condition: {Condition}", rule.ConditionExpression);
             return false;
         }
     }
@@ -327,7 +317,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
         int limit,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // First, find entities related to the query
         const string findEntitiesSql = @"
@@ -417,7 +407,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
             return new Dictionary<Guid, float>();
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Exponential decay: score = e^(-decay_rate * days_elapsed)
         // With half-life of 30 days: decay_rate = ln(2) / 30
@@ -443,7 +433,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
             return new Dictionary<Guid, float>();
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Try memory_projections first (event-sourced), fallback to default confidence
         const string sql = @"
@@ -540,7 +530,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
             return new List<MemoryRecord>();
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT id, content, created_at
@@ -553,7 +543,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
 
     public async Task<IReadOnlyList<SymbolicRule>> GetActiveRulesAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             SELECT rule_id, rule_name, rule_type, condition_expression,
@@ -581,7 +571,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
 
     public async Task AddRuleAsync(SymbolicRule rule, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO symbolic_rules (
@@ -612,12 +602,12 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
             Metadata = rule.Metadata != null ? JsonSerializer.Serialize(rule.Metadata) : "{}"
         });
 
-        _logger.LogInformation("Added/updated symbolic rule: {RuleName}", rule.RuleName);
+        logger.LogInformation("Added/updated symbolic rule: {RuleName}", rule.RuleName);
     }
 
     public async Task<bool> RemoveRuleAsync(Guid ruleId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"DELETE FROM symbolic_rules WHERE rule_id = @RuleId";
 
@@ -627,7 +617,7 @@ public sealed class HybridRetrievalEngine : IHybridRetrievalEngine
 
     public async Task<bool> UpdateRuleAsync(SymbolicRule rule, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             UPDATE symbolic_rules SET

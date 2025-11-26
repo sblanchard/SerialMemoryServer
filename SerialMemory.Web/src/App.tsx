@@ -18,7 +18,7 @@ function AppContent() {
 
   // Fetch graph data
   const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } = useGraphData({
-    limit: 30,
+    limit: 100,
     query: searchQuery,
     hops: 2,
   });

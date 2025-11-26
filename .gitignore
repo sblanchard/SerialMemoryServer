@@ -6,3 +6,9 @@ riderModule.iml
 .idea/
 .vs/
 nul
+# Build artifacts
+exports/
+publish/
+logs/
+
+\'

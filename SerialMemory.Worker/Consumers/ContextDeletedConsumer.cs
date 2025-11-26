@@ -11,20 +11,13 @@ namespace SerialMemory.Worker.Consumers;
 /// - Trigger cleanup workflows
 /// - Send notifications
 /// </summary>
-public class ContextDeletedConsumer : IConsumer<ContextDeleted>
+public class ContextDeletedConsumer(ILogger<ContextDeletedConsumer> logger) : IConsumer<ContextDeleted>
 {
-    private readonly ILogger<ContextDeletedConsumer> _logger;
-
-    public ContextDeletedConsumer(ILogger<ContextDeletedConsumer> logger)
-    {
-        _logger = logger;
-    }
-
     public async Task Consume(ConsumeContext<ContextDeleted> context)
     {
         var message = context.Message;
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "[MassTransit Consumer] Processing ContextDeleted: Key={Key}, CorrelationId={CorrelationId}, Reason={Reason}",
             message.Key,
             message.CorrelationId,

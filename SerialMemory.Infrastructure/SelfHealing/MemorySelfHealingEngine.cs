@@ -15,23 +15,13 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.SelfHealing;
 
-public sealed class MemorySelfHealingEngine : IMemorySelfHealing
+public sealed class MemorySelfHealingEngine(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILogger<MemorySelfHealingEngine> logger)
+    : IMemorySelfHealing
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<MemorySelfHealingEngine> _logger;
-    private readonly string _workerId;
-
-    public MemorySelfHealingEngine(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILogger<MemorySelfHealingEngine> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _logger = logger;
-        _workerId = $"healer-{Environment.MachineName}-{Process.GetCurrentProcess().Id}";
-    }
+    private readonly string _workerId = $"healer-{Environment.MachineName}-{Process.GetCurrentProcess().Id}";
 
     public async Task<SelfHealingResult> RunCycleAsync(
         SelfHealingOptions options,
@@ -133,7 +123,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
             await LogSelfHealingCycleAsync(operations, stopwatch.ElapsedMilliseconds, cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Self-healing cycle completed in {Duration}ms: {Contradictions} contradictions, " +
                 "{Merged} merged, {Decayed} decayed, {Reinforced} reinforced",
                 stopwatch.ElapsedMilliseconds, contradictionsDetected, memoriesMerged,
@@ -149,7 +139,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Self-healing cycle failed after {Duration}ms", stopwatch.ElapsedMilliseconds);
+            logger.LogError(ex, "Self-healing cycle failed after {Duration}ms", stopwatch.ElapsedMilliseconds);
             throw;
         }
     }
@@ -158,7 +148,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get the memory's embedding and entities
         const string getMemorySql = @"
@@ -322,7 +312,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         int maxOperations,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get recent memories not yet checked for contradictions
         const string sql = @"
@@ -358,7 +348,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         MemoryContradiction contradiction,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             INSERT INTO memory_contradictions (
@@ -394,7 +384,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             throw new ArgumentException("At least 2 memories required for merge", nameof(memoryIds));
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all memories
         const string getMemoriesSql = @"
@@ -431,7 +421,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         // Create merged content
         var mergedContent = string.Join("\n---\n", memories.Select(m => m.Content));
-        var mergedEmbedding = await _embeddingService.EmbedTextAsync(mergedContent);
+        var mergedEmbedding = await embeddingService.EmbedTextAsync(mergedContent);
         var targetId = Guid.CreateVersion7();
 
         // Create merged memory
@@ -499,7 +489,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             SourceIds = idList.ToArray()
         });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Merged {Count} memories into {TargetId} with similarity {Similarity:F3}",
             idList.Count, targetId, avgSimilarity);
 
@@ -511,7 +501,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         int maxOperations,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find similar memory pairs not yet merged
         const string findDuplicatesSql = @"
@@ -564,7 +554,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to merge memories {IdA} and {IdB}", idA, idB);
+                logger.LogWarning(ex, "Failed to merge memories {IdA} and {IdB}", idA, idB);
             }
 
             if (results.Count >= maxOperations)
@@ -581,7 +571,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         float decayFactor,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Apply decay to memories not accessed recently
         const string sql = @"
@@ -606,7 +596,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         if (affected > 0)
         {
-            _logger.LogDebug("Applied decay to {Count} memories older than {MaxAge}", affected, maxAge);
+            logger.LogDebug("Applied decay to {Count} memories older than {MaxAge}", affected, maxAge);
         }
 
         return affected;
@@ -624,7 +614,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             return 0;
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         const string sql = @"
             WITH reinforced AS (
@@ -648,7 +638,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         if (affected > 0)
         {
-            _logger.LogDebug("Reinforced {Count} memories with factor {Factor}: {Reason}",
+            logger.LogDebug("Reinforced {Count} memories with factor {Factor}: {Reason}",
                 affected, reinforcementFactor, reason);
         }
 
@@ -657,7 +647,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
     private async Task<List<Guid>> GetStableMemoryIdsAsync(int limit, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find memories with high access frequency and stable confidence
         const string sql = @"
@@ -679,7 +669,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         long durationMs,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         foreach (var op in operations)
         {

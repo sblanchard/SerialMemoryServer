@@ -14,19 +14,11 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.Debugging;
 
-public sealed class TimeTravelDebugger : ITimeTravelDebugger
+public sealed class TimeTravelDebugger(
+    NpgsqlDataSource dataSource,
+    ILogger<TimeTravelDebugger> logger)
+    : ITimeTravelDebugger
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<TimeTravelDebugger> _logger;
-
-    public TimeTravelDebugger(
-        NpgsqlDataSource dataSource,
-        ILogger<TimeTravelDebugger> logger)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-    }
-
     public async Task<MemorySnapshot> CreateSnapshotAsync(
         string snapshotType,
         CancellationToken cancellationToken = default)
@@ -34,7 +26,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         var snapshotId = Guid.CreateVersion7();
         var snapshotTimestamp = DateTime.UtcNow;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Gather current state statistics
         const string countsSql = @"
@@ -77,7 +69,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         // Capture memory state timeline entries for all active memories
         await CaptureMemoryStatesAsync(connection, snapshotTimestamp, cancellationToken);
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Created {SnapshotType} snapshot {SnapshotId} at {Timestamp}: {Memories} memories, {Entities} entities, {Relationships} relationships",
             snapshotType, snapshotId, snapshotTimestamp,
             counts.memory_count, counts.entity_count, counts.relationship_count);
@@ -125,7 +117,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         DateTime timestamp,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Use the stored function to get state at timestamp
         const string sql = @"
@@ -194,7 +186,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         int limit = 1000,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all active memory states at the given timestamp
         const string sql = @"
@@ -237,7 +229,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
                 null));
         }
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Retrieved graph state at {Timestamp}: {Count} active memories",
             timestamp, states.Count);
 
@@ -250,7 +242,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         string? snapshotType = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var sql = @"
             SELECT snapshot_id, snapshot_timestamp, snapshot_type,
@@ -301,7 +293,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         DateTime? untilTimestamp = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var sql = @"
             SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
@@ -350,7 +342,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
 
         var replayUntil = untilTimestamp ?? (steps.Count > 0 ? steps.Last().CreatedAt : DateTime.UtcNow);
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Replayed reasoning session {SessionId}: {StepCount} steps until {Until}",
             sessionId, steps.Count, replayUntil);
 
@@ -380,7 +372,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
             (snapshotA, snapshotB) = (snapshotB, snapshotA);
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find memories added between snapshots
         const string addedMemoriesSql = @"
@@ -442,7 +434,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
             throw new InvalidOperationException($"Snapshot {snapshotId} not found");
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get state at snapshot time
         var stateAtSnapshot = await GetGraphStateAtAsync(
@@ -468,7 +460,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
 
         if (dryRun)
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Dry run restore to snapshot {SnapshotId}: would restore {RestoreCount}, archive {ArchiveCount}",
                 snapshotId, memoriesToRestore.Count, memoriesToArchive.Count);
 
@@ -521,7 +513,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
 
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Restored to snapshot {SnapshotId}: restored {RestoreCount}, archived {ArchiveCount}",
                 snapshotId, memoriesToRestore.Count, memoriesToArchive.Count);
 
@@ -547,7 +539,7 @@ public sealed class TimeTravelDebugger : ITimeTravelDebugger
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all timeline states for this memory
         const string timelineSql = @"

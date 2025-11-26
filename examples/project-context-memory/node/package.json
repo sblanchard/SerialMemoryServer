@@ -1,0 +1,12 @@
+{
+  "name": "project-context-memory-example",
+  "version": "1.0.0",
+  "description": "Project context memory isolation example using SerialMemory",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@serialmemory/client": "file:../../../sdks/node"
+  }
+}

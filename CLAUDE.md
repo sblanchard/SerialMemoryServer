@@ -694,3 +694,61 @@ For automatic memory integration, add to your `.claude/settings.json`:
 - ✅ Connection pooling
 - ✅ Optimistic concurrency control
 - ✅ Restart-safe background workers
+
+## Memory Protocol
+
+This project uses SerialMemory MCP for persistent context across sessions.
+
+### Session Start
+- **ALWAYS** use the `memory-search` agent before answering substantive questions
+- Search for: project name, current task keywords, recent decisions
+- Query examples: "FlexPilot waterfall rendering", "IC-7610 CAT emulation", "BGRA pixel format"
+
+### During Work
+- Search memory when encountering:
+  - References to "we discussed", "last time", "previous session"
+  - Technical decisions that may have prior context
+  - Recurring patterns or known issues
+  - Architecture questions about existing components
+
+### Session End / After Significant Work
+- **ALWAYS** use the `memory-ingest` agent to store:
+  - Decisions made and their rationale
+  - Bugs fixed with root cause analysis
+  - Architecture patterns discovered or implemented
+  - User preferences learned
+  - Implementation details that took effort to figure out
+
+### Memory Content Format
+```
+[Project] Session Summary - YYYY-MM-DD
+Category: decision | bugfix | architecture | learning
+Topic: [Brief description]
+---
+1. [ISSUE/DECISION NAME]
+Problem: [What was wrong or needed]
+Root Cause: [Why it happened]
+Solution: [What fixed it / what was decided]
+Files: [Affected files]
+---
+[Additional items...]
+```
+
+### What to Store
+- Root cause analyses (like BGRA8888 channel swap)
+- Exact formulas and magic numbers (threshold calculations, gradient stops)
+- Architecture decisions with trade-offs
+- Protocol specifications and quirks discovered
+- Performance optimization findings
+
+### What NOT to Store
+- Raw code blocks (describe conceptually instead)
+- Transient debugging output
+- Obvious/trivial fixes
+- Sensitive credentials or keys
+
+### Memory Search Strategies
+- **By project**: "FlexPilot", "FlexHPSDR", "RebateX"
+- **By component**: "waterfall", "spectrum", "CAT emulation"
+- **By problem type**: "rendering", "protocol", "performance"
+- **By date**: Include date in queries for recent context
