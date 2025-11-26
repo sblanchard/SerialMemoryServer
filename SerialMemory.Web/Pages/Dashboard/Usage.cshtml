@@ -1,0 +1,144 @@
+@page "/dashboard/usage"
+@model SerialMemory.Web.Pages.Dashboard.UsageModel
+@{
+    ViewData["Title"] = "Usage";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">Usage</h1>
+        <p class="mt-2 text-gray-600">Track your API usage and credits consumption.</p>
+    </div>
+
+    <!-- Current Cycle Overview -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="card">
+            <div class="text-sm font-medium text-gray-500">Credits Used</div>
+            <div class="mt-1 text-3xl font-semibold text-gray-900">@Model.CreditsUsed.ToString("N1")</div>
+            <div class="text-sm text-gray-500">of @Model.CreditsAllocated.ToString("N0") allocated</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-gray-500">Credits Remaining</div>
+            <div class="mt-1 text-3xl font-semibold text-@(Model.CreditsRemaining < Model.CreditsAllocated * 0.1m ? "red" : "green")-600">
+                @Model.CreditsRemaining.ToString("N1")
+            </div>
+            <div class="text-sm text-gray-500">@Model.UsagePercent% used</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-gray-500">Total Operations</div>
+            <div class="mt-1 text-3xl font-semibold text-gray-900">@Model.TotalOperations.ToString("N0")</div>
+            <div class="text-sm text-gray-500">this billing cycle</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-gray-500">Cycle Ends</div>
+            <div class="mt-1 text-3xl font-semibold text-gray-900">@Model.CycleEnd?.ToString("MMM dd")</div>
+            <div class="text-sm text-gray-500">@Model.DaysRemaining days remaining</div>
+        </div>
+    </div>
+
+    <!-- Usage Progress Bar -->
+    <div class="card mb-8">
+        <h3 class="text-lg font-semibold mb-4">Credit Usage</h3>
+        <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+            <div class="@(Model.UsagePercent > 90 ? "bg-red-600" : Model.UsagePercent > 75 ? "bg-yellow-500" : "bg-indigo-600") h-4 rounded-full transition-all duration-300"
+                style="width: @(Math.Min(100, Model.UsagePercent))%"></div>
+        </div>
+        <div class="flex justify-between text-sm text-gray-600">
+            <span>0 credits</span>
+            <span>@Model.CreditsAllocated.ToString("N0") credits</span>
+        </div>
+        @if (Model.UsagePercent > 75)
+        {
+            <div class="mt-4 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded">
+                @if (Model.UsagePercent > 90)
+                {
+                    <strong>Warning:</strong>
+                    <text>You've used over 90% of your credits. Consider upgrading your plan to avoid service interruption.</text>
+                }
+                else
+                {
+                    <strong>Notice:</strong>
+                    <text>You've used over 75% of your credits this cycle.</text>
+                }
+                <a href="/dashboard/billing" class="ml-2 text-yellow-900 underline">Upgrade Plan</a>
+            </div>
+        }
+    </div>
+
+    <!-- Usage Breakdown -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div class="card">
+            <h3 class="text-lg font-semibold mb-4">Usage by Operation</h3>
+            <div class="space-y-3">
+                @foreach (var op in Model.UsageByOperation)
+                {
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-sm font-medium text-gray-900">@op.OperationType</div>
+                            <div class="text-xs text-gray-500">@op.Count.ToString("N0") operations</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm font-semibold text-gray-900">@op.Credits.ToString("N1")</div>
+                            <div class="text-xs text-gray-500">credits</div>
+                        </div>
+                    </div>
+                }
+                @if (Model.UsageByOperation.Count == 0)
+                {
+                    <div class="text-gray-500 text-sm">No usage data for this cycle yet.</div>
+                }
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="text-lg font-semibold mb-4">Daily Usage (Last 7 Days)</h3>
+            <div class="space-y-2">
+                @foreach (var day in Model.DailyUsage)
+                {
+                    <div class="flex items-center gap-2">
+                        <div class="w-20 text-xs text-gray-500">@day.Date.ToString("MMM dd")</div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-2">
+                            <div class="bg-indigo-600 h-2 rounded-full" style="width: @(day.Percent)%"></div>
+                        </div>
+                        <div class="w-16 text-right text-xs text-gray-600">@day.Credits.ToString("N1")</div>
+                    </div>
+                }
+                @if (Model.DailyUsage.Count == 0)
+                {
+                    <div class="text-gray-500 text-sm">No daily usage data available.</div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Rate Limits -->
+    <div class="card mb-8">
+        <h3 class="text-lg font-semibold mb-4">Rate Limits</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+                <div class="text-sm font-medium text-gray-500">Current Rate</div>
+                <div class="mt-1 text-2xl font-semibold text-gray-900">@Model.CurrentRatePerMinute <span class="text-sm font-normal text-gray-500">req/min</span></div>
+            </div>
+            <div>
+                <div class="text-sm font-medium text-gray-500">Plan Limit</div>
+                <div class="mt-1 text-2xl font-semibold text-gray-900">@(Model.RateLimitPerMinute?.ToString("N0") ?? "Unlimited") <span class="text-sm font-normal text-gray-500">req/min</span></div>
+            </div>
+            <div>
+                <div class="text-sm font-medium text-gray-500">Rate Limit Hits</div>
+                <div class="mt-1 text-2xl font-semibold text-@(Model.RateLimitHits > 0 ? "yellow" : "gray")-600">@Model.RateLimitHits</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Section -->
+    <div class="card">
+        <h3 class="text-lg font-semibold mb-4">Export Usage Data</h3>
+        <p class="text-gray-600 mb-4">Download your usage data for the current billing cycle.</p>
+        <form method="post" asp-page-handler="Export">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md text-sm font-medium">
+                Download CSV
+            </button>
+        </form>
+    </div>
+</div>

@@ -1,0 +1,124 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home";
+}
+
+<div class="gradient-bg text-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+        <div class="text-center">
+            <h1 class="text-4xl font-extrabold tracking-tight sm:text-5xl md:text-6xl">
+                Memory for your AI Agents
+            </h1>
+            <p class="mt-6 max-w-2xl mx-auto text-xl text-indigo-100">
+                SerialMemory is a temporal knowledge graph that gives your AI agents persistent memory,
+                semantic search, and entity tracking across sessions.
+            </p>
+            <div class="mt-10 flex justify-center gap-4">
+                <a href="/signup" class="bg-white text-indigo-600 hover:bg-gray-100 px-8 py-3 rounded-md text-lg font-medium">
+                    Get Started Free
+                </a>
+                <a href="#features" class="border-2 border-white text-white hover:bg-white hover:text-indigo-600 px-8 py-3 rounded-md text-lg font-medium">
+                    Learn More
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<section id="features" class="py-20">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+            <h2 class="text-3xl font-bold text-gray-900">Everything your AI needs to remember</h2>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x1F9E0;</div>
+                <h3 class="text-xl font-semibold mb-2">Semantic Memory</h3>
+                <p class="text-gray-600">Store and retrieve memories using natural language queries with vector embeddings and semantic similarity search.</p>
+            </div>
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x1F517;</div>
+                <h3 class="text-xl font-semibold mb-2">Knowledge Graph</h3>
+                <p class="text-gray-600">Automatic entity extraction and relationship tracking creates a connected knowledge graph from your memories.</p>
+            </div>
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x231B;</div>
+                <h3 class="text-xl font-semibold mb-2">Temporal Context</h3>
+                <p class="text-gray-600">Time-aware memory with confidence decay, reinforcement, and session tracking for accurate context retrieval.</p>
+            </div>
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x1F50C;</div>
+                <h3 class="text-xl font-semibold mb-2">MCP Protocol</h3>
+                <p class="text-gray-600">Native Model Context Protocol support for seamless integration with Claude, Cursor, and other MCP-compatible AI tools.</p>
+            </div>
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x1F512;</div>
+                <h3 class="text-xl font-semibold mb-2">Multi-Tenant</h3>
+                <p class="text-gray-600">Strict data isolation with Row-Level Security, API keys, and tenant-scoped quotas for secure multi-user deployments.</p>
+            </div>
+            <div class="card">
+                <div class="text-indigo-600 text-2xl mb-4">&#x1F4CA;</div>
+                <h3 class="text-xl font-semibold mb-2">Usage Analytics</h3>
+                <p class="text-gray-600">Real-time usage tracking, billing cycles, and rate limiting with detailed audit logs and tamper-evident hash chains.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="bg-gray-100 py-20">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+            <h2 class="text-3xl font-bold text-gray-900">Simple, transparent pricing</h2>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+            <div class="card text-center">
+                <h3 class="text-xl font-semibold mb-2">Free</h3>
+                <div class="text-4xl font-bold text-gray-900 mb-4">$0<span class="text-lg font-normal text-gray-500">/mo</span></div>
+                <ul class="text-gray-600 space-y-2 mb-6 text-left">
+                    <li>&#x2713; 100 credits/month</li>
+                    <li>&#x2713; 1,000 memories</li>
+                    <li>&#x2713; 10 req/min rate limit</li>
+                    <li>&#x2713; Community support</li>
+                </ul>
+                <a href="/signup" class="block w-full bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded-md font-medium">Get Started</a>
+            </div>
+            <div class="card text-center border-2 border-indigo-600 relative">
+                <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-indigo-600 text-white px-3 py-1 rounded-full text-sm">Popular</span>
+                <h3 class="text-xl font-semibold mb-2">Pro</h3>
+                <div class="text-4xl font-bold text-gray-900 mb-4">$29<span class="text-lg font-normal text-gray-500">/mo</span></div>
+                <ul class="text-gray-600 space-y-2 mb-6 text-left">
+                    <li>&#x2713; 5,000 credits/month</li>
+                    <li>&#x2713; 50,000 memories</li>
+                    <li>&#x2713; 60 req/min rate limit</li>
+                    <li>&#x2713; Credit carryover</li>
+                    <li>&#x2713; Priority support</li>
+                </ul>
+                <a href="/signup?plan=pro" class="block w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-md font-medium">Start Free Trial</a>
+            </div>
+            <div class="card text-center">
+                <h3 class="text-xl font-semibold mb-2">Enterprise</h3>
+                <div class="text-4xl font-bold text-gray-900 mb-4">Custom</div>
+                <ul class="text-gray-600 space-y-2 mb-6 text-left">
+                    <li>&#x2713; Unlimited credits</li>
+                    <li>&#x2713; Unlimited memories</li>
+                    <li>&#x2713; No rate limits</li>
+                    <li>&#x2713; Self-hosted option</li>
+                    <li>&#x2713; Dedicated support</li>
+                    <li>&#x2713; SLA guarantee</li>
+                </ul>
+                <a href="mailto:sales@serialmemory.io" class="block w-full bg-gray-800 hover:bg-gray-900 text-white py-2 rounded-md font-medium">Contact Sales</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="py-20">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-3xl font-bold text-gray-900 mb-6">Ready to give your AI a memory?</h2>
+        <p class="text-xl text-gray-600 mb-8">Start free, no credit card required. Upgrade when you need more.</p>
+        <a href="/signup" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-md text-lg font-medium">
+            Get Started Free
+        </a>
+    </div>
+</section>

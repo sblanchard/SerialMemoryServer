@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Models;
 using SerialMemory.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,8 +26,34 @@ var selfHostedMode = builder.Configuration["SERIALMEMORY_MODE"]?.ToLowerInvarian
 builder.Services.AddSingleton<ITenantDashboardService>(sp =>
     new TenantDashboardService(connectionString, sp.GetRequiredService<ILogger<TenantDashboardService>>()));
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddSingleton<IApiKeyService>(sp =>
+    new ApiKeyService(connectionString, sp.GetRequiredService<ILogger<ApiKeyService>>(), jwtSecret, jwtIssuer, jwtAudience));
+
+builder.Services.AddSingleton<IAdminService>(sp =>
+    new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
+
+// Stripe configuration
+var stripeConfig = new StripeConfig
+{
+    SecretKey = builder.Configuration["STRIPE_SECRET_KEY"] ?? "",
+    PublishableKey = builder.Configuration["STRIPE_PUBLISHABLE_KEY"] ?? "",
+    WebhookSecret = builder.Configuration["STRIPE_WEBHOOK_SECRET"] ?? "",
+    ProPriceId = builder.Configuration["STRIPE_PRO_PRICE_ID"] ?? "",
+    EnterprisePriceId = builder.Configuration["STRIPE_ENTERPRISE_PRICE_ID"] ?? "",
+    DefaultSuccessUrl = builder.Configuration["STRIPE_SUCCESS_URL"] ?? "/dashboard/billing?success=true",
+    DefaultCancelUrl = builder.Configuration["STRIPE_CANCEL_URL"] ?? "/dashboard/billing?canceled=true"
+};
+
+builder.Services.AddSingleton<IBillingService>(sp =>
+    new StripeBillingService(connectionString, sp.GetRequiredService<ILogger<StripeBillingService>>(), stripeConfig));
+
+builder.Services.AddAuthentication(options =>
+    {
+        // Default to JWT, but allow API key to authenticate as well
+        options.DefaultAuthenticateScheme = "MultiScheme";
+        options.DefaultChallengeScheme = "MultiScheme";
+    })
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -36,6 +64,29 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSecret))
+        };
+    })
+    .AddApiKey()
+    .AddPolicyScheme("MultiScheme", "JWT or API Key", options =>
+    {
+        options.ForwardDefaultSelector = context =>
+        {
+            // Check for API key in header or Bearer token starting with "sm_"
+            var apiKeyHeader = context.Request.Headers["X-API-Key"].FirstOrDefault();
+            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+
+            if (!string.IsNullOrEmpty(apiKeyHeader))
+            {
+                return ApiKeyAuthenticationHandler.SchemeName;
+            }
+
+            if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer sm_", StringComparison.OrdinalIgnoreCase))
+            {
+                return ApiKeyAuthenticationHandler.SchemeName;
+            }
+
+            // Default to JWT
+            return JwtBearerDefaults.AuthenticationScheme;
         };
     });
 
@@ -142,8 +193,8 @@ app.MapGet("/tenant/plan", async (
 // =============================================================================
 app.MapPost("/tenant/export", async (
     ClaimsPrincipal user,
-    ExportRequestOptions? options,
-    ITenantDashboardService dashboardService,
+    [FromBody] ExportRequestOptions? options,
+    [FromServices] ITenantDashboardService dashboardService,
     CancellationToken ct) =>
 {
     var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
@@ -195,8 +246,8 @@ app.MapGet("/tenant/export/{id:guid}", async (
 // =============================================================================
 app.MapDelete("/tenant", async (
     ClaimsPrincipal user,
-    DeleteTenantRequest request,
-    ITenantDashboardService dashboardService,
+    [FromBody] DeleteTenantRequest request,
+    [FromServices] ITenantDashboardService dashboardService,
     CancellationToken ct) =>
 {
     var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
@@ -282,6 +333,414 @@ app.MapPost("/tenant/deletion/cancel", async (
 .Produces(StatusCodes.Status404NotFound);
 
 // =============================================================================
+// POST /signup - Create new tenant (no auth required)
+// =============================================================================
+app.MapPost("/signup", async (
+    [FromBody] SignupRequest request,
+    [FromServices] IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    if (selfHostedMode)
+        return Results.BadRequest(new { error = "not_allowed", message = "Signup not available in self-hosted mode" });
+
+    try
+    {
+        var result = await apiKeyService.SignupAsync(request, ct);
+        return Results.Created($"/tenant/{result.TenantId}", result);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = "validation_error", message = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = "duplicate", message = ex.Message });
+    }
+})
+.WithName("Signup")
+.WithDescription("Creates a new tenant with initial API key")
+.AllowAnonymous()
+.Produces<SignupResult>(StatusCodes.Status201Created)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status409Conflict);
+
+// =============================================================================
+// POST /api-keys - Create new API key
+// =============================================================================
+app.MapPost("/api-keys", async (
+    [FromBody] CreateApiKeyRequest request,
+    ClaimsPrincipal user,
+    [FromServices] IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
+
+    try
+    {
+        var result = await apiKeyService.CreateApiKeyAsync(tenantId, userId, request, ct);
+        return Results.Created($"/api-keys/{result.Id}", result);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = "validation_error", message = ex.Message });
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.Forbid();
+    }
+})
+.WithName("CreateApiKey")
+.WithDescription("Creates a new API key for the tenant")
+.RequireAuthorization("Admin")
+.Produces<ApiKeyCreateResult>(StatusCodes.Status201Created)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status403Forbidden);
+
+// =============================================================================
+// GET /api-keys - List API keys
+// =============================================================================
+app.MapGet("/api-keys", async (
+    bool? includeRevoked,
+    ClaimsPrincipal user,
+    IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+    var result = await apiKeyService.ListApiKeysAsync(tenantId, includeRevoked ?? false, ct);
+    return Results.Ok(result);
+})
+.WithName("ListApiKeys")
+.WithDescription("Lists all API keys for the tenant (secrets not included)")
+.RequireAuthorization("Admin")
+.Produces<IReadOnlyList<ApiKeyInfo>>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// =============================================================================
+// GET /api-keys/{id} - Get single API key
+// =============================================================================
+app.MapGet("/api-keys/{id:guid}", async (
+    Guid id,
+    ClaimsPrincipal user,
+    IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+    var result = await apiKeyService.GetApiKeyAsync(tenantId, id, ct);
+
+    if (result == null)
+        return Results.NotFound(new { error = "not_found", message = "API key not found" });
+
+    return Results.Ok(result);
+})
+.WithName("GetApiKey")
+.WithDescription("Gets details for a specific API key")
+.RequireAuthorization("Admin")
+.Produces<ApiKeyInfo>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status404NotFound);
+
+// =============================================================================
+// DELETE /api-keys/{id} - Revoke API key
+// =============================================================================
+app.MapDelete("/api-keys/{id:guid}", async (
+    Guid id,
+    ClaimsPrincipal user,
+    IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
+    var revoked = await apiKeyService.RevokeApiKeyAsync(tenantId, id, userId, ct);
+
+    if (!revoked)
+        return Results.NotFound(new { error = "not_found", message = "API key not found or already revoked" });
+
+    return Results.Ok(new { message = "API key revoked successfully", keyId = id });
+})
+.WithName("RevokeApiKey")
+.WithDescription("Revokes an API key (soft delete)")
+.RequireAuthorization("Admin")
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status404NotFound);
+
+// =============================================================================
+// GET /tenant/limits - Get tenant limits for SDK error messages
+// =============================================================================
+app.MapGet("/tenant/limits", async (
+    ClaimsPrincipal user,
+    IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, workspaceId) = GetTenantContext(user, selfHostedMode);
+    var result = await apiKeyService.GetTenantLimitsAsync(tenantId, workspaceId, ct);
+    return Results.Ok(result);
+})
+.WithName("GetTenantLimits")
+.WithDescription("Gets plan limits and current usage for SDK error messages")
+.RequireAuthorization()
+.Produces<TenantLimitsResult>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// =============================================================================
+// BILLING ENDPOINTS
+// =============================================================================
+
+// GET /billing - Get billing summary
+app.MapGet("/billing", async (
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.Ok(new { plan = "self-hosted", message = "Billing not applicable in self-hosted mode" });
+
+    var result = await billingService.GetBillingSummaryAsync(tenantId.ToString(), ct);
+    return result != null
+        ? Results.Ok(result)
+        : Results.NotFound(new { error = "not_found", message = "No billing info found" });
+})
+.WithName("GetBillingSummary")
+.WithDescription("Gets billing summary including current plan and payment method")
+.RequireAuthorization()
+.Produces<BillingSummary>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status404NotFound);
+
+// GET /billing/history - Get payment history
+app.MapGet("/billing/history", async (
+    int? limit,
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.Ok(Array.Empty<object>());
+
+    var result = await billingService.GetPaymentHistoryAsync(tenantId.ToString(), limit ?? 10, ct);
+    return Results.Ok(result);
+})
+.WithName("GetPaymentHistory")
+.WithDescription("Gets payment history for the tenant")
+.RequireAuthorization()
+.Produces<IReadOnlyList<PaymentRecord>>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// POST /billing/checkout - Create Stripe checkout session
+app.MapPost("/billing/checkout", async (
+    [FromBody] CheckoutRequest request,
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
+
+    var result = await billingService.CreateCheckoutSessionAsync(new CreateCheckoutRequest
+    {
+        TenantId = tenantId.ToString(),
+        PlanName = request.PlanName,
+        SuccessUrl = request.SuccessUrl,
+        CancelUrl = request.CancelUrl
+    }, ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+
+    return Results.Ok(new { sessionId = result.SessionId, checkoutUrl = result.CheckoutUrl });
+})
+.WithName("CreateCheckoutSession")
+.WithDescription("Creates a Stripe checkout session for upgrading to a paid plan")
+.RequireAuthorization("Admin")
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// POST /billing/portal - Create Stripe customer portal session
+app.MapPost("/billing/portal", async (
+    [FromBody] PortalRequest? request,
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
+
+    var result = await billingService.CreatePortalSessionAsync(new CreatePortalRequest
+    {
+        TenantId = tenantId.ToString(),
+        ReturnUrl = request?.ReturnUrl
+    }, ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+
+    return Results.Ok(new { portalUrl = result.PortalUrl });
+})
+.WithName("CreatePortalSession")
+.WithDescription("Creates a Stripe customer portal session for managing billing")
+.RequireAuthorization("Admin")
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// POST /billing/cancel - Cancel subscription at period end
+app.MapPost("/billing/cancel", async (
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
+
+    var result = await billingService.CancelSubscriptionAsync(tenantId.ToString(), ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+
+    return Results.Ok(new { message = "Subscription will be cancelled at the end of the billing period" });
+})
+.WithName("CancelSubscription")
+.WithDescription("Cancels the subscription at the end of the current billing period")
+.RequireAuthorization("Owner")
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// POST /billing/resume - Resume cancelled subscription
+app.MapPost("/billing/resume", async (
+    ClaimsPrincipal user,
+    IBillingService billingService,
+    CancellationToken ct) =>
+{
+    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
+
+    if (selfHostedMode)
+        return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
+
+    var result = await billingService.ResumeSubscriptionAsync(tenantId.ToString(), ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+
+    return Results.Ok(new { message = "Subscription resumed" });
+})
+.WithName("ResumeSubscription")
+.WithDescription("Resumes a cancelled subscription")
+.RequireAuthorization("Owner")
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized);
+
+// POST /webhook/stripe - Stripe webhook endpoint (no auth - uses signature verification)
+app.MapPost("/webhook/stripe", async (
+    HttpRequest request,
+    IBillingService billingService,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    var payload = await new StreamReader(request.Body).ReadToEndAsync(ct);
+    var signature = request.Headers["Stripe-Signature"].FirstOrDefault();
+
+    if (string.IsNullOrEmpty(signature))
+    {
+        logger.LogWarning("Stripe webhook received without signature");
+        return Results.BadRequest(new { error = "missing_signature" });
+    }
+
+    var result = await billingService.ProcessWebhookAsync(payload, signature, ct);
+
+    if (!result.Success && !result.AlreadyProcessed)
+    {
+        logger.LogError("Stripe webhook processing failed: {Error}", result.ErrorMessage);
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new { received = true, eventType = result.EventType, alreadyProcessed = result.AlreadyProcessed });
+})
+.WithName("StripeWebhook")
+.WithDescription("Stripe webhook endpoint for subscription events")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// =============================================================================
+// ADMIN ENDPOINTS (Operator Observability)
+// =============================================================================
+
+// GET /admin/tenants - List tenants with optional status filter
+app.MapGet("/admin/tenants", async (
+    string? status,
+    int? limit,
+    int? offset,
+    IAdminService adminService,
+    CancellationToken ct) =>
+{
+    var statusFilter = status?.ToLowerInvariant() switch
+    {
+        "active" => TenantStatusFilter.Active,
+        "pending_deletion" => TenantStatusFilter.PendingDeletion,
+        "blocked" => TenantStatusFilter.Blocked,
+        _ => TenantStatusFilter.All
+    };
+
+    var result = await adminService.ListTenantsAsync(statusFilter, limit ?? 50, offset ?? 0, ct);
+    return Results.Ok(result);
+})
+.WithName("AdminListTenants")
+.WithDescription("Lists all tenants with optional status filter (admin only)")
+.RequireAuthorization("Owner")
+.Produces<TenantListResult>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status403Forbidden);
+
+// GET /admin/tenant/{id}/health - Get detailed tenant health
+app.MapGet("/admin/tenant/{id:guid}/health", async (
+    Guid id,
+    IAdminService adminService,
+    CancellationToken ct) =>
+{
+    var result = await adminService.GetTenantHealthAsync(id, ct);
+
+    if (result == null)
+        return Results.NotFound(new { error = "not_found", message = "Tenant not found" });
+
+    return Results.Ok(result);
+})
+.WithName("AdminGetTenantHealth")
+.WithDescription("Gets detailed health information for a specific tenant (admin only)")
+.RequireAuthorization("Owner")
+.Produces<TenantHealthResult>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status403Forbidden)
+.Produces(StatusCodes.Status404NotFound);
+
+// GET /admin/system/health - Get system-wide health
+app.MapGet("/admin/system/health", async (
+    IAdminService adminService,
+    CancellationToken ct) =>
+{
+    var result = await adminService.GetSystemHealthAsync(ct);
+    return Results.Ok(result);
+})
+.WithName("AdminGetSystemHealth")
+.WithDescription("Gets system-wide health and statistics (admin only)")
+.RequireAuthorization("Owner")
+.Produces<SystemHealthResult>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status403Forbidden);
+
+// =============================================================================
 // Health check
 // =============================================================================
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTimeOffset.UtcNow }))
@@ -292,3 +751,5 @@ app.Run();
 
 // Request DTOs
 public sealed record DeleteTenantRequest(string ConfirmationPhrase);
+public sealed record CheckoutRequest(string PlanName, string? SuccessUrl = null, string? CancelUrl = null);
+public sealed record PortalRequest(string? ReturnUrl = null);
