@@ -301,7 +301,7 @@ public sealed class DualPassReasoningEngine : IDualPassReasoning
                     {
                         repairedFacts.Add(additionalInfo);
                         repairedAnswer += $"\n\nAdditionally: {additionalInfo}";
-                        improvements.Add($"Added missing information about {issue.Suggestion?[..Math.Min(30, issue.Suggestion.Length ?? 0)]}...");
+                        improvements.Add($"Added missing information about {issue.Suggestion?[..Math.Min(30, issue.Suggestion?.Length ?? 0)]}...");
                     }
                     break;
 

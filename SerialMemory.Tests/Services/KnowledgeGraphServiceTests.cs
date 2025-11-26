@@ -3,6 +3,7 @@ using Moq;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
+using Xunit;
 
 namespace SerialMemory.Tests.Services;
 

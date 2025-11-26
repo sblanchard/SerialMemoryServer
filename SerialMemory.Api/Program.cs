@@ -275,10 +275,17 @@ app.MapGet("/api/graph", async (
             }
         }
 
-        // Get actual relationships from the database
+        // Build set of valid node IDs from entities we have
+        var validNodeIds = new HashSet<Guid>(entityMap.Values.Select(e => e.Id));
+
+        // Get actual relationships from the database, only including edges between valid nodes
         var dbRelationships = await store.GetAllRelationshipsAsync(500);
         foreach (var rel in dbRelationships)
         {
+            // Skip edges where source or target node doesn't exist in our node set
+            if (!validNodeIds.Contains(rel.SourceEntityId) || !validNodeIds.Contains(rel.TargetEntityId))
+                continue;
+
             var edgeKey = $"{rel.SourceEntityId}-{rel.TargetEntityId}-{rel.RelationshipType}";
             if (seenEdges.Add(edgeKey))
             {

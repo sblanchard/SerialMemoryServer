@@ -178,11 +178,24 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
 
         var divergencePoints = new List<DivergencePoint>();
         var stepsReplayed = Math.Min(originalSteps.Count, replaySteps.Count);
+        var stepCountsMatch = originalSteps.Count == replaySteps.Count;
 
         for (int i = 0; i < stepsReplayed; i++)
         {
             var original = originalSteps[i];
             var replay = replaySteps[i];
+
+            // Check both input and output hashes to ensure full determinism
+            if (original.input_hash != replay.input_hash)
+            {
+                divergencePoints.Add(new DivergencePoint(
+                    original.step_sequence,
+                    $"{original.step_type}_input_mismatch",
+                    original.input_hash,
+                    replay.input_hash,
+                    $"Input hash mismatch at step {original.step_sequence}",
+                    $"Original: {original.input_hash}, Replay: {replay.input_hash}"));
+            }
 
             if (original.output_hash != replay.output_hash)
             {
@@ -196,8 +209,24 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             }
         }
 
+        // Flag step count divergence - replay must have same number of steps as original
+        if (!stepCountsMatch)
+        {
+            var stepCountDiff = replaySteps.Count - originalSteps.Count;
+            divergencePoints.Add(new DivergencePoint(
+                stepsReplayed,
+                "step_count_mismatch",
+                originalSteps.Count.ToString(),
+                replaySteps.Count.ToString(),
+                $"Original session had {originalSteps.Count} steps",
+                $"Replay session had {replaySteps.Count} steps (diff: {stepCountDiff:+#;-#;0})"));
+        }
+
+        // Deterministic only if: no divergences AND step counts match
+        var isDeterministic = divergencePoints.Count == 0 && stepCountsMatch;
+
         var verificationHash = ComputeHash(
-            $"{originalSessionId}:{replaySessionId}:{stepsReplayed}:{divergencePoints.Count}");
+            $"{originalSessionId}:{replaySessionId}:{stepsReplayed}:{divergencePoints.Count}:{stepCountsMatch}");
 
         const string logReplaySql = @"
             INSERT INTO replay_executions (
@@ -217,14 +246,14 @@ public sealed class InferenceSessionManager : IInferenceSessionManager
             StepsReplayed = stepsReplayed,
             StepsDiverged = divergencePoints.Count,
             DivergencePoints = JsonSerializer.Serialize(divergencePoints),
-            IsDeterministic = divergencePoints.Count == 0,
+            IsDeterministic = isDeterministic,
             VerificationHash = verificationHash
         });
 
         return new ReplayVerificationResult(
             originalSessionId,
             replaySessionId,
-            divergencePoints.Count == 0,
+            isDeterministic,
             stepsReplayed,
             divergencePoints.Count,
             divergencePoints,

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
+using Xunit;
 
 namespace SerialMemory.Tests.Models;
 
@@ -12,7 +13,10 @@ public class ModelTests
     public void Memory_DefaultValues_AreCorrect()
     {
         // Act
-        var memory = new Memory();
+        var memory = new Memory
+        {
+            Content = null
+        };
 
         // Assert
         memory.Id.Should().BeEmpty();
@@ -68,7 +72,11 @@ public class ModelTests
     public void Entity_DefaultValues_AreCorrect()
     {
         // Act
-        var entity = new Entity();
+        var entity = new Entity
+        {
+            Name = null,
+            EntityType = null
+        };
 
         // Assert
         entity.Id.Should().BeEmpty();
@@ -112,7 +120,10 @@ public class ModelTests
     public void EntityRelationship_DefaultValues_AreCorrect()
     {
         // Act
-        var relationship = new EntityRelationship();
+        var relationship = new EntityRelationship
+        {
+            RelationshipType = null
+        };
 
         // Assert
         relationship.Id.Should().BeEmpty();
@@ -204,7 +215,12 @@ public class ModelTests
     public void UserPersona_DefaultValues_AreCorrect()
     {
         // Act
-        var persona = new UserPersona();
+        var persona = new UserPersona
+        {
+            AttributeType = null,
+            AttributeKey = null,
+            AttributeValue = null
+        };
 
         // Assert
         persona.Id.Should().BeEmpty();

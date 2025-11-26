@@ -32,6 +32,11 @@ var onnxModelPath = configuration["ONNX_MODEL_PATH"];
 var vocabPath = configuration["VOCAB_PATH"];
 var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765";
 
+// Entity extraction service configuration
+// Option 1: Pattern-based (default, no external dependencies)
+// Option 2: HTTP/Ollama (requires extraction_http_service.py) - set EXTRACTION_SERVICE_URL
+var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];
+
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
 // Configure logging to stderr (MCP uses stdout for protocol)
@@ -70,7 +75,11 @@ if (embeddingService is OnnxEmbeddingService onnxService)
         currentModelInfo.ModelName, currentModelInfo.PoolingStrategy, currentModelInfo.MaxSequenceLength);
 }
 
-IEntityExtractionService entityService = new PatternEntityExtractionService();
+// Create entity extraction service (Pattern-based or HTTP/Ollama)
+IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
+
+logger.LogInformation("Entity extraction service: {Type}",
+    entityService.GetType().Name);
 
 var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
 
@@ -831,14 +840,14 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                 var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
                 {
                     Id = Guid.CreateVersion7(),
-                    Name = entity.Name,
-                    EntityType = entity.Type,
-                    CanonicalName = entity.Name.ToLowerInvariant(),
+                    Name = entity.Text,
+                    EntityType = entity.Label,
+                    CanonicalName = entity.Text.ToLowerInvariant(),
                     FirstSeenMemoryId = memory.Id,
                     CreatedAt = DateTime.UtcNow
                 });
 
-                entityIdMap[entity.Name] = entityId;
+                entityIdMap[entity.Text] = entityId;
                 await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
                 totalEntities++;
             }
@@ -883,7 +892,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     Id = Guid.CreateVersion7(),
                     SourceEntityId = sourceId,
                     TargetEntityId = targetId,
-                    RelationshipType = rel.RelationshipType,
+                    RelationshipType = rel.RelationType,
                     Confidence = rel.Confidence,
                     FirstSeenMemoryId = memory.Id,
                     CreatedAt = DateTime.UtcNow
@@ -892,15 +901,15 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             }
 
             // Infer co-occurrence relationships for entities in same memory
-            var personEntities = entities.Where(e => e.Type == "PERSON").ToList();
-            var orgEntities = entities.Where(e => e.Type == "ORG").ToList();
+            var personEntities = entities.Where(e => e.Label == "PERSON").ToList();
+            var orgEntities = entities.Where(e => e.Label == "ORG").ToList();
 
             foreach (var person in personEntities)
             {
                 foreach (var org in orgEntities)
                 {
-                    if (entityIdMap.TryGetValue(person.Name, out var personId) &&
-                        entityIdMap.TryGetValue(org.Name, out var orgId))
+                    if (entityIdMap.TryGetValue(person.Text, out var personId) &&
+                        entityIdMap.TryGetValue(org.Text, out var orgId))
                     {
                         await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
                         {
