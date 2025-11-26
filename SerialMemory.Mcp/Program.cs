@@ -4,6 +4,8 @@ using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using Pgvector;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
@@ -30,14 +32,21 @@ var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 // Option 2: HTTP (requires Python embedding service) - set EMBEDDING_SERVICE_URL
 var onnxModelPath = configuration["ONNX_MODEL_PATH"];
 var vocabPath = configuration["VOCAB_PATH"];
-var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765";
-
+var ollamaUrl = configuration["OLLAMA_URL"];
+var ollamaModel = configuration["OLLAMA_MODEL"];
+var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
+var embeddingServiceUrl = configuration["EMBEDDING_SERVICE_URL"] ?? "http://localhost:8765"; 
 // Entity extraction service configuration
 // Option 1: Pattern-based (default, no external dependencies)
 // Option 2: HTTP/Ollama (requires extraction_http_service.py) - set EXTRACTION_SERVICE_URL
 var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];
 
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
+
+// Create a shared NpgsqlDataSource with vector type handler for reembed operations
+var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
+dataSourceBuilder.UseVector();
+var vectorDataSource = dataSourceBuilder.Build();
 
 // Configure logging to stderr (MCP uses stdout for protocol)
 using var loggerFactory = LoggerFactory.Create(builder =>
@@ -57,11 +66,27 @@ logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgr
 // Initialize services
 IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
 
-// Create embedding service (ONNX or HTTP)
-IEmbeddingService embeddingService = EmbeddingServiceFactory.Create(
-    onnxModelPath: onnxModelPath,
-    vocabPath: vocabPath,
-    httpServiceUrl: embeddingServiceUrl);
+
+// Create embedding service (ONNX > Ollama > HTTP)
+IEmbeddingService embeddingService;
+if (!string.IsNullOrEmpty(onnxModelPath) && !string.IsNullOrEmpty(vocabPath) &&
+    File.Exists(onnxModelPath) && File.Exists(vocabPath))
+{
+    embeddingService = new OnnxEmbeddingService(onnxModelPath, vocabPath);
+    logger.LogInformation("Using ONNX embedding service");
+}
+else if (!string.IsNullOrEmpty(ollamaUrl) || !string.IsNullOrEmpty(ollamaModel))
+{
+    var url = ollamaUrl ?? "http://localhost:11434";
+    var model = ollamaModel ?? "nomic-embed-text";
+    embeddingService = new OllamaEmbeddingService(url, model, ollamaEmbeddingDim);
+    logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", model, url, ollamaEmbeddingDim);
+}
+else
+{
+    embeddingService = new HttpEmbeddingService(embeddingServiceUrl);
+    logger.LogInformation("Using HTTP embedding service at {Url}", embeddingServiceUrl);
+}
 
 logger.LogInformation("Embedding service: {Type}, Dimension: {Dim}",
     embeddingService.GetType().Name, embeddingService.EmbeddingDimension);
@@ -1039,8 +1064,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
     else
     {
         // Count memories with null embeddings
-        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
-        await countConn.OpenAsync();
+        await using var countConn = await vectorDataSource.OpenConnectionAsync();
         totalToProcess = await countConn.ExecuteScalarAsync<long>(
             "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
     }
@@ -1068,11 +1092,13 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
                 {
                     var embedding = await embeddingService.EmbedTextAsync(memory.Content);
 
-                    await using var connection = new Npgsql.NpgsqlConnection(connectionString);
-                    await connection.OpenAsync();
-                    await connection.ExecuteAsync(
-                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
-                        new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+                    // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
+                    await using var connection = await vectorDataSource.OpenConnectionAsync();
+                    await using var cmd = new Npgsql.NpgsqlCommand(
+                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
+                    cmd.Parameters.AddWithValue("@Id", memory.Id);
+                    cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                    await cmd.ExecuteNonQueryAsync();
 
                     processedCount++;
                 }
@@ -1099,11 +1125,13 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
             {
                 var embedding = await embeddingService.EmbedTextAsync(memory.Content);
 
-                await using var connection = new Npgsql.NpgsqlConnection(connectionString);
-                await connection.OpenAsync();
-                await connection.ExecuteAsync(
-                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id",
-                    new { Id = memory.Id, Embedding = new Pgvector.Vector(embedding) });
+                // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
+                await using var connection = await vectorDataSource.OpenConnectionAsync();
+                await using var cmd = new Npgsql.NpgsqlCommand(
+                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
+                cmd.Parameters.AddWithValue("@Id", memory.Id);
+                cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                await cmd.ExecuteNonQueryAsync();
 
                 processedCount++;
             }
@@ -1128,8 +1156,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
     }
     else
     {
-        await using var countConn = new Npgsql.NpgsqlConnection(connectionString);
-        await countConn.OpenAsync();
+        await using var countConn = await vectorDataSource.OpenConnectionAsync();
         remaining = await countConn.ExecuteScalarAsync<long>(
             "SELECT COUNT(*) FROM memories WHERE embedding IS NULL");
     }
