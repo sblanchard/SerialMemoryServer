@@ -8,10 +8,10 @@ interface SearchPanelProps {
 
 type SearchMode = 'semantic' | 'text' | 'hybrid';
 
-const SEARCH_MODES: { value: SearchMode; label: string; icon: typeof Zap; description: string }[] = [
-  { value: 'hybrid', label: 'Hybrid', icon: Blend, description: 'Best of both' },
-  { value: 'semantic', label: 'Semantic', icon: Zap, description: 'AI-powered' },
-  { value: 'text', label: 'Text', icon: FileText, description: 'Keyword match' },
+const SEARCH_MODES: { value: SearchMode; label: string; icon: typeof Zap }[] = [
+  { value: 'hybrid', label: 'Hybrid', icon: Blend },
+  { value: 'semantic', label: 'Semantic', icon: Zap },
+  { value: 'text', label: 'Text', icon: FileText },
 ];
 
 export function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
@@ -27,29 +27,24 @@ export function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="relative">
+      <div className="memory-search relative">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search memories..."
-          className="w-full bg-bg-tertiary border border-gray-600 rounded-lg px-4 py-3 pl-10 text-sm focus:outline-none focus:border-primary transition-colors"
+          className="pl-10"
         />
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-graphite" />
       </div>
 
-      <div className="flex gap-1">
+      <div className="search-tabs">
         {SEARCH_MODES.map(m => (
           <button
             key={m.value}
             type="button"
             onClick={() => setMode(m.value)}
-            className={`flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs transition-colors ${
-              mode === m.value
-                ? 'bg-primary text-white'
-                : 'bg-bg-tertiary text-gray-400 hover:text-gray-200'
-            }`}
-            title={m.description}
+            className={`search-tab ${mode === m.value ? 'active' : ''}`}
           >
             <m.icon className="w-3 h-3" />
             {m.label}
@@ -60,9 +55,14 @@ export function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
       <button
         type="submit"
         disabled={!query.trim() || isLoading}
-        className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white py-2 rounded-lg text-sm font-medium transition-colors"
+        className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
       >
-        {isLoading ? 'Searching...' : 'Search'}
+        {isLoading ? (
+          <span className="flex items-center justify-center gap-2">
+            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Searching...
+          </span>
+        ) : 'Search'}
       </button>
     </form>
   );
