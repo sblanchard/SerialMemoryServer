@@ -35,9 +35,12 @@ var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
 
 // Entity extraction service configuration
-// Option 1: Pattern-based (default, no external dependencies)
-// Option 2: HTTP/Ollama (requires extraction_http_service.py) - set EXTRACTION_SERVICE_URL
-var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];
+// Option 1: Ollama (recommended) - uses local LLM for accurate extraction
+// Option 2: HTTP service (legacy) - set EXTRACTION_SERVICE_URL
+// Option 3: Pattern-based (default fallback, no external dependencies)
+var ollamaEntityUrl = configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl;  // Share Ollama URL by default
+var ollamaEntityModel = configuration["OLLAMA_ENTITY_MODEL"] ?? "phi3"; // phi3 is good for extraction
+var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];     // Legacy HTTP service
 
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
@@ -69,11 +72,14 @@ IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
 IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
 logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
 
-// Create entity extraction service (Pattern-based or HTTP/Ollama)
-IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
+// Create entity extraction service (Ollama > HTTP > Pattern-based)
+IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
+    ollamaUrl: ollamaEntityUrl,
+    ollamaModel: ollamaEntityModel,
+    httpServiceUrl: extractionServiceUrl);
 
-logger.LogInformation("Entity extraction service: {Type}",
-    entityService.GetType().Name);
+logger.LogInformation("Entity extraction service: {Type} (model: {Model})",
+    entityService.GetType().Name, ollamaEntityModel);
 
 var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
 
