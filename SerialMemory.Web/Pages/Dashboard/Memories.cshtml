@@ -1,0 +1,335 @@
+@page
+@model SerialMemory.Web.Pages.Dashboard.MemoriesModel
+@{
+    ViewData["Title"] = "Memories";
+}
+
+@section Styles {
+    <style>
+        .memory-card {
+            background-color: var(--navy);
+            border: 1px solid var(--slate);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            transition: all 0.3s ease;
+        }
+        .memory-card:hover {
+            border-color: var(--cyan);
+            box-shadow: 0 0 20px rgba(34, 211, 238, 0.15);
+        }
+        .memory-content {
+            color: var(--soft-white);
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+        .memory-meta {
+            color: var(--graphite);
+            font-size: 0.75rem;
+        }
+        .entity-tag {
+            background-color: var(--slate);
+            color: var(--cyan);
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+        }
+        .search-input {
+            background-color: var(--navy);
+            border: 1px solid var(--slate);
+            color: var(--soft-white);
+        }
+        .search-input:focus {
+            border-color: var(--cyan);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.2);
+        }
+        .search-mode-btn {
+            background-color: var(--slate);
+            color: var(--graphite);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .search-mode-btn:hover {
+            color: var(--soft-white);
+        }
+        .search-mode-btn.active {
+            background: linear-gradient(90deg, var(--electric), var(--cyan));
+            color: white;
+        }
+        .similarity-bar {
+            height: 4px;
+            border-radius: 2px;
+            background-color: var(--slate);
+            overflow: hidden;
+        }
+        .similarity-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--electric), var(--cyan));
+            transition: width 0.3s ease;
+        }
+        .loading-spinner {
+            border: 3px solid var(--slate);
+            border-top: 3px solid var(--cyan);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @@keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--graphite);
+        }
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1rem;
+            opacity: 0.5;
+        }
+    </style>
+}
+
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-2xl font-bold gradient-text">Memories</h1>
+            <p class="text-graphite mt-1">Search and browse your knowledge graph memories</p>
+        </div>
+        <div class="text-right">
+            <span class="text-2xl font-bold text-cyan" id="total-count">0</span>
+            <span class="text-graphite text-sm block">total memories</span>
+        </div>
+    </div>
+
+    <!-- Search -->
+    <div class="card mb-6">
+        <div class="flex flex-col gap-4">
+            <div class="flex gap-4">
+                <input type="text" id="search-input" placeholder="Search your memories..."
+                    class="flex-1 search-input px-4 py-3 rounded-lg text-lg">
+                <button id="btn-search" class="btn-primary px-6 py-3 rounded-lg font-medium">
+                    Search
+                </button>
+            </div>
+            <div class="flex gap-2">
+                <button class="search-mode-btn active" data-mode="hybrid">Hybrid</button>
+                <button class="search-mode-btn" data-mode="semantic">Semantic</button>
+                <button class="search-mode-btn" data-mode="text">Text</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div id="loading" class="hidden flex justify-center py-8">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div id="memories-list" class="space-y-4">
+        <!-- Populated by JS -->
+    </div>
+
+    <div id="empty-state" class="empty-state hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+        </svg>
+        <h3 class="text-lg font-medium text-soft-white mb-2">No memories found</h3>
+        <p>Try a different search query or ingest some memories first.</p>
+    </div>
+
+    <!-- Load more -->
+    <div id="load-more" class="hidden text-center py-6">
+        <button id="btn-load-more" class="btn-outline px-6 py-2 rounded-lg">
+            Load More
+        </button>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const API_BASE = '@Model.ApiBaseUrl';
+        const AUTH_TOKEN = '@Model.AuthToken';
+
+        let currentMode = 'hybrid';
+        let currentQuery = '';
+        let currentOffset = 0;
+        const PAGE_SIZE = 20;
+
+        // Format date
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Render memory card
+        function renderMemoryCard(memory) {
+            const similarity = memory.similarity || memory.score || 0;
+            const entities = memory.entities || [];
+
+            return `
+                <div class="memory-card">
+                    <div class="memory-content mb-3">${escapeHtml(memory.content)}</div>
+                    <div class="flex justify-between items-end">
+                        <div>
+                            <div class="memory-meta mb-2">${formatDate(memory.createdAt)}</div>
+                            ${entities.length > 0 ? `
+                                <div class="flex flex-wrap gap-1">
+                                    ${entities.slice(0, 5).map(e => `<span class="entity-tag">${escapeHtml(typeof e === 'string' ? e : e.name)}</span>`).join('')}
+                                    ${entities.length > 5 ? `<span class="entity-tag">+${entities.length - 5} more</span>` : ''}
+                                </div>
+                            ` : ''}
+                        </div>
+                        ${similarity > 0 ? `
+                            <div class="text-right">
+                                <div class="text-xs text-graphite mb-1">${Math.round(similarity * 100)}% match</div>
+                                <div class="similarity-bar w-20">
+                                    <div class="similarity-fill" style="width: ${similarity * 100}%"></div>
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        // Search memories
+        async function searchMemories(query, mode, offset = 0) {
+            const list = document.getElementById('memories-list');
+            const loading = document.getElementById('loading');
+            const emptyState = document.getElementById('empty-state');
+            const loadMore = document.getElementById('load-more');
+
+            if (offset === 0) {
+                list.innerHTML = '';
+                loading.classList.remove('hidden');
+            }
+
+            try {
+                let url;
+                if (query) {
+                    url = `${API_BASE}/api/memories/search?query=${encodeURIComponent(query)}&mode=${mode}&limit=${PAGE_SIZE}&offset=${offset}`;
+                } else {
+                    url = `${API_BASE}/api/memories/recent?limit=${PAGE_SIZE}&offset=${offset}`;
+                }
+
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) throw new Error('Failed to fetch memories');
+
+                const memories = await response.json();
+                loading.classList.add('hidden');
+
+                if (memories.length === 0 && offset === 0) {
+                    emptyState.classList.remove('hidden');
+                    loadMore.classList.add('hidden');
+                    return;
+                }
+
+                emptyState.classList.add('hidden');
+
+                memories.forEach(memory => {
+                    list.insertAdjacentHTML('beforeend', renderMemoryCard(memory));
+                });
+
+                // Show/hide load more
+                if (memories.length >= PAGE_SIZE) {
+                    loadMore.classList.remove('hidden');
+                } else {
+                    loadMore.classList.add('hidden');
+                }
+
+            } catch (error) {
+                console.error('Error searching memories:', error);
+                loading.classList.add('hidden');
+                if (offset === 0) {
+                    emptyState.classList.remove('hidden');
+                }
+            }
+        }
+
+        // Fetch stats
+        async function fetchStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) return;
+
+                const stats = await response.json();
+                document.getElementById('total-count').textContent = stats.memories || 0;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            await fetchStats();
+            await searchMemories('', currentMode, 0);
+
+            // Search mode buttons
+            document.querySelectorAll('.search-mode-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.search-mode-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentMode = btn.dataset.mode;
+                    if (currentQuery) {
+                        currentOffset = 0;
+                        searchMemories(currentQuery, currentMode, 0);
+                    }
+                });
+            });
+
+            // Search button
+            document.getElementById('btn-search').addEventListener('click', () => {
+                currentQuery = document.getElementById('search-input').value;
+                currentOffset = 0;
+                searchMemories(currentQuery, currentMode, 0);
+            });
+
+            // Enter key
+            document.getElementById('search-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    currentQuery = e.target.value;
+                    currentOffset = 0;
+                    searchMemories(currentQuery, currentMode, 0);
+                }
+            });
+
+            // Load more
+            document.getElementById('btn-load-more').addEventListener('click', () => {
+                currentOffset += PAGE_SIZE;
+                searchMemories(currentQuery, currentMode, currentOffset);
+            });
+        });
+    </script>
+}

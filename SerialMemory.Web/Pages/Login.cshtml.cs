@@ -41,7 +41,8 @@ public sealed class LoginModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            // Use Dashboard API for authentication (it has the /me endpoint)
+            var client = _httpClientFactory.CreateClient("DashboardApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
 
             var response = await client.GetAsync("/me");
@@ -85,6 +86,15 @@ public sealed class LoginModel : PageModel
                 CookieAuthenticationDefaults.AuthenticationScheme,
                 new ClaimsPrincipal(claimsIdentity),
                 authProperties);
+
+            // Store API key in a secure cookie for API calls from pages
+            Response.Cookies.Append("auth_token", ApiKey, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Strict,
+                Expires = RememberMe ? DateTimeOffset.UtcNow.AddDays(7) : DateTimeOffset.UtcNow.AddHours(8)
+            });
 
             if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
             {

@@ -1,6 +1,7 @@
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Core.Operations;
+using SerialMemory.Core.Telemetry;
 using SerialMemory.Infrastructure;
 using SerialMemory.ML;
 using StackExchange.Redis;
@@ -60,6 +61,7 @@ var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
 
 // Embedding Service - Ollama
 var ollamaUrl = builder.Configuration["Ollama:Url"]
+    ?? Environment.GetEnvironmentVariable("OLLAMA_BASE_URL")
     ?? Environment.GetEnvironmentVariable("OLLAMA_URL")
     ?? "http://localhost:11434";
 var ollamaModel = builder.Configuration["Ollama:Model"]
@@ -358,13 +360,46 @@ app.MapGet("/api/graph", async (
         // Build set of valid node IDs from entities we have
         var validNodeIds = new HashSet<Guid>(entityMap.Values.Select(e => e.Id));
 
-        // Get actual relationships from the database, only including edges between valid nodes
-        var dbRelationships = await store.GetAllRelationshipsAsync(500);
+        // Get actual relationships from the database
+        var dbRelationships = await store.GetAllRelationshipsAsync(1000);
         foreach (var rel in dbRelationships)
         {
-            // Skip edges where source or target node doesn't exist in our node set
-            if (!validNodeIds.Contains(rel.SourceEntityId) || !validNodeIds.Contains(rel.TargetEntityId))
+            // Include edge if at least one end is in our node set
+            var hasSource = validNodeIds.Contains(rel.SourceEntityId);
+            var hasTarget = validNodeIds.Contains(rel.TargetEntityId);
+
+            if (!hasSource && !hasTarget)
                 continue;
+
+            // Add missing nodes from relationships
+            if (!hasSource && rel.SourceEntity != null)
+            {
+                var key = $"{rel.SourceEntity.EntityType}:{rel.SourceEntity.Name}";
+                if (!entityMap.ContainsKey(key))
+                {
+                    entityMap[key] = new EntityInfo
+                    {
+                        Id = rel.SourceEntity.Id,
+                        Name = rel.SourceEntity.Name,
+                        Type = rel.SourceEntity.EntityType
+                    };
+                    validNodeIds.Add(rel.SourceEntityId);
+                }
+            }
+            if (!hasTarget && rel.TargetEntity != null)
+            {
+                var key = $"{rel.TargetEntity.EntityType}:{rel.TargetEntity.Name}";
+                if (!entityMap.ContainsKey(key))
+                {
+                    entityMap[key] = new EntityInfo
+                    {
+                        Id = rel.TargetEntity.Id,
+                        Name = rel.TargetEntity.Name,
+                        Type = rel.TargetEntity.EntityType
+                    };
+                    validNodeIds.Add(rel.TargetEntityId);
+                }
+            }
 
             var edgeKey = $"{rel.SourceEntityId}-{rel.TargetEntityId}-{rel.RelationshipType}";
             if (seenEdges.Add(edgeKey))
