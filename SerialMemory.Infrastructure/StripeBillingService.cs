@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -949,7 +948,7 @@ public sealed class StripeBillingService : IBillingService, IMockableBillingServ
     private async Task<WebhookProcessResult> HandleCheckoutCompletedAsync(Event stripeEvent, CancellationToken cancellationToken)
     {
         var session = (Session)stripeEvent.Data.Object;
-        var tenantId = session.Metadata.TryGetValue("tenant_id", out var tid) ? tid : null;
+        var tenantId = session.Metadata.GetValueOrDefault("tenant_id");
 
         if (tenantId == null)
         {

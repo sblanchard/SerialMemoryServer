@@ -10,25 +10,19 @@ namespace SerialMemory.EventSourcing.Streaming;
 /// Redis Streams implementation for event publishing and subscription.
 /// Provides durable, ordered event delivery with consumer groups.
 /// </summary>
-public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStreamSubscriber, IDisposable
+public sealed class RedisEventStreamPublisher(
+    string redisConnectionString,
+    ILogger<RedisEventStreamPublisher> logger)
+    : IEventStreamPublisher, IEventStreamSubscriber, IDisposable
 {
-    private readonly IConnectionMultiplexer _redis;
-    private readonly ILogger<RedisEventStreamPublisher> _logger;
-    private readonly JsonSerializerOptions _jsonOptions;
+    private readonly IConnectionMultiplexer _redis = ConnectionMultiplexer.Connect(redisConnectionString);
+
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     private const string StreamKey = "memory:events";
-
-    public RedisEventStreamPublisher(
-        string redisConnectionString,
-        ILogger<RedisEventStreamPublisher> logger)
-    {
-        _redis = ConnectionMultiplexer.Connect(redisConnectionString);
-        _logger = logger;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-    }
 
     public async Task PublishToStreamAsync(StoredEvent @event, CancellationToken cancellationToken = default)
     {
@@ -50,7 +44,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
 
         var messageId = await db.StreamAddAsync(StreamKey, entries, maxLength: 100000);
 
-        _logger.LogDebug("Published event {EventId} to Redis stream as {MessageId}",
+        logger.LogDebug("Published event {EventId} to Redis stream as {MessageId}",
             @event.EventId, messageId);
     }
 
@@ -82,7 +76,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
         try
         {
             await db.StreamCreateConsumerGroupAsync(StreamKey, consumerGroup, "$", createStream: true);
-            _logger.LogInformation("Created consumer group {Group}", consumerGroup);
+            logger.LogInformation("Created consumer group {Group}", consumerGroup);
         }
         catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
         {
@@ -112,7 +106,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
             }
         }
 
-        _logger.LogDebug("Finished draining pending messages for consumer {ConsumerId}", consumerId);
+        logger.LogDebug("Finished draining pending messages for consumer {ConsumerId}", consumerId);
 
         // Now process new messages as they arrive
         while (!cancellationToken.IsCancellationRequested)
@@ -154,7 +148,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
         try
         {
             await db.StreamCreateConsumerGroupAsync(StreamKey, "projections", "0", createStream: true);
-            _logger.LogInformation("Created projections consumer group");
+            logger.LogInformation("Created projections consumer group");
         }
         catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
         {
@@ -164,7 +158,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
         try
         {
             await db.StreamCreateConsumerGroupAsync(StreamKey, "maintenance", "0", createStream: true);
-            _logger.LogInformation("Created maintenance consumer group");
+            logger.LogInformation("Created maintenance consumer group");
         }
         catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
         {
@@ -211,7 +205,7 @@ public sealed class RedisEventStreamPublisher : IEventStreamPublisher, IEventStr
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse stream entry {Id}", entry.Id);
+            logger.LogError(ex, "Failed to parse stream entry {Id}", entry.Id);
             return null;
         }
     }

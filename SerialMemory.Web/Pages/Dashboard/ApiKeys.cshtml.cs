@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -52,18 +51,33 @@ public sealed class ApiKeysModel : PageModel
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<CreateApiKeyResult>();
-                NewApiKey = result?.ApiKey;
+                NewApiKey = result?.Key;
                 SuccessMessage = "API key created successfully";
             }
             else
             {
-                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-                ErrorMessage = error?.Message ?? "Failed to create API key";
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? error?.Error ?? $"Failed to create API key ({response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to create API key: {content}";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = $"Failed to create API key ({response.StatusCode})";
+                }
             }
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
-            ErrorMessage = "Could not connect to the server";
+            ErrorMessage = $"Could not connect to the server: {ex.Message}";
         }
 
         await LoadApiKeysAsync();
@@ -92,13 +106,28 @@ public sealed class ApiKeysModel : PageModel
             }
             else
             {
-                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-                ErrorMessage = error?.Message ?? "Failed to revoke API key";
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? error?.Error ?? $"Failed to revoke API key ({response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to revoke API key: {content}";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = $"Failed to revoke API key ({response.StatusCode})";
+                }
             }
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
-            ErrorMessage = "Could not connect to the server";
+            ErrorMessage = $"Could not connect to the server: {ex.Message}";
         }
 
         await LoadApiKeysAsync();
@@ -152,7 +181,7 @@ public sealed class ApiKeysModel : PageModel
     private sealed class CreateApiKeyResult
     {
         public Guid Id { get; init; }
-        public string ApiKey { get; init; } = "";
+        public string Key { get; init; } = "";
     }
 
     private sealed class ErrorResponse

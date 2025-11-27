@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -11,24 +6,16 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.ContextOptimization;
 
-public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
+public sealed class ContextBudgetOptimizer(
+    NpgsqlDataSource dataSource,
+    ILogger<ContextBudgetOptimizer> logger)
+    : IContextBudgetOptimizer
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<ContextBudgetOptimizer> _logger;
-
     // Approximate tokens per character ratio (conservative estimate)
     private const float TokensPerCharacter = 0.3f;
 
     // Token overhead for memory formatting
     private const int MemoryFormatOverhead = 20;
-
-    public ContextBudgetOptimizer(
-        NpgsqlDataSource dataSource,
-        ILogger<ContextBudgetOptimizer> logger)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-    }
 
     public async Task<ContextBudget> CreateBudgetAsync(
         int maxTokens,
@@ -39,16 +26,18 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
     {
         var budgetId = Guid.CreateVersion7();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO context_budgets (
-                budget_id, session_id, max_tokens, system_reserved_tokens,
-                used_tokens, memory_allocation, priority_weights
-            ) VALUES (
-                @BudgetId, @SessionId, @MaxTokens, @SystemReservedTokens,
-                0, '{}'::jsonb, @PriorityWeights::jsonb
-            )";
+        const string sql = """
+
+                                       INSERT INTO context_budgets (
+                                           budget_id, session_id, max_tokens, system_reserved_tokens,
+                                           used_tokens, memory_allocation, priority_weights
+                                       ) VALUES (
+                                           @BudgetId, @SessionId, @MaxTokens, @SystemReservedTokens,
+                                           0, '{}'::jsonb, @PriorityWeights::jsonb
+                                       )
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -59,7 +48,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
             PriorityWeights = JsonSerializer.Serialize(weights)
         });
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Created context budget {BudgetId}: {MaxTokens} max, {Reserved} reserved",
             budgetId, maxTokens, systemReservedTokens);
 
@@ -102,7 +91,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         var inclusionOrder = 0;
         var totalTokensUsed = 0;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         foreach (var (candidate, priorityScore) in scoredCandidates)
         {
@@ -122,18 +111,20 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
             totalTokensUsed += candidate.TokenCount;
 
             // Store in priority queue
-            const string insertQueueSql = @"
-                INSERT INTO memory_priority_queue (
-                    budget_id, memory_id, priority_score, token_count,
-                    is_included, inclusion_order
-                ) VALUES (
-                    @BudgetId, @MemoryId, @PriorityScore, @TokenCount,
-                    TRUE, @InclusionOrder
-                )
-                ON CONFLICT (budget_id, memory_id) DO UPDATE SET
-                    priority_score = EXCLUDED.priority_score,
-                    is_included = EXCLUDED.is_included,
-                    inclusion_order = EXCLUDED.inclusion_order";
+            const string insertQueueSql = """
+
+                                                          INSERT INTO memory_priority_queue (
+                                                              budget_id, memory_id, priority_score, token_count,
+                                                              is_included, inclusion_order
+                                                          ) VALUES (
+                                                              @BudgetId, @MemoryId, @PriorityScore, @TokenCount,
+                                                              TRUE, @InclusionOrder
+                                                          )
+                                                          ON CONFLICT (budget_id, memory_id) DO UPDATE SET
+                                                              priority_score = EXCLUDED.priority_score,
+                                                              is_included = EXCLUDED.is_included,
+                                                              inclusion_order = EXCLUDED.inclusion_order
+                                          """;
 
             await connection.ExecuteAsync(insertQueueSql, new
             {
@@ -150,18 +141,20 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         foreach (var (candidate, priorityScore) in scoredCandidates.Where(x =>
             !includedMemories.Any(m => m.MemoryId == x.Candidate.MemoryId)))
         {
-            const string insertExcludedSql = @"
-                INSERT INTO memory_priority_queue (
-                    budget_id, memory_id, priority_score, token_count,
-                    is_included, inclusion_order
-                ) VALUES (
-                    @BudgetId, @MemoryId, @PriorityScore, @TokenCount,
-                    FALSE, NULL
-                )
-                ON CONFLICT (budget_id, memory_id) DO UPDATE SET
-                    priority_score = EXCLUDED.priority_score,
-                    is_included = FALSE,
-                    inclusion_order = NULL";
+            const string insertExcludedSql = """
+
+                                                             INSERT INTO memory_priority_queue (
+                                                                 budget_id, memory_id, priority_score, token_count,
+                                                                 is_included, inclusion_order
+                                                             ) VALUES (
+                                                                 @BudgetId, @MemoryId, @PriorityScore, @TokenCount,
+                                                                 FALSE, NULL
+                                                             )
+                                                             ON CONFLICT (budget_id, memory_id) DO UPDATE SET
+                                                                 priority_score = EXCLUDED.priority_score,
+                                                                 is_included = FALSE,
+                                                                 inclusion_order = NULL
+                                             """;
 
             await connection.ExecuteAsync(insertExcludedSql, new
             {
@@ -173,12 +166,14 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         }
 
         // Update budget usage
-        const string updateBudgetSql = @"
-            UPDATE context_budgets
-            SET used_tokens = @UsedTokens,
-                memory_allocation = @Allocation::jsonb,
-                updated_at = NOW()
-            WHERE budget_id = @BudgetId";
+        const string updateBudgetSql = """
+
+                                                   UPDATE context_budgets
+                                                   SET used_tokens = @UsedTokens,
+                                                       memory_allocation = @Allocation::jsonb,
+                                                       updated_at = NOW()
+                                                   WHERE budget_id = @BudgetId
+                                       """;
 
         var allocation = new Dictionary<string, object>
         {
@@ -199,7 +194,7 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         var capturedPriority = includedMemories.Sum(m => m.PriorityScore);
         var coverageScore = totalPossiblePriority > 0 ? capturedPriority / totalPossiblePriority : 1f;
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Packed context for budget {BudgetId}: {Included}/{Total} memories, {Tokens} tokens, {Coverage:P2} coverage",
             budgetId, includedMemories.Count, candidateList.Count, totalTokensUsed, coverageScore);
 
@@ -226,13 +221,15 @@ public sealed class ContextBudgetOptimizer : IContextBudgetOptimizer
         Guid budgetId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT budget_id, session_id, max_tokens, system_reserved_tokens,
-                   used_tokens, priority_weights::text, created_at, updated_at
-            FROM context_budgets
-            WHERE budget_id = @BudgetId";
+        const string sql = """
+
+                                       SELECT budget_id, session_id, max_tokens, system_reserved_tokens,
+                                              used_tokens, priority_weights::text, created_at, updated_at
+                                       FROM context_budgets
+                                       WHERE budget_id = @BudgetId
+                           """;
 
         var row = await connection.QuerySingleOrDefaultAsync<BudgetRow>(sql, new { BudgetId = budgetId });
 

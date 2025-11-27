@@ -15,33 +15,25 @@ namespace SerialMemory.ML;
 ///
 /// Install a model: ollama pull nomic-embed-text
 /// </summary>
-public class OllamaEmbeddingService : IEmbeddingService, IDisposable
+public class OllamaEmbeddingService(
+    string baseUrl = "http://localhost:11434",
+    string model = "nomic-embed-text",
+    int embeddingDimension = 768)
+    : IEmbeddingService, IDisposable
 {
-    private readonly HttpClient _httpClient;
-    private readonly string _model;
-    private readonly int _embeddingDimension;
-
-    public OllamaEmbeddingService(
-        string baseUrl = "http://localhost:11434",
-        string model = "nomic-embed-text",
-        int embeddingDimension = 768)
+    private readonly HttpClient _httpClient = new()
     {
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(baseUrl),
-            Timeout = TimeSpan.FromSeconds(60)
-        };
-        _model = model;
-        _embeddingDimension = embeddingDimension;
-    }
+        BaseAddress = new Uri(baseUrl),
+        Timeout = TimeSpan.FromSeconds(60)
+    };
 
-    public int EmbeddingDimension => _embeddingDimension;
+    public int EmbeddingDimension => embeddingDimension;
 
     public async Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
     {
         var request = new OllamaEmbedRequest
         {
-            Model = _model,
+            Model = model,
             Prompt = text
         };
 
@@ -52,7 +44,7 @@ public class OllamaEmbeddingService : IEmbeddingService, IDisposable
 
         if (result?.Embedding == null || result.Embedding.Length == 0)
         {
-            throw new Exception($"Ollama returned empty embedding. Is model '{_model}' installed? Run: ollama pull {_model}");
+            throw new Exception($"Ollama returned empty embedding. Is model '{model}' installed? Run: ollama pull {model}");
         }
 
         return result.Embedding;

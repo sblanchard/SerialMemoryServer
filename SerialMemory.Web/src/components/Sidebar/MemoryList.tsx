@@ -31,11 +31,11 @@ export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: M
   if (isLoading) {
     return (
       <div className="space-y-3">
-        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">{title}</h3>
+        <h3 className="panel-header">{title}</h3>
         {[1, 2, 3].map(i => (
-          <div key={i} className="bg-bg-tertiary rounded-lg p-3 animate-pulse">
-            <div className="h-4 bg-gray-700 rounded mb-2 w-3/4" />
-            <div className="h-3 bg-gray-700 rounded w-1/2" />
+          <div key={i} className="memory-item animate-pulse">
+            <div className="h-4 bg-slate/20 rounded mb-2 w-3/4" />
+            <div className="h-3 bg-slate/15 rounded w-1/2" />
           </div>
         ))}
       </div>
@@ -45,8 +45,8 @@ export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: M
   if (!memories.length) {
     return (
       <div className="space-y-3">
-        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">{title}</h3>
-        <div className="text-center text-gray-500 py-8">
+        <h3 className="panel-header">{title}</h3>
+        <div className="text-center text-graphite py-8 text-sm">
           No memories found
         </div>
       </div>
@@ -55,54 +55,52 @@ export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: M
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">{title}</h3>
-      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+      <h3 className="panel-header">{title}</h3>
+      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
         {memories.map(memory => (
-          <div
-            key={memory.id}
-            className="bg-bg-tertiary rounded-lg p-3 hover:bg-opacity-80 transition-colors cursor-pointer"
-          >
-            <p className="text-sm text-gray-200 mb-2">
-              {truncate(memory.content, 120)}
+          <div key={memory.id} className="memory-item">
+            <p className="text-sm text-soft-white/90 mb-2 leading-relaxed">
+              {truncate(memory.content, 100)}
             </p>
 
             {/* Entity badges */}
             {memory.entities && memory.entities.length > 0 && (
-              <div className="flex flex-wrap gap-1 mb-2">
-                {memory.entities.slice(0, 5).map((entity, i) => {
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {memory.entities.slice(0, 4).map((entity, i) => {
                   const entityObj = typeof entity === 'string'
                     ? { name: entity, type: 'default' }
                     : entity;
+                  const color = getEntityColor(entityObj.type || 'default');
                   return (
                     <span
                       key={i}
-                      className="text-xs px-2 py-0.5 rounded-full"
+                      className="entity-badge"
                       style={{
-                        backgroundColor: `${getEntityColor(entityObj.type || 'default')}20`,
-                        color: getEntityColor(entityObj.type || 'default'),
-                        border: `1px solid ${getEntityColor(entityObj.type || 'default')}40`,
+                        backgroundColor: `${color}15`,
+                        color: color,
+                        border: `1px solid ${color}30`,
                       }}
                     >
                       {typeof entity === 'string' ? entity : entity.name}
                     </span>
                   );
                 })}
-                {memory.entities.length > 5 && (
-                  <span className="text-xs text-gray-500">
-                    +{memory.entities.length - 5} more
+                {memory.entities.length > 4 && (
+                  <span className="text-xs text-graphite">
+                    +{memory.entities.length - 4} more
                   </span>
                 )}
               </div>
             )}
 
             {/* Timestamp and similarity */}
-            <div className="flex items-center justify-between text-xs text-gray-500">
+            <div className="flex items-center justify-between text-xs text-graphite">
               <div className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {formatDate(memory.createdAt)}
               </div>
               {memory.similarity !== undefined && memory.similarity > 0 && (
-                <span className="text-primary">
+                <span className="text-cyan font-medium">
                   {Math.round(memory.similarity * 100)}% match
                 </span>
               )}

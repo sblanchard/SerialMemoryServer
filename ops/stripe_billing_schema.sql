@@ -159,6 +159,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to handle successful subscription update
+-- Also updates credit limits from plan_limits table
 CREATE OR REPLACE FUNCTION handle_subscription_updated(
     p_tenant_id TEXT,
     p_stripe_customer_id TEXT,
@@ -170,6 +171,7 @@ RETURNS VOID AS $$
 DECLARE
     v_plan_id UUID;
     v_plan_name TEXT;
+    v_tenant_uuid UUID;
 BEGIN
     -- Get plan from price mapping
     SELECT tp.id, spm.plan_name INTO v_plan_id, v_plan_name
@@ -180,6 +182,9 @@ BEGIN
     IF v_plan_id IS NULL THEN
         RAISE EXCEPTION 'No plan found for Stripe price ID: %', p_stripe_price_id;
     END IF;
+
+    -- Convert tenant_id to UUID
+    v_tenant_uuid := p_tenant_id::UUID;
 
     -- Update subscription
     UPDATE tenant_subscriptions
@@ -196,13 +201,17 @@ BEGIN
         updated_at = NOW()
     WHERE tenant_id = p_tenant_id OR stripe_customer_id = p_stripe_customer_id;
 
+    -- Update credit limits from plan_limits table
+    -- This syncs the tenant_plans table with new credit allocation
+    PERFORM update_tenant_plan(v_tenant_uuid, v_plan_name, p_stripe_price_id, p_stripe_subscription_id);
+
     -- Log the event
     PERFORM append_audit_log(
         p_tenant_id,
         'default',
         NULL,
         'subscription_updated',
-        format('Subscription updated to %s plan', v_plan_name),
+        format('Subscription updated to %s plan with credit limit update', v_plan_name),
         jsonb_build_object('plan_name', v_plan_name, 'stripe_price_id', p_stripe_price_id)
     );
 END;

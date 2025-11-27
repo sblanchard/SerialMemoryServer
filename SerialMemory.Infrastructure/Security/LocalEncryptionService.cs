@@ -1,10 +1,5 @@
-using System;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -12,28 +7,20 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.Security;
 
-public sealed class LocalEncryptionService : ILocalEncryption
+public sealed class LocalEncryptionService(
+    NpgsqlDataSource dataSource,
+    ILogger<LocalEncryptionService> logger,
+    byte[]? masterKey = null)
+    : ILocalEncryption
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILogger<LocalEncryptionService> _logger;
-    private readonly byte[] _masterKey;
+    private readonly byte[] _masterKey = masterKey ?? GetOrCreateMasterKey();
 
     private const string DefaultAlgorithm = "AES-256-GCM";
     private const int KeySizeBytes = 32;
     private const int IvSizeBytes = 12;
     private const int TagSizeBytes = 16;
 
-    public LocalEncryptionService(
-        NpgsqlDataSource dataSource,
-        ILogger<LocalEncryptionService> logger,
-        byte[]? masterKey = null)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-
-        // Master key from environment or generate deterministically from machine identity
-        _masterKey = masterKey ?? GetOrCreateMasterKey();
-    }
+    // Master key from environment or generate deterministically from machine identity
 
     private static byte[] GetOrCreateMasterKey()
     {
@@ -62,17 +49,19 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
         var keyId = Guid.CreateVersion7();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO encryption_keys (
-                key_id, key_name, encrypted_key, key_algorithm,
-                key_version, is_active
-            ) VALUES (
-                @KeyId, @KeyName, @EncryptedKey, @KeyAlgorithm,
-                1, TRUE
-            )
-            RETURNING key_id, key_name, key_algorithm, key_version, created_at, rotated_at, is_active";
+        const string sql = """
+
+                                       INSERT INTO encryption_keys (
+                                           key_id, key_name, encrypted_key, key_algorithm,
+                                           key_version, is_active
+                                       ) VALUES (
+                                           @KeyId, @KeyName, @EncryptedKey, @KeyAlgorithm,
+                                           1, TRUE
+                                       )
+                                       RETURNING key_id, key_name, key_algorithm, key_version, created_at, rotated_at, is_active
+                           """;
 
         var row = await connection.QuerySingleAsync<KeyRow>(sql, new
         {
@@ -82,7 +71,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
             KeyAlgorithm = DefaultAlgorithm
         });
 
-        _logger.LogInformation("Created encryption key {KeyName} ({KeyId})", keyName, keyId);
+        logger.LogInformation("Created encryption key {KeyName} ({KeyId})", keyName, keyId);
 
         // Clear the unencrypted key from memory
         Array.Clear(dataKey, 0, dataKey.Length);
@@ -101,15 +90,17 @@ public sealed class LocalEncryptionService : ILocalEncryption
         string keyName,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT key_id, key_name, key_algorithm, key_version,
-                   created_at, rotated_at, is_active
-            FROM encryption_keys
-            WHERE key_name = @KeyName AND is_active = TRUE
-            ORDER BY key_version DESC
-            LIMIT 1";
+        const string sql = """
+
+                                       SELECT key_id, key_name, key_algorithm, key_version,
+                                              created_at, rotated_at, is_active
+                                       FROM encryption_keys
+                                       WHERE key_name = @KeyName AND is_active = TRUE
+                                       ORDER BY key_version DESC
+                                       LIMIT 1
+                           """;
 
         var row = await connection.QuerySingleOrDefaultAsync<KeyRow>(sql, new { KeyName = keyName });
 
@@ -130,18 +121,20 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
     public async Task RotateKeyAsync(string keyName, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         try
         {
             // Get current active key
-            const string getCurrentSql = @"
-                SELECT key_id, key_version, encrypted_key
-                FROM encryption_keys
-                WHERE key_name = @KeyName AND is_active = TRUE
-                ORDER BY key_version DESC
-                LIMIT 1";
+            const string getCurrentSql = """
+
+                                                         SELECT key_id, key_version, encrypted_key
+                                                         FROM encryption_keys
+                                                         WHERE key_name = @KeyName AND is_active = TRUE
+                                                         ORDER BY key_version DESC
+                                                         LIMIT 1
+                                         """;
 
             var current = await connection.QuerySingleOrDefaultAsync<(Guid key_id, int key_version, byte[] encrypted_key)>(
                 getCurrentSql,
@@ -154,10 +147,12 @@ public sealed class LocalEncryptionService : ILocalEncryption
             }
 
             // Deactivate current key
-            const string deactivateSql = @"
-                UPDATE encryption_keys
-                SET is_active = FALSE, rotated_at = NOW()
-                WHERE key_id = @KeyId";
+            const string deactivateSql = """
+
+                                                         UPDATE encryption_keys
+                                                         SET is_active = FALSE, rotated_at = NOW()
+                                                         WHERE key_id = @KeyId
+                                         """;
 
             await connection.ExecuteAsync(deactivateSql, new { KeyId = current.key_id }, transaction);
 
@@ -166,14 +161,16 @@ public sealed class LocalEncryptionService : ILocalEncryption
             var newEncryptedKey = EncryptKeyWithMaster(newDataKey);
             var newKeyId = Guid.CreateVersion7();
 
-            const string insertNewSql = @"
-                INSERT INTO encryption_keys (
-                    key_id, key_name, encrypted_key, key_algorithm,
-                    key_version, is_active
-                ) VALUES (
-                    @KeyId, @KeyName, @EncryptedKey, @KeyAlgorithm,
-                    @KeyVersion, TRUE
-                )";
+            const string insertNewSql = """
+
+                                                        INSERT INTO encryption_keys (
+                                                            key_id, key_name, encrypted_key, key_algorithm,
+                                                            key_version, is_active
+                                                        ) VALUES (
+                                                            @KeyId, @KeyName, @EncryptedKey, @KeyAlgorithm,
+                                                            @KeyVersion, TRUE
+                                                        )
+                                        """;
 
             await connection.ExecuteAsync(insertNewSql, new
             {
@@ -186,7 +183,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
 
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Rotated encryption key {KeyName} from version {OldVersion} to {NewVersion}",
                 keyName, current.key_version, current.key_version + 1);
 
@@ -282,23 +279,25 @@ public sealed class LocalEncryptionService : ILocalEncryption
         var contentBytes = Encoding.UTF8.GetBytes(content);
         var encrypted = await EncryptAsync(contentBytes, keyId, cancellationToken);
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO encrypted_memories (
-                memory_id, encrypted_content, encryption_key_id,
-                encryption_algorithm, iv, content_hash
-            ) VALUES (
-                @MemoryId, @EncryptedContent, @KeyId,
-                @Algorithm, @Iv, @ContentHash
-            )
-            ON CONFLICT (memory_id) DO UPDATE SET
-                encrypted_content = EXCLUDED.encrypted_content,
-                encryption_key_id = EXCLUDED.encryption_key_id,
-                encryption_algorithm = EXCLUDED.encryption_algorithm,
-                iv = EXCLUDED.iv,
-                content_hash = EXCLUDED.content_hash,
-                created_at = NOW()";
+        const string sql = """
+
+                                       INSERT INTO encrypted_memories (
+                                           memory_id, encrypted_content, encryption_key_id,
+                                           encryption_algorithm, iv, content_hash
+                                       ) VALUES (
+                                           @MemoryId, @EncryptedContent, @KeyId,
+                                           @Algorithm, @Iv, @ContentHash
+                                       )
+                                       ON CONFLICT (memory_id) DO UPDATE SET
+                                           encrypted_content = EXCLUDED.encrypted_content,
+                                           encryption_key_id = EXCLUDED.encryption_key_id,
+                                           encryption_algorithm = EXCLUDED.encryption_algorithm,
+                                           iv = EXCLUDED.iv,
+                                           content_hash = EXCLUDED.content_hash,
+                                           created_at = NOW()
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -310,7 +309,7 @@ public sealed class LocalEncryptionService : ILocalEncryption
             ContentHash = encrypted.ContentHash
         });
 
-        _logger.LogDebug("Stored encrypted memory {MemoryId}", memoryId);
+        logger.LogDebug("Stored encrypted memory {MemoryId}", memoryId);
 
         return memoryId;
     }
@@ -319,13 +318,15 @@ public sealed class LocalEncryptionService : ILocalEncryption
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT encrypted_content, encryption_key_id, encryption_algorithm,
-                   iv, content_hash
-            FROM encrypted_memories
-            WHERE memory_id = @MemoryId";
+        const string sql = """
+
+                                       SELECT encrypted_content, encryption_key_id, encryption_algorithm,
+                                              iv, content_hash
+                                       FROM encrypted_memories
+                                       WHERE memory_id = @MemoryId
+                           """;
 
         var row = await connection.QuerySingleOrDefaultAsync<EncryptedMemoryRow>(
             sql,
@@ -391,12 +392,14 @@ public sealed class LocalEncryptionService : ILocalEncryption
         Guid keyId,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT encrypted_key
-            FROM encryption_keys
-            WHERE key_id = @KeyId";
+        const string sql = """
+
+                                       SELECT encrypted_key
+                                       FROM encryption_keys
+                                       WHERE key_id = @KeyId
+                           """;
 
         var encryptedKey = await connection.QuerySingleOrDefaultAsync<byte[]>(
             sql,
@@ -455,14 +458,10 @@ public sealed class SecureMemoryManager
         CancellationToken cancellationToken = default)
     {
         // Ensure encryption key exists
-        var key = await _encryption.GetActiveKeyAsync(_defaultKeyName, cancellationToken);
-        if (key == null)
-        {
-            key = await _encryption.CreateKeyAsync(_defaultKeyName, cancellationToken);
-        }
+        var key = await _encryption.GetActiveKeyAsync(_defaultKeyName, cancellationToken) ?? await _encryption.CreateKeyAsync(_defaultKeyName, cancellationToken);
 
         // Create the memory first
-        var memory = new SerialMemory.Core.Models.Memory
+        var memory = new Core.Models.Memory
         {
             Id = Guid.CreateVersion7(),
             Content = content,
@@ -471,7 +470,7 @@ public sealed class SecureMemoryManager
             UpdatedAt = DateTime.UtcNow
         };
 
-        var memoryId = await _store.CreateMemoryAsync(memory);
+        var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
 
         // Store encrypted version
         await _encryption.StoreEncryptedMemoryAsync(memoryId, content, key.KeyId, cancellationToken);
@@ -493,12 +492,8 @@ public sealed class SecureMemoryManager
         catch (InvalidOperationException)
         {
             // Fall back to unencrypted store
-            var memory = await _store.GetMemoryByIdAsync(memoryId);
-            if (memory == null)
-            {
-                throw new InvalidOperationException($"Memory {memoryId} not found");
-            }
-            return memory.Content;
+            var memory = await _store.GetMemoryByIdAsync(memoryId, cancellationToken);
+            return memory == null ? throw new InvalidOperationException($"Memory {memoryId} not found") : memory.Content;
         }
     }
 

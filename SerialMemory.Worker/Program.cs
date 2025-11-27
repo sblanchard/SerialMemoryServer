@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using SerialMemory.Core.Telemetry;
@@ -12,7 +10,7 @@ var builder = Host.CreateApplicationBuilder(args);
 // Register configuration for dependency injection
 builder.Services.AddSingleton(provider =>
 {
-    var configuration = provider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+    var configuration = provider.GetRequiredService<IConfiguration>();
     return new WorkerConfiguration
     {
         RedisConnection = configuration.GetConnectionString("Redis")!,

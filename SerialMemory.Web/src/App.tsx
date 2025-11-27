@@ -18,7 +18,7 @@ function AppContent() {
 
   // Fetch graph data
   const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } = useGraphData({
-    limit: 30,
+    limit: 100,
     query: searchQuery,
     hops: 2,
   });
@@ -79,41 +79,42 @@ function AppContent() {
 
   // Sidebar content
   const sidebar = (
-    <>
+    <div className="memory-panel h-full">
       <StatsPanel />
 
-      <div className="border-t border-gray-700 pt-4">
-        <SearchPanel
-          onSearch={handleSidebarSearch}
-          isLoading={graphLoading || memoriesLoading}
-        />
-      </div>
+      <div className="panel-divider" />
 
-      <div className="border-t border-gray-700 pt-4">
-        <MemoryList
-          memories={(memories as SearchMemory[]) || []}
-          isLoading={memoriesLoading}
-          title={searchQuery ? 'Search Results' : 'Recent Memories'}
-        />
-      </div>
+      <SearchPanel
+        onSearch={handleSidebarSearch}
+        isLoading={graphLoading || memoriesLoading}
+      />
+
+      <div className="panel-divider" />
+
+      <MemoryList
+        memories={(memories as SearchMemory[]) || []}
+        isLoading={memoriesLoading}
+        title={searchQuery ? 'Search Results' : 'Recent Memories'}
+      />
 
       {selectedNode && (
-        <div className="border-t border-gray-700 pt-4">
-          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">
-            Selected Entity
-          </h3>
-          <div className="bg-bg-tertiary rounded-lg p-4">
-            <div
-              className="text-lg font-medium mb-1"
-              style={{ color: selectedNode.color }}
-            >
-              {selectedNode.label}
+        <>
+          <div className="panel-divider" />
+          <div>
+            <h3 className="panel-header">Selected Entity</h3>
+            <div className="selected-entity-card">
+              <div
+                className="text-lg font-semibold mb-1"
+                style={{ color: selectedNode.color }}
+              >
+                {selectedNode.label}
+              </div>
+              <div className="text-sm text-graphite capitalize">{selectedNode.group}</div>
             </div>
-            <div className="text-sm text-gray-400">{selectedNode.group}</div>
           </div>
-        </div>
+        </>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -125,29 +126,48 @@ function AppContent() {
         onReset={handleReset}
       />
 
+      {/* Graph canvas background */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{
+          background: `
+            radial-gradient(circle at 50% 0%, rgba(34,211,238,0.06), transparent 40%),
+            radial-gradient(circle at 90% 90%, rgba(59,130,246,0.04), transparent 40%),
+            #0B0F1A
+          `
+        }}
+      />
+
       {/* Loading state */}
       {graphLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-bg-primary bg-opacity-50 z-20">
+        <div className="absolute inset-0 flex items-center justify-center z-20">
           <div className="text-center">
-            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-gray-400">Loading graph...</p>
+            <div className="spinner mx-auto mb-4" />
+            <p className="text-graphite text-sm">Loading graph...</p>
           </div>
         </div>
       )}
 
       {/* 3D Graph */}
       {filteredData.nodes.length > 0 ? (
-        <ForceGraph3D
-          nodes={filteredData.nodes}
-          links={filteredData.links}
-          onNodeClick={handleNodeClick}
-          clusterByType={true}
-        />
+        <div className="absolute inset-0">
+          <ForceGraph3D
+            nodes={filteredData.nodes}
+            links={filteredData.links}
+            onNodeClick={handleNodeClick}
+            clusterByType={true}
+          />
+        </div>
       ) : !graphLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center text-gray-500">
-            <p className="text-lg mb-2">No data to display</p>
-            <p className="text-sm">Try searching for something or ingesting memories</p>
+          <div className="text-center">
+            <div className="w-16 h-16 rounded-2xl bg-navy/50 border border-slate/30 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-graphite" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+              </svg>
+            </div>
+            <p className="text-soft-white text-lg font-medium mb-1">No data to display</p>
+            <p className="text-graphite text-sm">Try searching for something or ingesting memories</p>
           </div>
         </div>
       )}

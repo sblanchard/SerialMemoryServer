@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Dapper;
 using Microsoft.Extensions.Logging;
@@ -8,7 +7,6 @@ using Npgsql;
 using Pgvector;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Aggregates;
-using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Store;
 
 namespace SerialMemory.Mcp.Tools;

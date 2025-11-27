@@ -122,7 +122,7 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
             if (!IsOverlapping(entities, match.Index, match.Index + match.Length))
             {
                 var year = int.Parse(match.Value);
-                if (year >= 1900 && year <= 2100) // Reasonable year range
+                if (year is >= 1900 and <= 2100) // Reasonable year range
                 {
                     entities.Add(new ExtractedEntity(
                         match.Value,

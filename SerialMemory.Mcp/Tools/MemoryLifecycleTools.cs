@@ -1,9 +1,7 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Aggregates;
-using SerialMemory.EventSourcing.CQRS;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Store;
 
@@ -13,22 +11,11 @@ namespace SerialMemory.Mcp.Tools;
 /// MCP tool handlers for memory lifecycle operations.
 /// All operations follow append-only event sourcing - no hard deletes.
 /// </summary>
-public sealed class MemoryLifecycleTools
+public sealed class MemoryLifecycleTools(
+    IEventStore eventStore,
+    IEmbeddingService embeddingService,
+    ILogger logger)
 {
-    private readonly IEventStore _eventStore;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger _logger;
-
-    public MemoryLifecycleTools(
-        IEventStore eventStore,
-        IEmbeddingService embeddingService,
-        ILogger logger)
-    {
-        _eventStore = eventStore;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
-
     /// <summary>
     /// memory_update - Update memory content with new embedding.
     /// </summary>
@@ -48,7 +35,7 @@ public sealed class MemoryLifecycleTools
         var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
 
         // Load aggregate
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -58,18 +45,18 @@ public sealed class MemoryLifecycleTools
             return CreateErrorResponse($"Memory {memoryId} is inactive and cannot be updated");
 
         // Generate new embedding
-        var newEmbedding = await _embeddingService.EmbedTextAsync(newContent);
+        var newEmbedding = await embeddingService.EmbedTextAsync(newContent);
 
         // Apply update
         aggregate.Update(newContent, newEmbedding, reason, actorId);
 
         // Persist
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             aggregate.Version - 1);
 
-        _logger.LogInformation("Updated memory {MemoryId} (version {Version})", memoryId, aggregate.Version);
+        logger.LogInformation("Updated memory {MemoryId} (version {Version})", memoryId, aggregate.Version);
 
         return CreateTextResponse(
             $"Memory updated successfully!\n\n" +
@@ -101,7 +88,7 @@ public sealed class MemoryLifecycleTools
         var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
 
         // Load aggregate
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -114,12 +101,12 @@ public sealed class MemoryLifecycleTools
         aggregate.Invalidate(reason, supersededById, null, actorId);
 
         // Persist
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             aggregate.Version - 1);
 
-        _logger.LogInformation("Soft deleted memory {MemoryId}", memoryId);
+        logger.LogInformation("Soft deleted memory {MemoryId}", memoryId);
 
         return CreateTextResponse(
             $"Memory soft deleted successfully!\n\n" +
@@ -157,7 +144,7 @@ public sealed class MemoryLifecycleTools
         // Validate all source memories exist and are active
         foreach (var sourceId in sourceIds)
         {
-            var sourceEvents = await _eventStore.ReadStreamAsync(sourceId);
+            var sourceEvents = await eventStore.ReadStreamAsync(sourceId);
             if (sourceEvents.Count == 0)
                 return CreateErrorResponse($"Source memory {sourceId} not found");
 
@@ -167,7 +154,7 @@ public sealed class MemoryLifecycleTools
         }
 
         // Generate embedding for merged content
-        var embedding = await _embeddingService.EmbedTextAsync(mergedContent);
+        var embedding = await embeddingService.EmbedTextAsync(mergedContent);
 
         // Create new merged memory
         var aggregate = MemoryAggregate.Create(
@@ -181,7 +168,7 @@ public sealed class MemoryLifecycleTools
         aggregate.Merge(sourceIds, mergedContent, embedding, strategy, actorId);
 
         // Persist new memory
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             0);
@@ -189,17 +176,17 @@ public sealed class MemoryLifecycleTools
         // Invalidate source memories
         foreach (var sourceId in sourceIds)
         {
-            var sourceEvents = await _eventStore.ReadStreamAsync(sourceId);
+            var sourceEvents = await eventStore.ReadStreamAsync(sourceId);
             var sourceAgg = MemoryAggregate.FromEvents(sourceEvents);
             sourceAgg.Invalidate($"Merged into {aggregate.Id}", aggregate.Id, null, actorId);
 
-            await _eventStore.AppendEventsAsync(
+            await eventStore.AppendEventsAsync(
                 sourceAgg.Id,
                 sourceAgg.UncommittedEvents.ToList(),
                 sourceAgg.Version - 1);
         }
 
-        _logger.LogInformation("Merged {Count} memories into {TargetId}", sourceIds.Length, aggregate.Id);
+        logger.LogInformation("Merged {Count} memories into {TargetId}", sourceIds.Length, aggregate.Id);
 
         return CreateTextResponse(
             $"Memories merged successfully!\n\n" +
@@ -237,7 +224,7 @@ public sealed class MemoryLifecycleTools
         var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
 
         // Load parent
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -250,7 +237,7 @@ public sealed class MemoryLifecycleTools
         var childIds = new List<Guid>();
         foreach (var content in childContents)
         {
-            var embedding = await _embeddingService.EmbedTextAsync(content!);
+            var embedding = await embeddingService.EmbedTextAsync(content!);
 
             var child = MemoryAggregate.Create(
                 content: content!,
@@ -263,7 +250,7 @@ public sealed class MemoryLifecycleTools
                 userId: parent.UserId,
                 createdBy: actorId);
 
-            await _eventStore.AppendEventsAsync(
+            await eventStore.AppendEventsAsync(
                 child.Id,
                 child.UncommittedEvents.ToList(),
                 0);
@@ -274,12 +261,12 @@ public sealed class MemoryLifecycleTools
         // Mark parent as split
         parent.Split(childIds.ToArray(), strategy, reason, actorId);
 
-        await _eventStore.AppendEventsAsync(
+        await eventStore.AppendEventsAsync(
             parent.Id,
             parent.UncommittedEvents.ToList(),
             parent.Version - 1);
 
-        _logger.LogInformation("Split memory {MemoryId} into {Count} children", memoryId, childIds.Count);
+        logger.LogInformation("Split memory {MemoryId} into {Count} children", memoryId, childIds.Count);
 
         return CreateTextResponse(
             $"Memory split successfully!\n\n" +
@@ -303,7 +290,7 @@ public sealed class MemoryLifecycleTools
         var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
 
         // Load aggregate
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -329,12 +316,12 @@ public sealed class MemoryLifecycleTools
         }
 
         // Persist
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             aggregate.Version - 1);
 
-        _logger.LogInformation("Applied decay to memory {MemoryId}: {Previous:F4} -> {New:F4}",
+        logger.LogInformation("Applied decay to memory {MemoryId}: {Previous:F4} -> {New:F4}",
             memoryId, previousConfidence, currentConfidence);
 
         return CreateTextResponse(
@@ -367,7 +354,7 @@ public sealed class MemoryLifecycleTools
             .ToArray() ?? [];
 
         // Load aggregate
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -382,12 +369,12 @@ public sealed class MemoryLifecycleTools
         aggregate.Reinforce(newConfidence, source, validatedByIds, actorId);
 
         // Persist
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             aggregate.Version - 1);
 
-        _logger.LogInformation("Reinforced memory {MemoryId}: {Previous:F4} -> {New:F4}",
+        logger.LogInformation("Reinforced memory {MemoryId}: {Previous:F4} -> {New:F4}",
             memoryId, previousConfidence, newConfidence);
 
         return CreateTextResponse(
@@ -415,7 +402,7 @@ public sealed class MemoryLifecycleTools
         var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
 
         // Load aggregate
-        var events = await _eventStore.ReadStreamAsync(memoryId);
+        var events = await eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
             return CreateErrorResponse($"Memory {memoryId} not found");
 
@@ -434,12 +421,12 @@ public sealed class MemoryLifecycleTools
         aggregate.Expire(policy, originalTtlDays, actorId);
 
         // Persist
-        var sequences = await _eventStore.AppendEventsAsync(
+        var sequences = await eventStore.AppendEventsAsync(
             aggregate.Id,
             aggregate.UncommittedEvents.ToList(),
             aggregate.Version - 1);
 
-        _logger.LogInformation("Expired memory {MemoryId} (policy: {Policy})", memoryId, policy);
+        logger.LogInformation("Expired memory {MemoryId} (policy: {Policy})", memoryId, policy);
 
         return CreateTextResponse(
             $"Memory expired successfully!\n\n" +

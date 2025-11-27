@@ -8,19 +8,13 @@ namespace SerialMemory.Infrastructure;
 /// In-memory circuit breaker service with optional Redis backing for distributed scenarios.
 /// Implements circuit breaker pattern for graceful degradation.
 /// </summary>
-public sealed class CircuitBreakerService : ICircuitBreakerService
+public sealed class CircuitBreakerService(
+    ILogger<CircuitBreakerService> logger,
+    CircuitBreakerConfig? defaultConfig = null)
+    : ICircuitBreakerService
 {
     private readonly ConcurrentDictionary<string, CircuitBreakerState> _circuits = new();
-    private readonly ILogger<CircuitBreakerService> _logger;
-    private readonly CircuitBreakerConfig _defaultConfig;
-
-    public CircuitBreakerService(
-        ILogger<CircuitBreakerService> logger,
-        CircuitBreakerConfig? defaultConfig = null)
-    {
-        _logger = logger;
-        _defaultConfig = defaultConfig ?? CircuitBreakerConfig.Default;
-    }
+    private readonly CircuitBreakerConfig _defaultConfig = defaultConfig ?? CircuitBreakerConfig.Default;
 
     public Task<CircuitState> GetStateAsync(string circuitName, CancellationToken ct = default)
     {
@@ -39,7 +33,7 @@ public sealed class CircuitBreakerService : ICircuitBreakerService
                 return true;
 
             case CircuitState.Open:
-                _logger.LogWarning(
+                logger.LogWarning(
                     "Circuit {CircuitName} is OPEN, blocking operation. Closes at {ClosesAt}",
                     circuitName, state.ClosesAt);
                 return false;
@@ -48,7 +42,7 @@ public sealed class CircuitBreakerService : ICircuitBreakerService
                 // Allow limited operations through
                 if (Interlocked.Increment(ref state.HalfOpenAttempts) <= _defaultConfig.SuccessThreshold)
                 {
-                    _logger.LogDebug("Circuit {CircuitName} is HALF-OPEN, allowing test operation", circuitName);
+                    logger.LogDebug("Circuit {CircuitName} is HALF-OPEN, allowing test operation", circuitName);
                     return true;
                 }
                 return false;
@@ -181,7 +175,7 @@ public sealed class CircuitBreakerService : ICircuitBreakerService
         state.HalfOpenAttempts = 0;
         state.HalfOpenSuccesses = 0;
 
-        _logger.LogWarning(
+        logger.LogWarning(
             "Circuit {CircuitName} OPENED: {Reason}. Will transition to half-open at {ClosesAt}",
             circuitName, reason, state.ClosesAt);
     }
@@ -199,7 +193,7 @@ public sealed class CircuitBreakerService : ICircuitBreakerService
         state.ConsecutiveFailures = 0;
         while (state.RecentFailures.TryDequeue(out _)) { }
 
-        _logger.LogInformation("Circuit {CircuitName} CLOSED", circuitName);
+        logger.LogInformation("Circuit {CircuitName} CLOSED", circuitName);
     }
 
     private sealed class CircuitBreakerState
@@ -215,6 +209,6 @@ public sealed class CircuitBreakerService : ICircuitBreakerService
         public string? OpenReason;
         public int HalfOpenAttempts;
         public int HalfOpenSuccesses;
-        public ConcurrentQueue<DateTimeOffset> RecentFailures = new();
+        public readonly ConcurrentQueue<DateTimeOffset> RecentFailures = new();
     }
 }

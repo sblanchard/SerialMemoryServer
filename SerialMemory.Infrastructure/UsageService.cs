@@ -126,12 +126,14 @@ public sealed class UsageService : IUsageService, IDisposable
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycle>(
-            @"SELECT id, tenant_id AS TenantId, workspace_id AS WorkspaceId, plan_id AS PlanId,
-                     cycle_start AS CycleStart, cycle_end AS CycleEnd,
-                     credits_allocated AS CreditsAllocated, credits_used AS CreditsUsed,
-                     is_current AS IsCurrent, closed_at AS ClosedAt, created_at AS CreatedAt
-              FROM billing_cycles
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT id, tenant_id AS TenantId, workspace_id AS WorkspaceId, plan_id AS PlanId,
+                                 cycle_start AS CycleStart, cycle_end AS CycleEnd,
+                                 credits_allocated AS CreditsAllocated, credits_used AS CreditsUsed,
+                                 is_current AS IsCurrent, closed_at AS ClosedAt, created_at AS CreatedAt
+                          FROM billing_cycles
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         return cycle;
@@ -153,14 +155,16 @@ public sealed class UsageService : IUsageService, IDisposable
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var rollups = await conn.QueryAsync<UsageDailyRollupDto>(
-            @"SELECT id, tenant_id, workspace_id, rollup_date, event_type,
-                     event_count, total_credits, success_count, failure_count,
-                     avg_latency_ms, p95_latency_ms, p99_latency_ms,
-                     created_at, updated_at
-              FROM usage_daily_rollups
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                AND rollup_date >= @From AND rollup_date <= @To
-              ORDER BY rollup_date DESC, event_type",
+            """
+            SELECT id, tenant_id, workspace_id, rollup_date, event_type,
+                                 event_count, total_credits, success_count, failure_count,
+                                 avg_latency_ms, p95_latency_ms, p99_latency_ms,
+                                 created_at, updated_at
+                          FROM usage_daily_rollups
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                            AND rollup_date >= @From AND rollup_date <= @To
+                          ORDER BY rollup_date DESC, event_type
+            """,
             new
             {
                 TenantId = tenantId,
@@ -186,13 +190,15 @@ public sealed class UsageService : IUsageService, IDisposable
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var events = await conn.QueryAsync<UsageEventDto>(
-            @"SELECT id, tenant_id, workspace_id, billing_cycle_id, event_type,
-                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
-                     latency_ms, success, error_message, metadata
-              FROM usage_events
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-              ORDER BY event_timestamp DESC
-              LIMIT @Limit",
+            """
+            SELECT id, tenant_id, workspace_id, billing_cycle_id, event_type,
+                                 credits_consumed, event_timestamp, memory_id, user_id, session_id,
+                                 latency_ms, success, error_message, metadata
+                          FROM usage_events
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                          ORDER BY event_timestamp DESC
+                          LIMIT @Limit
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId, Limit = limit });
 
         return events.Select(MapToEvent).ToList();
@@ -268,10 +274,12 @@ public sealed class UsageService : IUsageService, IDisposable
 
             // Batch insert using COPY for efficiency
             await using var writer = await conn.BeginBinaryImportAsync(
-                @"COPY usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
-                                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
-                                     latency_ms, success, error_message, metadata)
-                  FROM STDIN (FORMAT BINARY)");
+                """
+                COPY usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
+                                                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
+                                                     latency_ms, success, error_message, metadata)
+                                  FROM STDIN (FORMAT BINARY)
+                """);
 
             foreach (var evt in events)
             {
@@ -366,25 +374,8 @@ public sealed class UsageService : IUsageService, IDisposable
         ErrorMessage = dto.error_message
     };
 
-    private static UsageEventType ParseEventType(string eventType) => eventType switch
-    {
-        "memory_ingest" => UsageEventType.MemoryIngest,
-        "memory_search" => UsageEventType.MemorySearch,
-        "memory_multi_hop_search" => UsageEventType.MemoryMultiHopSearch,
-        "memory_update" => UsageEventType.MemoryUpdate,
-        "memory_delete" => UsageEventType.MemoryDelete,
-        "memory_merge" => UsageEventType.MemoryMerge,
-        "memory_split" => UsageEventType.MemorySplit,
-        "memory_decay" => UsageEventType.MemoryDecay,
-        "memory_reinforce" => UsageEventType.MemoryReinforce,
-        "memory_expire" => UsageEventType.MemoryExpire,
-        "crawl_relationships" => UsageEventType.CrawlRelationships,
-        "export_workspace" => UsageEventType.ExportWorkspace,
-        "export_memories" => UsageEventType.ExportMemories,
-        "export_graph" => UsageEventType.ExportGraph,
-        "reembed_memories" => UsageEventType.ReembedMemories,
-        _ => UsageEventType.MemoryIngest
-    };
+    private static UsageEventType ParseEventType(string eventType) =>
+        UsageCreditCosts.FromSnakeCase(eventType) ?? UsageEventType.MemoryIngest;
 
     public void Dispose()
     {

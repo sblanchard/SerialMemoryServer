@@ -1,0 +1,27 @@
+[2025-11-25 12:52:49] [INF] CORE Export/Import Tool Starting
+[2025-11-25 12:52:49] [ERR] No embedding service configured for import operation
+[2025-11-25 12:52:49] [ERR] Set ONNX_MODEL_PATH + VOCAB_PATH (for ONNX) or EMBEDDING_SERVICE_URL (for HTTP service)
+[2025-11-25 12:52:59] [INF] CORE Export/Import Tool Starting
+[2025-11-25 12:52:59] [ERR] No embedding service configured for import operation
+[2025-11-25 12:52:59] [ERR] Set ONNX_MODEL_PATH + VOCAB_PATH (for ONNX) or EMBEDDING_SERVICE_URL (for HTTP service)
+[2025-11-25 12:53:34] [INF] CORE Export/Import Tool Starting
+[2025-11-25 12:53:34] [INF] Using ONNX embedding service: E:\models\model.onnx
+[2025-11-25 12:53:34] [INF] Running export then import
+[2025-11-25 12:53:34] [INF] Starting CORE export to ./exports
+[2025-11-25 12:53:34] [INF] No existing state found, starting fresh export
+[2025-11-25 12:53:34] [INF] Fetching workspaces from CORE API
+[2025-11-25 12:53:34] [INF] Start processing HTTP request GET https://core.heysol.ai/v1/workspaces
+[2025-11-25 12:53:34] [INF] Sending HTTP request GET https://core.heysol.ai/v1/workspaces
+[2025-11-25 12:54:35] [INF] Received HTTP response headers after 60344.4712ms - 504
+[2025-11-25 12:54:35] [INF] End processing HTTP request after 60361.2613ms - 504
+[2025-11-25 12:54:35] [WRN] Request failed with "GatewayTimeout". Retry 1/5 after 2148ms
+[2025-11-25 12:54:37] [INF] Start processing HTTP request GET https://core.heysol.ai/v1/workspaces
+[2025-11-25 12:54:37] [INF] Sending HTTP request GET https://core.heysol.ai/v1/workspaces
+[2025-11-25 14:47:05] [INF] CORE Export/Import Tool Starting
+[2025-11-25 14:47:06] [INF] Loading config from: D:\DEV\SerialMemoryServer\SerialMemory.CoreExport\bin\Release\net10.0\appsettings.json (exists: true)
+[2025-11-25 14:47:06] [INF] Using ONNX embedding service: e:\models\model.onnx
+[2025-11-25 14:47:06] [INF] Running SerialMemory import
+[2025-11-25 14:47:07] [INF] Starting import from ./exports to SerialMemory contextdb
+[2025-11-25 14:47:07] [INF] Found 0 directories to import
+[2025-11-25 14:47:07] [INF] Import completed! Imported 0 memories, 0 entities, 0 relationships
+[2025-11-25 14:47:07] [INF] Import completed successfully!

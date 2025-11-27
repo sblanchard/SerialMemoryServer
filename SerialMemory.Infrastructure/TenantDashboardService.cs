@@ -44,16 +44,20 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Get user role
         var userRole = await conn.QueryFirstOrDefaultAsync<TenantUserDto>(
-            @"SELECT role, created_at FROM tenant_users
-              WHERE tenant_id = @TenantId AND user_id = @UserId",
+            """
+            SELECT role, created_at FROM tenant_users
+                          WHERE tenant_id = @TenantId AND user_id = @UserId
+            """,
             new { TenantId = tenantId, UserId = userId });
 
         // Get workspaces
         var workspaces = await conn.QueryAsync<WorkspaceDto>(
-            @"SELECT id, name, slug, is_default
-              FROM tenant_workspaces
-              WHERE tenant_id = @TenantId
-              ORDER BY is_default DESC, name",
+            """
+            SELECT id, name, slug, is_default
+                          FROM tenant_workspaces
+                          WHERE tenant_id = @TenantId
+                          ORDER BY is_default DESC, name
+            """,
             new { TenantId = tenantId });
 
         // Determine scopes based on role
@@ -87,9 +91,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Get current billing cycle
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-            @"SELECT id, cycle_start, cycle_end, credits_allocated, credits_used
-              FROM billing_cycles
-              WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT id, cycle_start, cycle_end, credits_allocated, credits_used
+                          FROM billing_cycles
+                          WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         if (cycle == null)
@@ -112,12 +118,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Get breakdown by event type for current cycle
         var breakdown = await conn.QueryAsync<UsageBreakdownDto>(
-            @"SELECT event_type, COUNT(*) as count, SUM(credits_consumed) as credits
-              FROM usage_events
-              WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId
-                AND event_timestamp >= @CycleStart AND event_timestamp < @CycleEnd
-              GROUP BY event_type
-              ORDER BY credits DESC",
+            """
+            SELECT event_type, COUNT(*) as count, SUM(credits_consumed) as credits
+                          FROM usage_events
+                          WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId
+                            AND event_timestamp >= @CycleStart AND event_timestamp < @CycleEnd
+                          GROUP BY event_type
+                          ORDER BY credits DESC
+            """,
             new
             {
                 TenantId = tenantId,
@@ -129,12 +137,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
         // Get last 7 days usage
         var sevenDaysAgo = DateTimeOffset.UtcNow.Date.AddDays(-6);
         var dailyUsage = await conn.QueryAsync<DailyUsageDto>(
-            @"SELECT DATE(event_timestamp) as date, COUNT(*) as event_count, SUM(credits_consumed) as credits_used
-              FROM usage_events
-              WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId
-                AND event_timestamp >= @SevenDaysAgo
-              GROUP BY DATE(event_timestamp)
-              ORDER BY date",
+            """
+            SELECT DATE(event_timestamp) as date, COUNT(*) as event_count, SUM(credits_consumed) as credits_used
+                          FROM usage_events
+                          WHERE tenant_id = @TenantId::text AND workspace_id = @WorkspaceId
+                            AND event_timestamp >= @SevenDaysAgo
+                          GROUP BY DATE(event_timestamp)
+                          ORDER BY date
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId, SevenDaysAgo = sevenDaysAgo });
 
         var daysRemaining = (int)Math.Ceiling((cycle.cycle_end - DateTimeOffset.UtcNow).TotalDays);
@@ -173,9 +183,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Get tenant settings
         var settings = await conn.QueryFirstOrDefaultAsync<TenantSettingsDto>(
-            @"SELECT plan, max_workspaces, max_users, features
-              FROM tenant_settings
-              WHERE tenant_id = @TenantId",
+            """
+            SELECT plan, max_workspaces, max_users, features
+                          FROM tenant_settings
+                          WHERE tenant_id = @TenantId
+            """,
             new { TenantId = tenantId });
 
         if (settings == null)
@@ -192,9 +204,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Get plan details
         var plan = await conn.QueryFirstOrDefaultAsync<TenantPlanDto>(
-            @"SELECT plan_name, display_name, credits_per_cycle, cycle_days, max_memories, max_entities
-              FROM tenant_plans
-              WHERE plan_name = @PlanName AND is_active = TRUE",
+            """
+            SELECT plan_name, display_name, credits_per_cycle, cycle_days, max_memories, max_entities
+                          FROM tenant_plans
+                          WHERE plan_name = @PlanName AND is_active = TRUE
+            """,
             new { PlanName = settings.plan });
 
         // Get current counts
@@ -252,9 +266,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Check if there's already a pending export
         var pendingExport = await conn.QueryFirstOrDefaultAsync<Guid?>(
-            @"SELECT id FROM export_requests
-              WHERE tenant_id = @TenantId AND status IN ('pending', 'processing')
-              LIMIT 1",
+            """
+            SELECT id FROM export_requests
+                          WHERE tenant_id = @TenantId AND status IN ('pending', 'processing')
+                          LIMIT 1
+            """,
             new { TenantId = tenantId });
 
         if (pendingExport.HasValue)
@@ -264,8 +280,10 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Create export request
         await conn.ExecuteAsync(
-            @"INSERT INTO export_requests (id, tenant_id, requested_by, status, options, requested_at)
-              VALUES (@Id, @TenantId, @RequestedBy, 'pending', @Options::jsonb, @RequestedAt)",
+            """
+            INSERT INTO export_requests (id, tenant_id, requested_by, status, options, requested_at)
+                          VALUES (@Id, @TenantId, @RequestedBy, 'pending', @Options::jsonb, @RequestedAt)
+            """,
             new
             {
                 Id = exportId,
@@ -296,10 +314,12 @@ public sealed class TenantDashboardService : ITenantDashboardService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var export = await conn.QueryFirstOrDefaultAsync<ExportRequestDto>(
-            @"SELECT id, status, requested_at, completed_at, download_url, download_expires_at,
-                     file_size_bytes, error_message
-              FROM export_requests
-              WHERE id = @ExportId AND tenant_id = @TenantId",
+            """
+            SELECT id, status, requested_at, completed_at, download_url, download_expires_at,
+                                 file_size_bytes, error_message
+                          FROM export_requests
+                          WHERE id = @ExportId AND tenant_id = @TenantId
+            """,
             new { ExportId = exportId, TenantId = tenantId });
 
         if (export == null)
@@ -350,9 +370,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Check if there's already a pending deletion
         var pendingDeletion = await conn.QueryFirstOrDefaultAsync<DeletionRequestDto>(
-            @"SELECT id, status, scheduled_for FROM deletion_requests
-              WHERE tenant_id = @TenantId AND status = 'pending'
-              LIMIT 1",
+            """
+            SELECT id, status, scheduled_for FROM deletion_requests
+                          WHERE tenant_id = @TenantId AND status = 'pending'
+                          LIMIT 1
+            """,
             new { TenantId = tenantId });
 
         if (pendingDeletion != null)
@@ -373,8 +395,10 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Create deletion request
         await conn.ExecuteAsync(
-            @"INSERT INTO deletion_requests (id, tenant_id, requested_by, status, requested_at, scheduled_for)
-              VALUES (@Id, @TenantId, @RequestedBy, 'pending', @RequestedAt, @ScheduledFor)",
+            """
+            INSERT INTO deletion_requests (id, tenant_id, requested_by, status, requested_at, scheduled_for)
+                          VALUES (@Id, @TenantId, @RequestedBy, 'pending', @RequestedAt, @ScheduledFor)
+            """,
             new
             {
                 Id = deletionId,
@@ -410,11 +434,13 @@ public sealed class TenantDashboardService : ITenantDashboardService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var deletion = await conn.QueryFirstOrDefaultAsync<DeletionRequestDto>(
-            @"SELECT id, status, requested_at, scheduled_for, cancelled_at, completed_at, cancellation_reason
-              FROM deletion_requests
-              WHERE tenant_id = @TenantId
-              ORDER BY requested_at DESC
-              LIMIT 1",
+            """
+            SELECT id, status, requested_at, scheduled_for, cancelled_at, completed_at, cancellation_reason
+                          FROM deletion_requests
+                          WHERE tenant_id = @TenantId
+                          ORDER BY requested_at DESC
+                          LIMIT 1
+            """,
             new { TenantId = tenantId });
 
         if (deletion == null)
@@ -451,9 +477,11 @@ public sealed class TenantDashboardService : ITenantDashboardService
 
         // Cancel the pending deletion
         var affected = await conn.ExecuteAsync(
-            @"UPDATE deletion_requests
-              SET status = 'cancelled', cancelled_at = NOW(), cancellation_reason = 'User cancelled'
-              WHERE tenant_id = @TenantId AND status = 'pending'",
+            """
+            UPDATE deletion_requests
+                          SET status = 'cancelled', cancelled_at = NOW(), cancellation_reason = 'User cancelled'
+                          WHERE tenant_id = @TenantId AND status = 'pending'
+            """,
             new { TenantId = tenantId });
 
         if (affected > 0)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -6,9 +7,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
+using SerialMemory.Core.Auth;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
+using TenantContext = SerialMemory.Core.Services.TenantContext;
 using SerialMemory.ML;
 using SerialMemory.Mcp.Tools;
 using SerialMemory.EventSourcing.Store;
@@ -19,7 +23,10 @@ using SerialMemory.EventSourcing.Store;
 
 #region Configuration
 
+// Try multiple config sources - env vars may not be passed by MCP client
 var configuration = new ConfigurationBuilder()
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+    .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true, reloadOnChange: false)
     .AddEnvironmentVariables()
     .Build();
 
@@ -29,7 +36,7 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration - Ollama
+// Embedding service configuration - Ollama (local only)
 var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
 var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
@@ -38,24 +45,44 @@ var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out
 // Option 1: Ollama (recommended) - uses local LLM for accurate extraction
 // Option 2: HTTP service (legacy) - set EXTRACTION_SERVICE_URL
 // Option 3: Pattern-based (default fallback, no external dependencies)
-var ollamaEntityUrl = configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl;  // Share Ollama URL by default
+// Set DISABLE_OLLAMA_ENTITY=true to skip local Ollama for entity extraction (useful when using cloud embeddings)
+var disableOllamaEntity = configuration["DISABLE_OLLAMA_ENTITY"]?.ToLowerInvariant() is "true" or "1" or "yes";
+var ollamaEntityUrl = disableOllamaEntity ? null : (configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl);
 var ollamaEntityModel = configuration["OLLAMA_ENTITY_MODEL"] ?? "phi3"; // phi3 is good for extraction
 var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];     // Legacy HTTP service
+DebugFileLogger.Log("MCP", $"Entity extraction: disableOllama={disableOllamaEntity}, ollamaEntityUrl={ollamaEntityUrl ?? "null"}");
+
+// API key for SaaS authentication (required)
+var apiKey = configuration["SERIALMEMORY_API_KEY"];
 
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
 // Create a shared NpgsqlDataSource with vector type handler for reembed operations
-var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
 dataSourceBuilder.UseVector();
 var vectorDataSource = dataSourceBuilder.Build();
 
-// Configure logging to stderr (MCP uses stdout for protocol)
+// Configure logging
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
-    builder.SetMinimumLevel(LogLevel.Information);
+    builder.SetMinimumLevel(LogLevel.Debug);
 });
 var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
+
+// Use file logger for debugging MCP
+DebugFileLogger.Clear();
+DebugFileLogger.Log("MCP", $"=== MCP Server Starting ===");
+DebugFileLogger.Log("MCP", $"Log file: {DebugFileLogger.GetLogFilePath()}");
+
+// Log all environment variables to debug
+DebugFileLogger.Log("MCP", "--- Environment Variables ---");
+foreach (var key in new[] { "SERIALMEMORY_API_KEY", "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_DB", "OLLAMA_BASE_URL" })
+{
+    var value = Environment.GetEnvironmentVariable(key);
+    DebugFileLogger.Log("MCP", $"  {key}={value ?? "(null)"}");
+}
+DebugFileLogger.Log("MCP", "--- End Environment Variables ---");
 
 #endregion
 
@@ -64,13 +91,49 @@ var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
 logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
 logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
 
-// Initialize services
-IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
+// Authenticate with API key to get tenant ID
+DebugFileLogger.Log("MCP", $"Checking API key environment variable...");
+if (string.IsNullOrEmpty(apiKey))
+{
+    DebugFileLogger.Log("MCP", "ERROR: SERIALMEMORY_API_KEY is not set");
+    logger.LogError("SERIALMEMORY_API_KEY environment variable is required");
+    await Console.Error.WriteLineAsync("[MCP Error] SERIALMEMORY_API_KEY environment variable is required");
+    Environment.Exit(1);
+    return;
+}
+DebugFileLogger.Log("MCP", $"API key found: {apiKey[..8]}***");
+
+var jwtOptions = JwtAuthenticationOptions.FromEnvironment();
+var authService = new JwtAuthenticationService(connectionString, jwtOptions);
+
+DebugFileLogger.Log("MCP", "Calling ValidateApiKeyAsync...");
+logger.LogInformation("Authenticating with API key...");
+var authResult = await authService.ValidateApiKeyAsync(apiKey);
+DebugFileLogger.Log("MCP", $"Auth result: IsValid={authResult.IsValid}, TenantId={authResult.TenantId}, Error={authResult.ErrorMessage}");
+
+if (!authResult.IsValid)
+{
+    logger.LogError("API key authentication failed: {Error}", authResult.ErrorMessage);
+    await Console.Error.WriteLineAsync($"[MCP Error] API key authentication failed: {authResult.ErrorMessage}");
+    Environment.Exit(1);
+    return;
+}
+
+var tenantId = authResult.TenantId!.Value.ToString();
+var userId = authResult.UserId;
+logger.LogInformation("Authenticated as tenant {TenantId} (user: {UserId})", tenantId, userId);
+DebugFileLogger.Log("MCP", $"Authenticated tenantId={tenantId}, userId={userId}");
+
+// Initialize services with authenticated tenant context
+var tenantContext = new FixedTenantContext(tenantId, "default", userId);
+DebugFileLogger.Log("MCP", $"Created FixedTenantContext: TenantId={tenantContext.TenantId}, WorkspaceId={tenantContext.WorkspaceId}");
+IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, tenantContext);
+DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
-// Create embedding service - Ollama
+// Create embedding service - local Ollama
 IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
 
 // Create entity extraction service (Ollama > HTTP > Pattern-based)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
@@ -92,10 +155,23 @@ var observabilityTools = new MemoryObservabilityTools(eventStore, connectionStri
 var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
 var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
 
+// Initialize engineering reasoning and visualization services
+IEngineeringReasoningService reasoningService = new SerialMemory.Infrastructure.Services.EngineeringReasoningService(store);
+IGraphVisualizationService visualizationService = new SerialMemory.Infrastructure.Services.GraphVisualizationService(store, reasoningService);
+IReasoningModelFactory modelFactory = new SerialMemory.Infrastructure.Services.DefaultReasoningModelFactory(store, loggerFactory);
+IMultiModelReasoningService multiModelService = new SerialMemory.Infrastructure.Services.MultiModelReasoningService(
+    store, reasoningService, modelFactory, loggerFactory.CreateLogger<SerialMemory.Infrastructure.Services.MultiModelReasoningService>());
+var reasoningTools = new EngineeringReasoningTools(reasoningService, visualizationService, multiModelService, logger);
+
+// Initialize usage service (non-blocking metering) - use authenticated tenant context
+var usageLogger = loggerFactory.CreateLogger<UsageService>();
+using var usageService = new UsageService(connectionString, usageLogger, tenantId: tenantId, workspaceId: tenantContext.WorkspaceId);
+logger.LogInformation("Usage metering service initialized for tenant {TenantId}", tenantId);
+
 // Session state
 Guid? currentSessionId = null;
 
-logger.LogInformation("Services initialized successfully (v2.0 with lifecycle, observability, safety, export tools)");
+logger.LogInformation("Services initialized successfully (v2.3 with lifecycle, observability, safety, export, reasoning, multi-model reasoning, usage metering)");
 
 #endregion
 
@@ -419,12 +495,13 @@ object HandleToolsList()
             }
     };
 
-    // Combine core tools with lifecycle, observability, safety, and export tools
+    // Combine core tools with lifecycle, observability, safety, export, and reasoning tools
     var allTools = coreTools
         .Concat(ToolDefinitions.GetLifecycleTools())
         .Concat(ToolDefinitions.GetObservabilityTools())
         .Concat(ToolDefinitions.GetSafetyTools())
         .Concat(ToolDefinitions.GetExportTools())
+        .Concat(ToolDefinitions.GetReasoningTools())
         .ToArray();
 
     return new { tools = allTools };
@@ -513,104 +590,157 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 {
     var toolName = @params?["name"]?.GetValue<string>();
     var arguments = @params?["arguments"];
+    var sw = Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
 
     try
     {
-        switch (toolName)
+        var result = toolName switch
         {
-            case "memory_search":
-                return await HandleMemorySearch(arguments);
-
-            case "memory_ingest":
-                return await HandleMemoryIngest(arguments);
-
-            case "memory_about_user":
-                return await HandleMemoryAboutUser(arguments);
-
-            case "initialise_conversation_session":
-                return await HandleInitialiseSession(arguments);
-
-            case "end_conversation_session":
-                return await HandleEndSession();
-
-            case "memory_multi_hop_search":
-                return await HandleMultiHopSearch(arguments);
-
-            case "get_integrations":
-                return HandleGetIntegrations();
-
-            case "import_from_core":
-                return await HandleImportFromCore(arguments);
-
-            case "set_user_persona":
-                return await HandleSetUserPersona(arguments);
-
-            case "crawl_relationships":
-                return await HandleCrawlRelationships(arguments);
-
-            case "get_graph_statistics":
-                return await HandleGetGraphStatistics();
-
-            case "get_model_info":
-                return HandleGetModelInfo();
-
-            case "reembed_memories":
-                return await HandleReembedMemories(arguments);
+            "memory_search" => await HandleMemorySearch(arguments),
+            "memory_ingest" => await HandleMemoryIngest(arguments),
+            "memory_about_user" => await HandleMemoryAboutUser(arguments),
+            "initialise_conversation_session" => await HandleInitialiseSession(arguments),
+            "end_conversation_session" => await HandleEndSession(),
+            "memory_multi_hop_search" => await HandleMultiHopSearch(arguments),
+            "get_integrations" => HandleGetIntegrations(),
+            "import_from_core" => await HandleImportFromCore(arguments),
+            "set_user_persona" => await HandleSetUserPersona(arguments),
+            "crawl_relationships" => await HandleCrawlRelationships(arguments),
+            "get_graph_statistics" => await HandleGetGraphStatistics(),
+            "get_model_info" => HandleGetModelInfo(),
+            "reembed_memories" => await HandleReembedMemories(arguments),
 
             // Lifecycle tools
-            case "memory_update":
-                return await lifecycleTools.HandleMemoryUpdate(arguments);
-            case "memory_delete":
-                return await lifecycleTools.HandleMemoryDelete(arguments);
-            case "memory_merge":
-                return await lifecycleTools.HandleMemoryMerge(arguments);
-            case "memory_split":
-                return await lifecycleTools.HandleMemorySplit(arguments);
-            case "memory_decay":
-                return await lifecycleTools.HandleMemoryDecay(arguments);
-            case "memory_reinforce":
-                return await lifecycleTools.HandleMemoryReinforce(arguments);
-            case "memory_expire":
-                return await lifecycleTools.HandleMemoryExpire(arguments);
+            "memory_update" => await lifecycleTools.HandleMemoryUpdate(arguments),
+            "memory_delete" => await lifecycleTools.HandleMemoryDelete(arguments),
+            "memory_merge" => await lifecycleTools.HandleMemoryMerge(arguments),
+            "memory_split" => await lifecycleTools.HandleMemorySplit(arguments),
+            "memory_decay" => await lifecycleTools.HandleMemoryDecay(arguments),
+            "memory_reinforce" => await lifecycleTools.HandleMemoryReinforce(arguments),
+            "memory_expire" => await lifecycleTools.HandleMemoryExpire(arguments),
 
             // Observability tools
-            case "memory_trace":
-                return await observabilityTools.HandleMemoryTrace(arguments);
-            case "memory_lineage":
-                return await observabilityTools.HandleMemoryLineage(arguments);
-            case "memory_explain":
-                return await observabilityTools.HandleMemoryExplain(arguments);
-            case "memory_conflicts":
-                return await observabilityTools.HandleMemoryConflicts(arguments);
+            "memory_trace" => await observabilityTools.HandleMemoryTrace(arguments),
+            "memory_lineage" => await observabilityTools.HandleMemoryLineage(arguments),
+            "memory_explain" => await observabilityTools.HandleMemoryExplain(arguments),
+            "memory_conflicts" => await observabilityTools.HandleMemoryConflicts(arguments),
 
             // Safety tools
-            case "detect_contradictions":
-                return await safetyTools.HandleDetectContradictions(arguments);
-            case "detect_hallucinations":
-                return await safetyTools.HandleDetectHallucinations(arguments);
-            case "verify_memory_integrity":
-                return await safetyTools.HandleVerifyIntegrity(arguments);
-            case "scan_loops":
-                return await safetyTools.HandleScanLoops(arguments);
+            "detect_contradictions" => await safetyTools.HandleDetectContradictions(arguments),
+            "detect_hallucinations" => await safetyTools.HandleDetectHallucinations(arguments),
+            "verify_memory_integrity" => await safetyTools.HandleVerifyIntegrity(arguments),
+            "scan_loops" => await safetyTools.HandleScanLoops(arguments),
 
             // Export tools
-            case "export_workspace":
-                return await exportTools.HandleExportWorkspace(arguments);
-            case "export_memories":
-                return await exportTools.HandleExportMemories(arguments);
-            case "export_graph":
-                return await exportTools.HandleExportGraph(arguments);
-            case "export_user_profile":
-                return await exportTools.HandleExportUserProfile(arguments);
+            "export_workspace" => await exportTools.HandleExportWorkspace(arguments),
+            "export_memories" => await exportTools.HandleExportMemories(arguments),
+            "export_graph" => await exportTools.HandleExportGraph(arguments),
+            "export_user_profile" => await exportTools.HandleExportUserProfile(arguments),
 
-            default:
-                throw new Exception($"Unknown tool: {toolName}");
-        }
+            // Reasoning tools
+            "engineering_analyze" => await reasoningTools.HandleEngineeringAnalyze(arguments),
+            "engineering_visualize" => await reasoningTools.HandleEngineeringVisualize(arguments),
+            "engineering_reason" => await reasoningTools.HandleEngineeringReason(arguments),
+
+            _ => throw new Exception($"Unknown tool: {toolName}")
+        };
+
+        return result;
     }
     catch (Exception ex)
     {
+        success = false;
+        errorMessage = ex.Message;
         logger.LogError(ex, "Error executing tool {ToolName}", toolName);
         return CreateErrorResponse(ex.Message);
+    }
+    finally
+    {
+        sw.Stop();
+        // Track usage for metered tools (non-blocking)
+        TrackToolUsage(toolName, (int)sw.ElapsedMilliseconds, success, errorMessage);
+    }
+}
+
+void TrackToolUsage(string? toolName, int latencyMs, bool success, string? errorMessage)
+{
+    // Map ALL MCP tools to usage event types - never miss a tool
+    UsageEventType? eventType = toolName switch
+    {
+        // Core memory operations
+        "memory_ingest" => UsageEventType.MemoryIngest,
+        "memory_search" => UsageEventType.MemorySearch,
+        "memory_multi_hop_search" => UsageEventType.MemoryMultiHopSearch,
+
+        // Lifecycle operations
+        "memory_update" => UsageEventType.MemoryUpdate,
+        "memory_delete" => UsageEventType.MemoryDelete,
+        "memory_merge" => UsageEventType.MemoryMerge,
+        "memory_split" => UsageEventType.MemorySplit,
+        "memory_decay" => UsageEventType.MemoryDecay,
+        "memory_reinforce" => UsageEventType.MemoryReinforce,
+        "memory_expire" => UsageEventType.MemoryExpire,
+
+        // Graph operations
+        "crawl_relationships" => UsageEventType.CrawlRelationships,
+        "get_graph_statistics" => UsageEventType.GetGraphStatistics,
+
+        // Export operations
+        "export_workspace" => UsageEventType.ExportWorkspace,
+        "export_memories" => UsageEventType.ExportMemories,
+        "export_graph" => UsageEventType.ExportGraph,
+        "export_user_profile" => UsageEventType.ExportUserProfile,
+
+        // Model operations
+        "reembed_memories" => UsageEventType.ReembedMemories,
+        "get_model_info" => UsageEventType.GetModelInfo,
+
+        // User/session operations
+        "memory_about_user" => UsageEventType.MemoryAboutUser,
+        "set_user_persona" => UsageEventType.SetUserPersona,
+        "initialise_conversation_session" => UsageEventType.InitialiseSession,
+        "end_conversation_session" => UsageEventType.EndSession,
+
+        // Integration operations
+        "get_integrations" => UsageEventType.GetIntegrations,
+        "import_from_core" => UsageEventType.ImportFromCore,
+
+        // Observability operations
+        "memory_trace" => UsageEventType.MemoryTrace,
+        "memory_lineage" => UsageEventType.MemoryLineage,
+        "memory_explain" => UsageEventType.MemoryExplain,
+        "memory_conflicts" => UsageEventType.MemoryConflicts,
+
+        // Safety operations
+        "detect_contradictions" => UsageEventType.DetectContradictions,
+        "detect_hallucinations" => UsageEventType.DetectHallucinations,
+        "verify_memory_integrity" => UsageEventType.VerifyMemoryIntegrity,
+        "scan_loops" => UsageEventType.ScanLoops,
+
+        // Engineering reasoning operations
+        "engineering_analyze" => UsageEventType.EngineeringAnalyze,
+        "engineering_visualize" => UsageEventType.EngineeringVisualize,
+        "engineering_reason" => UsageEventType.EngineeringReason,
+
+        _ => null
+    };
+
+    // Track usage for all tools - fire and forget, never block
+    if (eventType.HasValue)
+    {
+        usageService.TrackUsage(
+            eventType.Value,
+            sessionId: currentSessionId,
+            latencyMs: latencyMs,
+            success: success,
+            errorMessage: errorMessage);
+    }
+    else if (!string.IsNullOrEmpty(toolName))
+    {
+        // Log unknown tools so we can add them
+        logger.LogWarning("Unknown tool not tracked for usage: {ToolName}", toolName);
     }
 }
 
@@ -872,7 +1002,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
         // Get memories to process
         // force_reprocess=true: process all memories (re-extract entities/relationships)
         // force_reprocess=false: only process memories without existing entity links (rows leave result set after processing)
-        List<SerialMemory.Core.Models.Memory> memories;
+        List<Memory> memories;
 
         if (forceReprocess)
         {
@@ -899,7 +1029,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             var entityIdMap = new Dictionary<string, Guid>();
             foreach (var entity in entities)
             {
-                var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                var entityId = await store.CreateEntityAsync(new Entity
                 {
                     Id = Guid.CreateVersion7(),
                     Name = entity.Text,
@@ -921,7 +1051,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
 
                 if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
                 {
-                    sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    sourceId = await store.CreateEntityAsync(new Entity
                     {
                         Id = Guid.CreateVersion7(),
                         Name = rel.SourceEntity,
@@ -936,7 +1066,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
 
                 if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
                 {
-                    targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    targetId = await store.CreateEntityAsync(new Entity
                     {
                         Id = Guid.CreateVersion7(),
                         Name = rel.TargetEntity,
@@ -949,7 +1079,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     totalEntities++;
                 }
 
-                await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                await store.CreateRelationshipAsync(new EntityRelationship
                 {
                     Id = Guid.CreateVersion7(),
                     SourceEntityId = sourceId,
@@ -973,7 +1103,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     if (entityIdMap.TryGetValue(person.Text, out var personId) &&
                         entityIdMap.TryGetValue(org.Text, out var orgId))
                     {
-                        await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                        await store.CreateRelationshipAsync(new EntityRelationship
                         {
                             Id = Guid.CreateVersion7(),
                             SourceEntityId = personId,
@@ -1082,7 +1212,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
     var processedCount = 0;
     var errorCount = 0;
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var stopwatch = Stopwatch.StartNew();
 
     if (forceAll)
     {
@@ -1105,10 +1235,10 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
                     // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
                     await using var connection = await vectorDataSource.OpenConnectionAsync();
-                    await using var cmd = new Npgsql.NpgsqlCommand(
+                    await using var cmd = new NpgsqlCommand(
                         "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                     cmd.Parameters.AddWithValue("@Id", memory.Id);
-                    cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                    cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                     await cmd.ExecuteNonQueryAsync();
 
                     processedCount++;
@@ -1138,10 +1268,10 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
                 // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
                 await using var connection = await vectorDataSource.OpenConnectionAsync();
-                await using var cmd = new Npgsql.NpgsqlCommand(
+                await using var cmd = new NpgsqlCommand(
                     "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                 cmd.Parameters.AddWithValue("@Id", memory.Id);
-                cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                 await cmd.ExecuteNonQueryAsync();
 
                 processedCount++;

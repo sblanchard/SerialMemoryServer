@@ -1,0 +1,442 @@
+@page
+@model SerialMemory.Web.Pages.Dashboard.GraphModel
+@{
+    ViewData["Title"] = "Knowledge Graph Explorer";
+}
+
+@section Styles {
+    <style>
+        #graph-container {
+            width: 100%;
+            height: calc(100vh - 200px);
+            min-height: 600px;
+            background-color: #0B0F1A;
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+        .search-input {
+            background-color: var(--navy);
+            border: 1px solid var(--slate);
+            color: var(--soft-white);
+        }
+        .search-input:focus {
+            border-color: var(--cyan);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.2);
+        }
+        .filter-chip {
+            background-color: var(--slate);
+            color: var(--soft-white);
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-chip:hover, .filter-chip.active {
+            background-color: var(--cyan);
+            color: var(--midnight);
+        }
+        .stats-badge {
+            background: linear-gradient(90deg, var(--electric), var(--cyan));
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+        }
+        .node-legend {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--graphite);
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .loading-spinner {
+            border: 3px solid var(--slate);
+            border-top: 3px solid var(--cyan);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @@keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+}
+
+<div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-2xl font-bold gradient-text">Knowledge Graph Explorer</h1>
+            <p class="text-graphite mt-1">Visualize your memories, entities, and relationships</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="stats-badge" id="stats-memories">0 memories</span>
+            <span class="stats-badge" id="stats-entities">0 entities</span>
+            <span class="stats-badge" id="stats-relations">0 relations</span>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card mb-6">
+        <div class="flex flex-wrap gap-4 items-center">
+            <!-- Search -->
+            <div class="flex-1 min-w-64">
+                <input type="text" id="search-input" placeholder="Search graph..."
+                    class="w-full search-input px-4 py-2 rounded-lg">
+            </div>
+
+            <!-- Filter by type -->
+            <div class="flex gap-2">
+                <span class="filter-chip active" data-type="all">All</span>
+                <span class="filter-chip" data-type="memory">Memories</span>
+                <span class="filter-chip" data-type="entity">Entities</span>
+                <span class="filter-chip" data-type="relation">Relations</span>
+            </div>
+
+            <!-- Actions -->
+            <button id="btn-reset" class="btn-outline px-4 py-2 rounded-lg text-sm">
+                Reset View
+            </button>
+        </div>
+
+        <!-- Legend -->
+        <div class="node-legend mt-4 pt-4 border-t border-slate">
+            <div class="legend-item">
+                <div class="legend-dot" style="background-color: #22D3EE;"></div>
+                <span>Memory</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background-color: #3B82F6;"></div>
+                <span>Entity</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background-color: #9333EA;"></div>
+                <span>Relation</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background-color: #22C55E;"></div>
+                <span>User</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Graph Container -->
+    <div class="card p-0 overflow-hidden relative">
+        <div id="graph-container"></div>
+        <!-- Loading Overlay -->
+        <div id="graph-loading" class="absolute inset-0 flex items-center justify-center bg-midnight/80 z-10">
+            <div class="text-center">
+                <div class="loading-spinner mx-auto mb-4"></div>
+                <p class="text-graphite">Loading knowledge graph...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Node Info Panel -->
+    <div id="node-info-panel" class="card mt-6 hidden">
+        <h3 class="text-lg font-semibold text-cyan mb-4">Selected Node</h3>
+        <div id="node-info-content">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <!-- Three.js and Force Graph -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+
+    <script>
+        const API_BASE = '@Model.ApiBaseUrl';
+        const AUTH_TOKEN = '@Model.AuthToken';
+
+        let graph = null;
+        let graphData = { nodes: [], links: [] };
+        let currentFilter = 'all';
+
+        // Node colors (SerialMemory theme)
+        const NODE_COLORS = {
+            memory: '#22D3EE',   // cyan
+            entity: '#3B82F6',   // blue
+            relation: '#9333EA', // violet
+            user: '#22C55E',     // green
+            default: '#6B7280'   // gray
+        };
+
+        // Initialize graph
+        function initGraph() {
+            const container = document.getElementById('graph-container');
+
+            graph = ForceGraph3D()(container)
+                .backgroundColor('#0B0F1A')
+                .nodeColor(node => NODE_COLORS[node.type] || NODE_COLORS.default)
+                .nodeLabel(node => `${node.type}: ${node.label}`)
+                .nodeVal(node => 5)
+                .linkColor(() => 'rgba(34, 211, 238, 0.35)')
+                .linkWidth(1.2)
+                .linkOpacity(0.35)
+                .linkDirectionalParticles(2)
+                .linkDirectionalParticleWidth(2)
+                .linkDirectionalParticleSpeed(0.005)
+                .onNodeClick(handleNodeClick)
+                .onNodeHover(handleNodeHover);
+
+            // Camera setup - zoomed out for better overview
+            graph.cameraPosition({ x: 0, y: 0, z: 800 });
+
+            // Add fog for depth effect
+            setTimeout(() => {
+                if (graph.scene()) {
+                    graph.scene().fog = new THREE.Fog(0x0B0F1A, 100, 800);
+                }
+            }, 100);
+        }
+
+        // Fetch graph data
+        async function fetchGraphData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/graph?limit=50`, {
+                    credentials: 'same-origin'
+                });
+
+                if (!response.ok) throw new Error('Failed to fetch graph data');
+
+                const data = await response.json();
+                return transformGraphData(data);
+            } catch (error) {
+                console.error('Error fetching graph data:', error);
+                return { nodes: [], links: [] };
+            }
+        }
+
+        // Transform API data to graph format
+        function transformGraphData(data) {
+            const nodes = [];
+            const links = [];
+            const nodeMap = new Map();
+
+            // Add memories
+            if (data.memories) {
+                data.memories.forEach(m => {
+                    const id = `memory_${m.id}`;
+                    nodes.push({
+                        id: id,
+                        label: m.content?.substring(0, 50) + '...' || 'Memory',
+                        type: 'memory',
+                        data: m
+                    });
+                    nodeMap.set(m.id, id);
+                });
+            }
+
+            // Add entities from nodes
+            if (data.nodes) {
+                data.nodes.forEach(n => {
+                    const id = `entity_${n.id}`;
+                    if (!nodeMap.has(n.id)) {
+                        nodes.push({
+                            id: id,
+                            label: n.label || n.name || n.id,
+                            type: 'entity',
+                            group: n.group || n.type,
+                            data: n
+                        });
+                        nodeMap.set(n.id, id);
+                    }
+                });
+            }
+
+            // Add edges
+            if (data.edges) {
+                data.edges.forEach(e => {
+                    const sourceId = nodeMap.get(e.from) || `entity_${e.from}`;
+                    const targetId = nodeMap.get(e.to) || `entity_${e.to}`;
+
+                    // Ensure both nodes exist
+                    if (!nodes.find(n => n.id === sourceId)) {
+                        nodes.push({ id: sourceId, label: e.from, type: 'entity' });
+                    }
+                    if (!nodes.find(n => n.id === targetId)) {
+                        nodes.push({ id: targetId, label: e.to, type: 'entity' });
+                    }
+
+                    links.push({
+                        source: sourceId,
+                        target: targetId,
+                        label: e.label
+                    });
+                });
+            }
+
+            return { nodes, links };
+        }
+
+        // Fetch stats
+        async function fetchStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`, {
+                    credentials: 'same-origin'
+                });
+
+                if (!response.ok) return;
+
+                const stats = await response.json();
+                document.getElementById('stats-memories').textContent = `${stats.memories || 0} memories`;
+                document.getElementById('stats-entities').textContent = `${stats.entities || 0} entities`;
+                document.getElementById('stats-relations').textContent = `${stats.relationships || 0} relations`;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        // Handle node click
+        function handleNodeClick(node) {
+            if (!node) return;
+
+            const panel = document.getElementById('node-info-panel');
+            const content = document.getElementById('node-info-content');
+
+            panel.classList.remove('hidden');
+            content.innerHTML = `
+                <div class="grid gap-4">
+                    <div>
+                        <span class="text-graphite text-sm">Type</span>
+                        <p class="text-soft-white font-medium">${node.type}</p>
+                    </div>
+                    <div>
+                        <span class="text-graphite text-sm">Label</span>
+                        <p class="text-soft-white font-medium">${node.label}</p>
+                    </div>
+                    ${node.data?.content ? `
+                    <div>
+                        <span class="text-graphite text-sm">Content</span>
+                        <p class="text-soft-white">${node.data.content}</p>
+                    </div>
+                    ` : ''}
+                    ${node.group ? `
+                    <div>
+                        <span class="text-graphite text-sm">Group</span>
+                        <p class="text-soft-white">${node.group}</p>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+
+            // Focus camera on node
+            const distance = 100;
+            const distRatio = 1 + distance / Math.hypot(node.x || 0, node.y || 0, node.z || 0);
+            graph.cameraPosition(
+                { x: (node.x || 0) * distRatio, y: (node.y || 0) * distRatio, z: (node.z || 0) * distRatio },
+                node,
+                1000
+            );
+        }
+
+        // Handle node hover
+        function handleNodeHover(node) {
+            document.body.style.cursor = node ? 'pointer' : 'default';
+        }
+
+        // Filter graph
+        function filterGraph(type) {
+            currentFilter = type;
+
+            // Update chip states
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.classList.toggle('active', chip.dataset.type === type);
+            });
+
+            // Filter nodes
+            const filteredData = type === 'all'
+                ? graphData
+                : {
+                    nodes: graphData.nodes.filter(n => n.type === type),
+                    links: graphData.links.filter(l => {
+                        const sourceNode = graphData.nodes.find(n => n.id === l.source || n.id === l.source?.id);
+                        const targetNode = graphData.nodes.find(n => n.id === l.target || n.id === l.target?.id);
+                        return sourceNode?.type === type || targetNode?.type === type;
+                    })
+                };
+
+            graph.graphData(filteredData);
+        }
+
+        // Search graph
+        function searchGraph(query) {
+            if (!query) {
+                graph.graphData(graphData);
+                return;
+            }
+
+            const lowerQuery = query.toLowerCase();
+            const matchingNodes = graphData.nodes.filter(n =>
+                n.label?.toLowerCase().includes(lowerQuery) ||
+                n.data?.content?.toLowerCase().includes(lowerQuery)
+            );
+
+            const matchingNodeIds = new Set(matchingNodes.map(n => n.id));
+            const matchingLinks = graphData.links.filter(l =>
+                matchingNodeIds.has(l.source?.id || l.source) ||
+                matchingNodeIds.has(l.target?.id || l.target)
+            );
+
+            graph.graphData({ nodes: matchingNodes, links: matchingLinks });
+        }
+
+        // Reset view
+        function resetView() {
+            graph.cameraPosition({ x: 0, y: 0, z: 800 }, null, 1000);
+            filterGraph('all');
+            document.getElementById('search-input').value = '';
+            graph.graphData(graphData);
+            document.getElementById('node-info-panel').classList.add('hidden');
+        }
+
+        // Hide loading indicator
+        function hideLoading() {
+            const loadingEl = document.getElementById('graph-loading');
+            if (loadingEl) {
+                loadingEl.classList.add('hidden');
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            initGraph();
+
+            // Fetch and display data
+            graphData = await fetchGraphData();
+            graph.graphData(graphData);
+
+            // Hide loading after data is loaded
+            hideLoading();
+
+            await fetchStats();
+
+            // Event listeners
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.addEventListener('click', () => filterGraph(chip.dataset.type));
+            });
+
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                searchGraph(e.target.value);
+            });
+
+            document.getElementById('btn-reset').addEventListener('click', resetView);
+        });
+    </script>
+}

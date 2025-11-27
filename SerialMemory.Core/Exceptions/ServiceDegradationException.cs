@@ -4,33 +4,23 @@ namespace SerialMemory.Core.Exceptions;
 /// Exception thrown when a service is degraded and cannot complete the operation.
 /// Used for graceful degradation with deterministic error responses.
 /// </summary>
-public class ServiceDegradationException : Exception
+public class ServiceDegradationException(
+    DegradationType type,
+    string serviceName,
+    string message,
+    string errorCode = "SERVICE_DEGRADED",
+    bool isRetryable = true,
+    TimeSpan? retryAfter = null,
+    Dictionary<string, object>? details = null,
+    Exception? innerException = null)
+    : Exception(message, innerException)
 {
-    public DegradationType DegradationType { get; }
-    public string ServiceName { get; }
-    public string ErrorCode { get; }
-    public bool IsRetryable { get; }
-    public TimeSpan? RetryAfter { get; }
-    public Dictionary<string, object>? Details { get; }
-
-    public ServiceDegradationException(
-        DegradationType type,
-        string serviceName,
-        string message,
-        string errorCode = "SERVICE_DEGRADED",
-        bool isRetryable = true,
-        TimeSpan? retryAfter = null,
-        Dictionary<string, object>? details = null,
-        Exception? innerException = null)
-        : base(message, innerException)
-    {
-        DegradationType = type;
-        ServiceName = serviceName;
-        ErrorCode = errorCode;
-        IsRetryable = isRetryable;
-        RetryAfter = retryAfter;
-        Details = details;
-    }
+    public DegradationType DegradationType { get; } = type;
+    public string ServiceName { get; } = serviceName;
+    public string ErrorCode { get; } = errorCode;
+    public bool IsRetryable { get; } = isRetryable;
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+    public Dictionary<string, object>? Details { get; } = details;
 
     /// <summary>
     /// Creates a deterministic error response for API consumers.

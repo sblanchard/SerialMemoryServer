@@ -1,14 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Core.Models;
 
 namespace SerialMemory.Infrastructure.Crawlers;
 
@@ -16,22 +10,11 @@ namespace SerialMemory.Infrastructure.Crawlers;
 /// Crawls existing memories to extract and create entity relationships.
 /// Runs as a background task to populate the knowledge graph.
 /// </summary>
-public sealed class RelationshipCrawler
+public sealed class RelationshipCrawler(
+    NpgsqlDataSource dataSource,
+    IEntityExtractionService extractionService,
+    ILogger<RelationshipCrawler> logger)
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEntityExtractionService _extractionService;
-    private readonly ILogger<RelationshipCrawler> _logger;
-
-    public RelationshipCrawler(
-        NpgsqlDataSource dataSource,
-        IEntityExtractionService extractionService,
-        ILogger<RelationshipCrawler> logger)
-    {
-        _dataSource = dataSource;
-        _extractionService = extractionService;
-        _logger = logger;
-    }
-
     /// <summary>
     /// Crawl all unprocessed memories and extract relationships.
     /// </summary>
@@ -43,7 +26,7 @@ public sealed class RelationshipCrawler
         options ??= new CrawlOptions();
         var stopwatch = Stopwatch.StartNew();
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get total count for progress reporting
         var countSql = options.ForceReprocess
@@ -51,7 +34,7 @@ public sealed class RelationshipCrawler
             : "SELECT COUNT(*) FROM memories m WHERE NOT EXISTS (SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id)";
         var totalToProcess = await connection.ExecuteScalarAsync<long>(countSql);
 
-        _logger.LogInformation("Found {Count} memories to process for relationship extraction", totalToProcess);
+        logger.LogInformation("Found {Count} memories to process for relationship extraction", totalToProcess);
 
         var totalEntities = 0;
         var totalRelationships = 0;
@@ -74,11 +57,13 @@ public sealed class RelationshipCrawler
             if (options.ForceReprocess)
             {
                 // ForceReprocess=true: use offset-based pagination (rows stay in result set)
-                var sql = @"
-                    SELECT m.id, m.content, m.created_at
-                    FROM memories m
-                    ORDER BY m.id
-                    LIMIT @BatchSize OFFSET @Offset";
+                var sql = """
+
+                                              SELECT m.id, m.content, m.created_at
+                                              FROM memories m
+                                              ORDER BY m.id
+                                              LIMIT @BatchSize OFFSET @Offset
+                          """;
 
                 memories = (await connection.QueryAsync<MemoryRow>(sql, new
                 {
@@ -97,27 +82,31 @@ public sealed class RelationshipCrawler
 
                 if (failedIds.Count > 0)
                 {
-                    sql = @"
-                        SELECT m.id, m.content, m.created_at
-                        FROM memories m
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-                        )
-                        AND m.id != ALL(@FailedIds)
-                        ORDER BY m.created_at DESC
-                        LIMIT @BatchSize";
+                    sql = """
+
+                                                  SELECT m.id, m.content, m.created_at
+                                                  FROM memories m
+                                                  WHERE NOT EXISTS (
+                                                      SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                                                  )
+                                                  AND m.id != ALL(@FailedIds)
+                                                  ORDER BY m.created_at DESC
+                                                  LIMIT @BatchSize
+                          """;
                     parameters = new { BatchSize = options.BatchSize, FailedIds = failedIds.ToArray() };
                 }
                 else
                 {
-                    sql = @"
-                        SELECT m.id, m.content, m.created_at
-                        FROM memories m
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-                        )
-                        ORDER BY m.created_at DESC
-                        LIMIT @BatchSize";
+                    sql = """
+
+                                                  SELECT m.id, m.content, m.created_at
+                                                  FROM memories m
+                                                  WHERE NOT EXISTS (
+                                                      SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                                                  )
+                                                  ORDER BY m.created_at DESC
+                                                  LIMIT @BatchSize
+                          """;
                     parameters = new { BatchSize = options.BatchSize };
                 }
 
@@ -126,7 +115,7 @@ public sealed class RelationshipCrawler
 
             if (memories.Count == 0) break;
 
-            _logger.LogDebug("Processing batch of {Count} memories (total processed: {Total})", memories.Count, processedMemories);
+            logger.LogDebug("Processing batch of {Count} memories (total processed: {Total})", memories.Count, processedMemories);
 
             foreach (var memory in memories)
             {
@@ -152,13 +141,13 @@ public sealed class RelationshipCrawler
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.id);
+                    logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.id);
                     errors.Add(new CrawlError(memory.id, ex.Message));
                     failedIds.Add(memory.id);
 
                     if (errors.Count >= options.MaxErrors)
                     {
-                        _logger.LogError("Max errors reached ({Count}), stopping crawl", errors.Count);
+                        logger.LogError("Max errors reached ({Count}), stopping crawl", errors.Count);
                         goto crawlComplete; // Break out of both loops
                     }
                 }
@@ -168,7 +157,7 @@ public sealed class RelationshipCrawler
         crawlComplete:
         stopwatch.Stop();
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Crawl completed: {Processed} memories, {Entities} entities, {Relationships} relationships in {Duration}ms",
             processedMemories, totalEntities, totalRelationships, stopwatch.ElapsedMilliseconds);
 
@@ -187,7 +176,7 @@ public sealed class RelationshipCrawler
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var sql = "SELECT id, content, created_at FROM memories WHERE id = @MemoryId";
         var memory = await connection.QuerySingleOrDefaultAsync<MemoryRow>(sql, new { MemoryId = memoryId });
@@ -206,7 +195,7 @@ public sealed class RelationshipCrawler
         CancellationToken cancellationToken)
     {
         // Extract entities and relationships
-        var (entities, relationships) = await _extractionService.ExtractAllAsync(memory.content, cancellationToken);
+        var (entities, relationships) = await extractionService.ExtractAllAsync(memory.content, cancellationToken);
 
         var entitiesCreated = 0;
         var relationshipsCreated = 0;
@@ -378,12 +367,14 @@ public sealed class RelationshipCrawler
         float confidence,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO entities (id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
-            VALUES (@Id, @Name, @EntityType, @CanonicalName, @SourceMemoryId, '{}'::jsonb)
-            ON CONFLICT (name, entity_type) DO UPDATE SET
-                metadata = entities.metadata
-            RETURNING id";
+        const string sql = """
+
+                                       INSERT INTO entities (id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
+                                       VALUES (@Id, @Name, @EntityType, @CanonicalName, @SourceMemoryId, '{}'::jsonb)
+                                       ON CONFLICT (name, entity_type) DO UPDATE SET
+                                           metadata = entities.metadata
+                                       RETURNING id
+                           """;
 
         var id = Guid.CreateVersion7();
         var existingId = await connection.QuerySingleOrDefaultAsync<Guid?>(sql, new
@@ -405,11 +396,13 @@ public sealed class RelationshipCrawler
         float relevance,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO memory_entities (memory_id, entity_id, relevance)
-            VALUES (@MemoryId, @EntityId, @Relevance)
-            ON CONFLICT (memory_id, entity_id) DO UPDATE SET
-                relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)";
+        const string sql = """
+
+                                       INSERT INTO memory_entities (memory_id, entity_id, relevance)
+                                       VALUES (@MemoryId, @EntityId, @Relevance)
+                                       ON CONFLICT (memory_id, entity_id) DO UPDATE SET
+                                           relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -428,17 +421,19 @@ public sealed class RelationshipCrawler
         Guid sourceMemoryId,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO entity_relationships (
-                id, source_entity_id, target_entity_id, relationship_type,
-                confidence, first_seen_memory_id, metadata
-            )
-            VALUES (
-                @Id, @SourceEntityId, @TargetEntityId, @RelationshipType,
-                @Confidence, @SourceMemoryId, '{}'::jsonb
-            )
-            ON CONFLICT (source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
-                confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence)";
+        const string sql = """
+
+                                       INSERT INTO entity_relationships (
+                                           id, source_entity_id, target_entity_id, relationship_type,
+                                           confidence, first_seen_memory_id, metadata
+                                       )
+                                       VALUES (
+                                           @Id, @SourceEntityId, @TargetEntityId, @RelationshipType,
+                                           @Confidence, @SourceMemoryId, '{}'::jsonb
+                                       )
+                                       ON CONFLICT (source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
+                                           confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence)
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -456,25 +451,29 @@ public sealed class RelationshipCrawler
     /// </summary>
     public async Task<GraphStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        var sql = @"
-            SELECT
-                (SELECT COUNT(*) FROM memories) as memory_count,
-                (SELECT COUNT(*) FROM entities) as entity_count,
-                (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
-                (SELECT COUNT(DISTINCT memory_id) FROM memory_entities) as memories_with_entities,
-                (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type != 'MENTIONED_WITH') as explicit_relationships,
-                (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type = 'MENTIONED_WITH') as inferred_relationships";
+        var sql = """
+
+                              SELECT
+                                  (SELECT COUNT(*) FROM memories) as memory_count,
+                                  (SELECT COUNT(*) FROM entities) as entity_count,
+                                  (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
+                                  (SELECT COUNT(DISTINCT memory_id) FROM memory_entities) as memories_with_entities,
+                                  (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type != 'MENTIONED_WITH') as explicit_relationships,
+                                  (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type = 'MENTIONED_WITH') as inferred_relationships
+                  """;
 
         var stats = await connection.QuerySingleAsync<dynamic>(sql);
 
         // Get relationship type breakdown
-        var typesSql = @"
-            SELECT relationship_type, COUNT(*) as count
-            FROM entity_relationships
-            GROUP BY relationship_type
-            ORDER BY count DESC";
+        var typesSql = """
+
+                                   SELECT relationship_type, COUNT(*) as count
+                                   FROM entity_relationships
+                                   GROUP BY relationship_type
+                                   ORDER BY count DESC
+                       """;
 
         var types = await connection.QueryAsync<(string relationship_type, int count)>(typesSql);
 

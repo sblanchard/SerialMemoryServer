@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
@@ -23,9 +22,6 @@ public sealed class SignupModel : PageModel
     [BindProperty]
     public string Email { get; set; } = "";
 
-    [BindProperty]
-    public string Password { get; set; } = "";
-
     public string? ErrorMessage { get; set; }
 
     public string? Plan { get; set; }
@@ -38,16 +34,9 @@ public sealed class SignupModel : PageModel
     public async Task<IActionResult> OnPostAsync()
     {
         if (string.IsNullOrWhiteSpace(OrganizationName) ||
-            string.IsNullOrWhiteSpace(Email) ||
-            string.IsNullOrWhiteSpace(Password))
+            string.IsNullOrWhiteSpace(Email))
         {
-            ErrorMessage = "All fields are required.";
-            return Page();
-        }
-
-        if (Password.Length < 8)
-        {
-            ErrorMessage = "Password must be at least 8 characters.";
+            ErrorMessage = "Organization name and email are required.";
             return Page();
         }
 
@@ -55,11 +44,11 @@ public sealed class SignupModel : PageModel
         {
             var client = _httpClientFactory.CreateClient("Api");
 
+            // API expects TenantName, not OrganizationName
             var signupRequest = new
             {
-                OrganizationName,
+                TenantName = OrganizationName,
                 Email,
-                Password,
                 Plan = Plan ?? "free"
             };
 
@@ -67,8 +56,17 @@ public sealed class SignupModel : PageModel
 
             if (!response.IsSuccessStatusCode)
             {
-                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-                ErrorMessage = error?.Message ?? "Failed to create account. Please try again.";
+                var errorContent = await response.Content.ReadAsStringAsync();
+                // Try to parse as JSON, otherwise use as-is
+                try
+                {
+                    var error = JsonSerializer.Deserialize<ErrorResponse>(errorContent);
+                    ErrorMessage = error?.Message ?? error?.Error ?? errorContent;
+                }
+                catch
+                {
+                    ErrorMessage = errorContent.Length > 200 ? "Failed to create account. Please try again." : errorContent;
+                }
                 return Page();
             }
 
@@ -86,9 +84,10 @@ public sealed class SignupModel : PageModel
                 new(ClaimTypes.NameIdentifier, result.UserId),
                 new(ClaimTypes.Email, Email),
                 new(ClaimTypes.Name, OrganizationName),
-                new("tenant_id", result.TenantId),
-                new("api_key", result.ApiKey),
-                new("role", "owner")
+                new("tenant_id", result.TenantId.ToString()),
+                new("api_key", result.ApiKey?.Key ?? ""),
+                new("role", result.Role),
+                new("token", result.Token)
             };
 
             var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
@@ -105,18 +104,29 @@ public sealed class SignupModel : PageModel
 
             return RedirectToPage("/Dashboard/Index");
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
-            ErrorMessage = "Could not connect to the server. Please try again later.";
+            ErrorMessage = $"Could not connect to the server: {ex.Message}";
             return Page();
         }
     }
 
     private sealed class SignupResult
     {
-        public string TenantId { get; init; } = "";
+        public Guid TenantId { get; init; }
+        public string TenantName { get; init; } = "";
+        public string Slug { get; init; } = "";
         public string UserId { get; init; } = "";
-        public string ApiKey { get; init; } = "";
+        public string Role { get; init; } = "";
+        public string Plan { get; init; } = "";
+        public ApiKeyInfo? ApiKey { get; init; }
+        public string Token { get; init; } = "";
+    }
+
+    private sealed class ApiKeyInfo
+    {
+        public string Key { get; init; } = "";
+        public string Name { get; init; } = "";
     }
 
     private sealed class ErrorResponse

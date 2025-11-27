@@ -1,0 +1,32 @@
+{
+  "name": "@serialmemory/sdk",
+  "version": "1.0.0",
+  "description": "Lightweight TypeScript SDK for SerialMemory - a temporal knowledge graph memory system",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "memory",
+    "knowledge-graph",
+    "ai",
+    "mcp",
+    "semantic-search",
+    "serialmemory"
+  ],
+  "author": "SerialMemory",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
