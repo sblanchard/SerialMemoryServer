@@ -485,9 +485,10 @@ export class SerialMemoryClient {
   }
 
   private onSuccess(): void {
+    // Always reset failure count on success to prevent accumulation
+    this.circuitFailures = 0;
     if (this.circuitState === CircuitState.HalfOpen) {
       this.circuitState = CircuitState.Closed;
-      this.circuitFailures = 0;
     }
   }
 
