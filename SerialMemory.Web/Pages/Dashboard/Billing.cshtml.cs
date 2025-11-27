@@ -31,6 +31,8 @@ public sealed class BillingModel : PageModel
 
     public string? SuccessMessage { get; set; }
     public string? ErrorMessage { get; set; }
+    public bool IsSampleData { get; set; }
+    public bool IsSelfHosted { get; set; }
 
     public async Task OnGetAsync([FromQuery] bool? success, [FromQuery] bool? canceled)
     {
@@ -211,6 +213,7 @@ public sealed class BillingModel : PageModel
         var token = GetAuthToken();
         if (string.IsNullOrEmpty(token))
         {
+            LoadSampleData();
             return;
         }
 
@@ -248,11 +251,31 @@ public sealed class BillingModel : PageModel
                     CreditsIncluded = plan.CreditsPerCycle;
                 }
             }
+
+            // If API returned empty data, show sample data
+            if (string.IsNullOrEmpty(CurrentPlan) || CurrentPlan == "Free")
+            {
+                if (!CurrentPeriodStart.HasValue && !CurrentPeriodEnd.HasValue)
+                {
+                    LoadSampleData();
+                }
+            }
         }
         catch (HttpRequestException)
         {
-            // API unavailable
+            // API unavailable - use sample data
+            LoadSampleData();
         }
+    }
+
+    private void LoadSampleData()
+    {
+        IsSampleData = true;
+        CurrentPlan = "Free";
+        CurrentPeriodStart = DateTimeOffset.UtcNow.AddDays(-15);
+        CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(15);
+        CreditsIncluded = 100;
+        PaymentHistory = [];
     }
 
     private string? GetAuthToken()

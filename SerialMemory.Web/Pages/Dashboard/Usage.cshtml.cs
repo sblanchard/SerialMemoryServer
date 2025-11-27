@@ -21,7 +21,8 @@ public sealed class UsageModel : PageModel
     public int UsagePercent => CreditsAllocated > 0 ? (int)Math.Min(100, (CreditsUsed / CreditsAllocated) * 100) : 0;
     public int TotalOperations { get; set; }
     public DateTimeOffset? CycleEnd { get; set; }
-    public int DaysRemaining => CycleEnd.HasValue ? Math.Max(0, (int)(CycleEnd.Value - DateTimeOffset.UtcNow).TotalDays) : 0;
+    public int DaysRemaining => CycleEnd.HasValue ? Math.Max(0, (int)(CycleEnd.Value - DateTimeOffset.UtcNow).TotalDays) : 30;
+    public bool IsSampleData { get; set; }
 
     public int CurrentRatePerMinute { get; set; }
     public int? RateLimitPerMinute { get; set; }
@@ -119,6 +120,21 @@ public sealed class UsageModel : PageModel
         catch (HttpRequestException)
         {
             // API unavailable - use sample data
+            IsSampleData = true;
+            CreditsUsed = 25m;
+            TotalOperations = 42;
+            CycleEnd = DateTimeOffset.UtcNow.AddDays(30);
+            UsageByOperation = GenerateSampleOperationUsage();
+            DailyUsage = GenerateSampleDailyUsage();
+        }
+
+        // If API returned zeros, show sample data
+        if (CreditsUsed == 0 && TotalOperations == 0)
+        {
+            IsSampleData = true;
+            CreditsUsed = 25m;
+            TotalOperations = 42;
+            CycleEnd = DateTimeOffset.UtcNow.AddDays(30);
             UsageByOperation = GenerateSampleOperationUsage();
             DailyUsage = GenerateSampleDailyUsage();
         }
@@ -131,9 +147,8 @@ public sealed class UsageModel : PageModel
 
     private List<OperationUsage> GenerateSampleOperationUsage()
     {
-        if (CreditsUsed == 0) return [];
-
-        var total = CreditsUsed;
+        // Show sample data when no usage recorded yet
+        var total = CreditsUsed > 0 ? CreditsUsed : 25m; // Default sample of 25 credits
         return
         [
             new OperationUsage { OperationType = "Memory Ingest", Count = (int)(total * 0.4m), Credits = total * 0.4m },
@@ -147,16 +162,18 @@ public sealed class UsageModel : PageModel
     private List<DailyUsageRecord> GenerateSampleDailyUsage()
     {
         var result = new List<DailyUsageRecord>();
-        var maxCredits = CreditsUsed > 0 ? CreditsUsed / 7 * 2 : 10m;
+        var baseCredits = CreditsUsed > 0 ? CreditsUsed : 25m; // Default sample
+        var maxCredits = baseCredits / 7 * 2;
+        var random = new Random(42); // Fixed seed for consistent display
 
         for (var i = 6; i >= 0; i--)
         {
-            var credits = i == 0 ? CreditsUsed * 0.2m : CreditsUsed * 0.1m * (decimal)(new Random().NextDouble() + 0.5);
+            var credits = i == 0 ? baseCredits * 0.2m : baseCredits * 0.1m * (decimal)(random.NextDouble() + 0.5);
             result.Add(new DailyUsageRecord
             {
                 Date = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-i)),
-                Credits = credits,
-                Percent = maxCredits > 0 ? (int)(credits / maxCredits * 100) : 0
+                Credits = Math.Round(credits, 2),
+                Percent = maxCredits > 0 ? Math.Min(100, (int)(credits / maxCredits * 100)) : 50
             });
         }
 

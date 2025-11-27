@@ -345,4 +345,56 @@ public static class ToolDefinitions
             }
         }
     ];
+
+    public static object[] GetReasoningTools() =>
+    [
+        // engineering_analyze
+        new
+        {
+            name = "engineering_analyze",
+            description = "Analyze the knowledge graph for engineering insights. Detects power integrity issues (voltage mismatch, overcurrent), signal integrity issues (clock/protocol mismatch), dependency corruption (cascading failures), and thermal risks.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    memory_id = new { type = "string", description = "Optional: analyze entities related to this memory" },
+                    project = new { type = "string", description = "Optional: filter analysis to entities connected to this project name" }
+                }
+            }
+        },
+        // engineering_visualize
+        new
+        {
+            name = "engineering_visualize",
+            description = "Generate graph visualization data with nodes, links, and reasoning overlays. Returns JSON suitable for react-force-graph-3d rendering.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    memory_id = new { type = "string", description = "Optional: visualize entities related to this memory" },
+                    project = new { type = "string", description = "Optional: filter to entities connected to this project name" },
+                    mode = new { type = "string", @enum = new[] { "software", "hardware", "mixed" }, @default = "mixed", description = "Visualization mode filter" },
+                    include_overlays = new { type = "boolean", @default = true, description = "Include reasoning-based risk/warning overlays" }
+                }
+            }
+        },
+        // engineering_reason
+        new
+        {
+            name = "engineering_reason",
+            description = "Run multi-model reasoning on the knowledge graph. Executes multiple reasoning models in parallel (Structural, Risk, Optimization, Contradiction) and merges results by confidence and agreement. Returns traced insights with source model attribution.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    memory_id = new { type = "string", description = "Optional: reason over entities related to this memory" },
+                    project = new { type = "string", description = "Optional: filter reasoning to entities connected to this project name" },
+                    max_duration_ms = new { type = "integer", @default = 30000, description = "Maximum reasoning time in milliseconds (default: 30000)" }
+                }
+            }
+        }
+    ];
 }

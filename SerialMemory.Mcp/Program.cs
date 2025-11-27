@@ -36,10 +36,11 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration - Ollama
+// Embedding service configuration - Ollama (local or cloud)
 var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
 var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
+var ollamaCloudApiKey = configuration["OLLAMA_CLOUD_API_KEY"]; // Set this to use Ollama Cloud instead of local
 
 // Entity extraction service configuration
 // Option 1: Ollama (recommended) - uses local LLM for accurate extraction
@@ -128,9 +129,20 @@ IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, t
 DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
-// Create embedding service - Ollama
-IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-logger.LogInformation("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+// Create embedding service - Ollama (local or cloud)
+IEmbeddingService embeddingService;
+if (!string.IsNullOrEmpty(ollamaCloudApiKey))
+{
+    // Use Ollama Cloud API
+    embeddingService = new OllamaCloudEmbeddingService(ollamaCloudApiKey, ollamaModel, ollamaEmbeddingDim);
+    logger.LogInformation("Using Ollama Cloud embedding service: {Model} (dim={Dim})", ollamaModel, ollamaEmbeddingDim);
+}
+else
+{
+    // Use local Ollama
+    embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+    logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+}
 
 // Create entity extraction service (Ollama > HTTP > Pattern-based)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
@@ -152,6 +164,14 @@ var observabilityTools = new MemoryObservabilityTools(eventStore, connectionStri
 var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
 var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
 
+// Initialize engineering reasoning and visualization services
+IEngineeringReasoningService reasoningService = new SerialMemory.Infrastructure.Services.EngineeringReasoningService(store);
+IGraphVisualizationService visualizationService = new SerialMemory.Infrastructure.Services.GraphVisualizationService(store, reasoningService);
+IReasoningModelFactory modelFactory = new SerialMemory.Infrastructure.Services.DefaultReasoningModelFactory(store, loggerFactory);
+IMultiModelReasoningService multiModelService = new SerialMemory.Infrastructure.Services.MultiModelReasoningService(
+    store, reasoningService, modelFactory, loggerFactory.CreateLogger<SerialMemory.Infrastructure.Services.MultiModelReasoningService>());
+var reasoningTools = new EngineeringReasoningTools(reasoningService, visualizationService, multiModelService, logger);
+
 // Initialize usage service (non-blocking metering)
 var usageLogger = loggerFactory.CreateLogger<UsageService>();
 using var usageService = new UsageService(connectionString, usageLogger, tenantId: "self", workspaceId: "default");
@@ -160,7 +180,7 @@ logger.LogInformation("Usage metering service initialized");
 // Session state
 Guid? currentSessionId = null;
 
-logger.LogInformation("Services initialized successfully (v2.1 with lifecycle, observability, safety, export, usage metering)");
+logger.LogInformation("Services initialized successfully (v2.3 with lifecycle, observability, safety, export, reasoning, multi-model reasoning, usage metering)");
 
 #endregion
 
@@ -484,12 +504,13 @@ object HandleToolsList()
             }
     };
 
-    // Combine core tools with lifecycle, observability, safety, and export tools
+    // Combine core tools with lifecycle, observability, safety, export, and reasoning tools
     var allTools = coreTools
         .Concat(ToolDefinitions.GetLifecycleTools())
         .Concat(ToolDefinitions.GetObservabilityTools())
         .Concat(ToolDefinitions.GetSafetyTools())
         .Concat(ToolDefinitions.GetExportTools())
+        .Concat(ToolDefinitions.GetReasoningTools())
         .ToArray();
 
     return new { tools = allTools };
@@ -626,6 +647,11 @@ async Task<object> HandleToolsCall(JsonNode? @params)
             "export_memories" => await exportTools.HandleExportMemories(arguments),
             "export_graph" => await exportTools.HandleExportGraph(arguments),
             "export_user_profile" => await exportTools.HandleExportUserProfile(arguments),
+
+            // Reasoning tools
+            "engineering_analyze" => await reasoningTools.HandleEngineeringAnalyze(arguments),
+            "engineering_visualize" => await reasoningTools.HandleEngineeringVisualize(arguments),
+            "engineering_reason" => await reasoningTools.HandleEngineeringReason(arguments),
 
             _ => throw new Exception($"Unknown tool: {toolName}")
         };

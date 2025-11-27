@@ -153,7 +153,13 @@ Located in `ops/init.sql`, the knowledge graph uses 8 tables:
 - `POSTGRES_PASSWORD` - Database password (default: postgres)
 - `POSTGRES_DB` - Database name (default: contextdb)
 
-**Embeddings (choose one):**
+**Embeddings - Ollama (recommended):**
+- `OLLAMA_URL` - Local Ollama URL (default: http://localhost:11434)
+- `OLLAMA_MODEL` - Embedding model (default: nomic-embed-text)
+- `OLLAMA_EMBEDDING_DIM` - Embedding dimension (default: 768)
+- `OLLAMA_CLOUD_API_KEY` - Set this to use Ollama Cloud instead of local Ollama
+
+**Embeddings - Legacy Options:**
 - `ONNX_MODEL_PATH` - Path to ONNX model file (pure C#, no Python)
 - `VOCAB_PATH` - Path to vocab.txt for ONNX model
 - `EMBEDDING_SERVICE_URL` - HTTP embedding service URL (default: http://localhost:8765)
