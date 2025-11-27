@@ -35,10 +35,12 @@ public sealed class CostProtectionService : ICostProtectionService
 
         // Check for emergency cutoff first
         var cutoff = await conn.QueryFirstOrDefaultAsync<EmergencyCutoffDto>(
-            @"SELECT ends_at, reason FROM emergency_cutoffs
-              WHERE tenant_id = @TenantId::uuid
-                AND is_active = TRUE
-                AND (ends_at IS NULL OR ends_at > NOW())",
+            """
+            SELECT ends_at, reason FROM emergency_cutoffs
+                          WHERE tenant_id = @TenantId::uuid
+                            AND is_active = TRUE
+                            AND (ends_at IS NULL OR ends_at > NOW())
+            """,
             new { TenantId = tenantId });
 
         if (cutoff != null)
@@ -65,17 +67,19 @@ public sealed class CostProtectionService : ICostProtectionService
 
         // Get current usage and ceiling
         var budgetInfo = await conn.QueryFirstOrDefaultAsync<BudgetInfoDto>(
-            @"SELECT
-                bc.credits_used AS current_usage,
-                bc.credits_allocated AS budget_ceiling,
-                bc.cycle_start,
-                bc.cycle_end,
-                ts.plan,
-                COALESCE(ts.hard_limit_multiplier, 1.0) AS hard_limit_multiplier
-              FROM billing_cycles bc
-              JOIN tenant_settings ts ON bc.tenant_id = ts.tenant_id
-              WHERE bc.tenant_id = @TenantId::uuid
-                AND bc.is_current = TRUE",
+            """
+            SELECT
+                            bc.credits_used AS current_usage,
+                            bc.credits_allocated AS budget_ceiling,
+                            bc.cycle_start,
+                            bc.cycle_end,
+                            ts.plan,
+                            COALESCE(ts.hard_limit_multiplier, 1.0) AS hard_limit_multiplier
+                          FROM billing_cycles bc
+                          JOIN tenant_settings ts ON bc.tenant_id = ts.tenant_id
+                          WHERE bc.tenant_id = @TenantId::uuid
+                            AND bc.is_current = TRUE
+            """,
             new { TenantId = tenantId });
 
         if (budgetInfo == null)
@@ -118,17 +122,18 @@ public sealed class CostProtectionService : ICostProtectionService
 
         // Check warning thresholds (log but allow)
         var usagePercent = budgetInfo.current_usage / effectiveCeiling * 100;
-        if (usagePercent >= 90)
+        switch (usagePercent)
         {
-            _logger.LogWarning(
-                "Tenant {TenantId} at {Percent:F1}% of budget ceiling",
-                tenantId, usagePercent);
-        }
-        else if (usagePercent >= 75)
-        {
-            _logger.LogInformation(
-                "Tenant {TenantId} at {Percent:F1}% of budget ceiling",
-                tenantId, usagePercent);
+            case >= 90:
+                _logger.LogWarning(
+                    "Tenant {TenantId} at {Percent:F1}% of budget ceiling",
+                    tenantId, usagePercent);
+                break;
+            case >= 75:
+                _logger.LogInformation(
+                    "Tenant {TenantId} at {Percent:F1}% of budget ceiling",
+                    tenantId, usagePercent);
+                break;
         }
 
         return new BudgetCheckResult
@@ -150,16 +155,20 @@ public sealed class CostProtectionService : ICostProtectionService
 
         // Update billing cycle
         await conn.ExecuteAsync(
-            @"UPDATE billing_cycles
-              SET credits_used = credits_used + @Cost
-              WHERE tenant_id = @TenantId::uuid AND is_current = TRUE",
+            """
+            UPDATE billing_cycles
+                          SET credits_used = credits_used + @Cost
+                          WHERE tenant_id = @TenantId::uuid AND is_current = TRUE
+            """,
             new { TenantId = tenantId, Cost = cost });
 
         // Log for analysis
         await conn.ExecuteAsync(
-            @"INSERT INTO cost_records (tenant_id, operation, cost, recorded_at)
-              VALUES (@TenantId::uuid, @Operation, @Cost, NOW())
-              ON CONFLICT DO NOTHING",
+            """
+            INSERT INTO cost_records (tenant_id, operation, cost, recorded_at)
+                          VALUES (@TenantId::uuid, @Operation, @Cost, NOW())
+                          ON CONFLICT DO NOTHING
+            """,
             new { TenantId = tenantId, Operation = operation, Cost = cost });
     }
 
@@ -174,10 +183,12 @@ public sealed class CostProtectionService : ICostProtectionService
         var endsAt = duration.HasValue ? DateTimeOffset.UtcNow.Add(duration.Value) : (DateTimeOffset?)null;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO emergency_cutoffs (id, tenant_id, reason, triggered_at, ends_at, is_active)
-              VALUES (@Id, @TenantId::uuid, @Reason, NOW(), @EndsAt, TRUE)
-              ON CONFLICT (tenant_id) WHERE is_active = TRUE
-              DO UPDATE SET reason = @Reason, triggered_at = NOW(), ends_at = @EndsAt",
+            """
+            INSERT INTO emergency_cutoffs (id, tenant_id, reason, triggered_at, ends_at, is_active)
+                          VALUES (@Id, @TenantId::uuid, @Reason, NOW(), @EndsAt, TRUE)
+                          ON CONFLICT (tenant_id) WHERE is_active = TRUE
+                          DO UPDATE SET reason = @Reason, triggered_at = NOW(), ends_at = @EndsAt
+            """,
             new { Id = Guid.CreateVersion7(), TenantId = tenantId, Reason = reason, EndsAt = endsAt });
 
         _logger.LogCritical(
@@ -193,9 +204,11 @@ public sealed class CostProtectionService : ICostProtectionService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         await conn.ExecuteAsync(
-            @"UPDATE emergency_cutoffs
-              SET is_active = FALSE, lifted_at = NOW(), lift_reason = @Reason
-              WHERE tenant_id = @TenantId::uuid AND is_active = TRUE",
+            """
+            UPDATE emergency_cutoffs
+                          SET is_active = FALSE, lifted_at = NOW(), lift_reason = @Reason
+                          WHERE tenant_id = @TenantId::uuid AND is_active = TRUE
+            """,
             new { TenantId = tenantId, Reason = reason });
 
         _logger.LogWarning(
@@ -210,23 +223,27 @@ public sealed class CostProtectionService : ICostProtectionService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         var budgetInfo = await conn.QueryFirstOrDefaultAsync<BudgetInfoDto>(
-            @"SELECT
-                bc.credits_used AS current_usage,
-                bc.credits_allocated AS budget_ceiling,
-                bc.cycle_start,
-                bc.cycle_end,
-                ts.plan,
-                COALESCE(ts.hard_limit_multiplier, 1.0) AS hard_limit_multiplier
-              FROM billing_cycles bc
-              JOIN tenant_settings ts ON bc.tenant_id = ts.tenant_id
-              WHERE bc.tenant_id = @TenantId::uuid
-                AND bc.is_current = TRUE",
+            """
+            SELECT
+                            bc.credits_used AS current_usage,
+                            bc.credits_allocated AS budget_ceiling,
+                            bc.cycle_start,
+                            bc.cycle_end,
+                            ts.plan,
+                            COALESCE(ts.hard_limit_multiplier, 1.0) AS hard_limit_multiplier
+                          FROM billing_cycles bc
+                          JOIN tenant_settings ts ON bc.tenant_id = ts.tenant_id
+                          WHERE bc.tenant_id = @TenantId::uuid
+                            AND bc.is_current = TRUE
+            """,
             new { TenantId = tenantId });
 
         var cutoff = await conn.QueryFirstOrDefaultAsync<EmergencyCutoffDto>(
-            @"SELECT ends_at, reason FROM emergency_cutoffs
-              WHERE tenant_id = @TenantId::uuid
-                AND is_active = TRUE",
+            """
+            SELECT ends_at, reason FROM emergency_cutoffs
+                          WHERE tenant_id = @TenantId::uuid
+                            AND is_active = TRUE
+            """,
             new { TenantId = tenantId });
 
         if (budgetInfo == null)
@@ -279,11 +296,13 @@ public sealed class CostProtectionService : ICostProtectionService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         await conn.ExecuteAsync(
-            @"INSERT INTO budget_alert_thresholds (tenant_id, percentage, alert_type, enabled, notification_email, webhook_url)
-              VALUES (@TenantId::uuid, @Percentage, @AlertType, @Enabled, @NotificationEmail, @WebhookUrl)
-              ON CONFLICT (tenant_id, percentage)
-              DO UPDATE SET alert_type = @AlertType, enabled = @Enabled,
-                           notification_email = @NotificationEmail, webhook_url = @WebhookUrl",
+            """
+            INSERT INTO budget_alert_thresholds (tenant_id, percentage, alert_type, enabled, notification_email, webhook_url)
+                          VALUES (@TenantId::uuid, @Percentage, @AlertType, @Enabled, @NotificationEmail, @WebhookUrl)
+                          ON CONFLICT (tenant_id, percentage)
+                          DO UPDATE SET alert_type = @AlertType, enabled = @Enabled,
+                                       notification_email = @NotificationEmail, webhook_url = @WebhookUrl
+            """,
             new
             {
                 TenantId = tenantId,
@@ -300,17 +319,19 @@ public sealed class CostProtectionService : ICostProtectionService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         var alerts = await conn.QueryAsync<TenantBudgetAlertDto>(
-            @"SELECT
-                t.id AS tenant_id,
-                t.name AS tenant_name,
-                bc.credits_used AS current_usage,
-                bc.credits_allocated * COALESCE(ts.hard_limit_multiplier, 1.0) AS budget_ceiling
-              FROM tenants t
-              JOIN tenant_settings ts ON t.id = ts.tenant_id
-              JOIN billing_cycles bc ON t.id = bc.tenant_id AND bc.is_current = TRUE
-              WHERE t.status = 'active'
-                AND bc.credits_used > bc.credits_allocated * 0.5
-              ORDER BY (bc.credits_used / NULLIF(bc.credits_allocated, 0)) DESC");
+            """
+            SELECT
+                            t.id AS tenant_id,
+                            t.name AS tenant_name,
+                            bc.credits_used AS current_usage,
+                            bc.credits_allocated * COALESCE(ts.hard_limit_multiplier, 1.0) AS budget_ceiling
+                          FROM tenants t
+                          JOIN tenant_settings ts ON t.id = ts.tenant_id
+                          JOIN billing_cycles bc ON t.id = bc.tenant_id AND bc.is_current = TRUE
+                          WHERE t.status = 'active'
+                            AND bc.credits_used > bc.credits_allocated * 0.5
+                          ORDER BY (bc.credits_used / NULLIF(bc.credits_allocated, 0)) DESC
+            """);
 
         return alerts.Select(a =>
         {

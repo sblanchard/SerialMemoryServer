@@ -80,7 +80,7 @@ export function MainLayout({ sidebar, children }: MainLayoutProps) {
         </div>
 
         {/* Main content - graph area */}
-        <main className="flex-1 relative overflow-hidden bg-midnight flex items-center justify-center">
+        <main className="flex-1 relative overflow-hidden bg-midnight">
           {children}
         </main>
       </div>

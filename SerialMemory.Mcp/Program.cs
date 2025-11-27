@@ -7,10 +7,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
+using SerialMemory.Core.Auth;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
+using TenantContext = SerialMemory.Core.Services.TenantContext;
 using SerialMemory.ML;
 using SerialMemory.Mcp.Tools;
 using SerialMemory.EventSourcing.Store;
@@ -44,10 +46,16 @@ var ollamaEntityUrl = configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl;  // Share
 var ollamaEntityModel = configuration["OLLAMA_ENTITY_MODEL"] ?? "phi3"; // phi3 is good for extraction
 var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];     // Legacy HTTP service
 
+// API key for SaaS authentication
+var apiKey = configuration["SERIALMEMORY_API_KEY"];
+
+// Self-hosted mode bypasses API key authentication
+var selfHostedMode = configuration["SERIALMEMORY_MODE"]?.ToLowerInvariant() == "self-hosted";
+
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
 // Create a shared NpgsqlDataSource with vector type handler for reembed operations
-var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
 dataSourceBuilder.UseVector();
 var vectorDataSource = dataSourceBuilder.Build();
 
@@ -65,9 +73,51 @@ var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
 
 logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
 logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
+logger.LogInformation("Mode: {Mode}", selfHostedMode ? "self-hosted" : "saas");
 
-// Initialize services
-IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString);
+// Authenticate with API key to get tenant ID
+var jwtOptions = JwtAuthenticationOptions.FromEnvironment();
+jwtOptions.SelfHostedMode = selfHostedMode;
+var authService = new JwtAuthenticationService(connectionString, jwtOptions);
+
+string tenantId;
+string? userId = null;
+
+if (selfHostedMode)
+{
+    // Self-hosted mode: use the Self-Hosted tenant (00000000-0000-0000-0000-000000000000)
+    tenantId = "00000000-0000-0000-0000-000000000000";
+    logger.LogInformation("Self-hosted mode: using default tenant {TenantId}", tenantId);
+}
+else if (!string.IsNullOrEmpty(apiKey))
+{
+    // SaaS mode: authenticate API key to get tenant ID
+    logger.LogInformation("Authenticating with API key...");
+    var authResult = await authService.ValidateApiKeyAsync(apiKey);
+
+    if (!authResult.IsValid)
+    {
+        logger.LogError("API key authentication failed: {Error}", authResult.ErrorMessage);
+        await Console.Error.WriteLineAsync($"[MCP Error] API key authentication failed: {authResult.ErrorMessage}");
+        Environment.Exit(1);
+        return;
+    }
+
+    tenantId = authResult.TenantId!.Value.ToString();
+    userId = authResult.UserId;
+    logger.LogInformation("Authenticated as tenant {TenantId} (user: {UserId})", tenantId, userId);
+}
+else
+{
+    logger.LogError("SERIALMEMORY_API_KEY required for SaaS mode. Set SERIALMEMORY_MODE=self-hosted for local use.");
+    await Console.Error.WriteLineAsync("[MCP Error] SERIALMEMORY_API_KEY required. Set SERIALMEMORY_MODE=self-hosted for local use.");
+    Environment.Exit(1);
+    return;
+}
+
+// Initialize services with authenticated tenant context
+var tenantContext = new FixedTenantContext(tenantId, "default", userId);
+IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, tenantContext);
 
 
 // Create embedding service - Ollama
@@ -880,7 +930,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
         // Get memories to process
         // force_reprocess=true: process all memories (re-extract entities/relationships)
         // force_reprocess=false: only process memories without existing entity links (rows leave result set after processing)
-        List<SerialMemory.Core.Models.Memory> memories;
+        List<Memory> memories;
 
         if (forceReprocess)
         {
@@ -907,7 +957,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             var entityIdMap = new Dictionary<string, Guid>();
             foreach (var entity in entities)
             {
-                var entityId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                var entityId = await store.CreateEntityAsync(new Entity
                 {
                     Id = Guid.CreateVersion7(),
                     Name = entity.Text,
@@ -929,7 +979,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
 
                 if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
                 {
-                    sourceId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    sourceId = await store.CreateEntityAsync(new Entity
                     {
                         Id = Guid.CreateVersion7(),
                         Name = rel.SourceEntity,
@@ -944,7 +994,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
 
                 if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
                 {
-                    targetId = await store.CreateEntityAsync(new SerialMemory.Core.Models.Entity
+                    targetId = await store.CreateEntityAsync(new Entity
                     {
                         Id = Guid.CreateVersion7(),
                         Name = rel.TargetEntity,
@@ -957,7 +1007,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     totalEntities++;
                 }
 
-                await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                await store.CreateRelationshipAsync(new EntityRelationship
                 {
                     Id = Guid.CreateVersion7(),
                     SourceEntityId = sourceId,
@@ -981,7 +1031,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     if (entityIdMap.TryGetValue(person.Text, out var personId) &&
                         entityIdMap.TryGetValue(org.Text, out var orgId))
                     {
-                        await store.CreateRelationshipAsync(new SerialMemory.Core.Models.EntityRelationship
+                        await store.CreateRelationshipAsync(new EntityRelationship
                         {
                             Id = Guid.CreateVersion7(),
                             SourceEntityId = personId,
@@ -1090,7 +1140,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
     var processedCount = 0;
     var errorCount = 0;
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var stopwatch = Stopwatch.StartNew();
 
     if (forceAll)
     {
@@ -1113,10 +1163,10 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
                     // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
                     await using var connection = await vectorDataSource.OpenConnectionAsync();
-                    await using var cmd = new Npgsql.NpgsqlCommand(
+                    await using var cmd = new NpgsqlCommand(
                         "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                     cmd.Parameters.AddWithValue("@Id", memory.Id);
-                    cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                    cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                     await cmd.ExecuteNonQueryAsync();
 
                     processedCount++;
@@ -1146,10 +1196,10 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 
                 // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
                 await using var connection = await vectorDataSource.OpenConnectionAsync();
-                await using var cmd = new Npgsql.NpgsqlCommand(
+                await using var cmd = new NpgsqlCommand(
                     "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                 cmd.Parameters.AddWithValue("@Id", memory.Id);
-                cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+                cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                 await cmd.ExecuteNonQueryAsync();
 
                 processedCount++;

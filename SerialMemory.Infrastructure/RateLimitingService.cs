@@ -221,9 +221,11 @@ public sealed class RateLimitingService : IRateLimitingService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         var planName = await conn.QueryFirstOrDefaultAsync<string>(
-            @"SELECT ts.plan FROM tenant_settings ts
-              JOIN tenants t ON ts.tenant_id = t.id
-              WHERE t.id = @TenantId::uuid OR t.slug = @TenantId",
+            """
+            SELECT ts.plan FROM tenant_settings ts
+                          JOIN tenants t ON ts.tenant_id = t.id
+                          WHERE t.id = @TenantId::uuid OR t.slug = @TenantId
+            """,
             new { TenantId = tenantId });
 
         var config = planName?.ToLowerInvariant() switch
@@ -245,8 +247,10 @@ public sealed class RateLimitingService : IRateLimitingService
         {
             await using var conn = await _dataSource.OpenConnectionAsync(ct);
             await conn.ExecuteAsync(
-                @"INSERT INTO rate_limit_hits (tenant_id, operation, hit_at)
-                  VALUES (@TenantId, @Operation, NOW())",
+                """
+                INSERT INTO rate_limit_hits (tenant_id, operation, hit_at)
+                                  VALUES (@TenantId, @Operation, NOW())
+                """,
                 new { TenantId = tenantId, Operation = operation });
         }
         catch (Exception ex)
@@ -262,16 +266,18 @@ public sealed class RateLimitingService : IRateLimitingService
             await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
             var result = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                @"SELECT
-                    COALESCE(SUM(credits_consumed), 0) AS used,
-                    COALESCE(tp.credits_per_cycle, 1000) AS daily_limit
-                  FROM usage_events ue
-                  JOIN billing_cycles bc ON ue.billing_cycle_id = bc.id
-                  JOIN tenant_plans tp ON bc.plan_id = tp.id
-                  WHERE ue.tenant_id = @TenantId
-                    AND ue.event_timestamp >= CURRENT_DATE
-                    AND ue.event_timestamp < CURRENT_DATE + INTERVAL '1 day'
-                  GROUP BY tp.credits_per_cycle",
+                """
+                SELECT
+                                    COALESCE(SUM(credits_consumed), 0) AS used,
+                                    COALESCE(tp.credits_per_cycle, 1000) AS daily_limit
+                                  FROM usage_events ue
+                                  JOIN billing_cycles bc ON ue.billing_cycle_id = bc.id
+                                  JOIN tenant_plans tp ON bc.plan_id = tp.id
+                                  WHERE ue.tenant_id = @TenantId
+                                    AND ue.event_timestamp >= CURRENT_DATE
+                                    AND ue.event_timestamp < CURRENT_DATE + INTERVAL '1 day'
+                                  GROUP BY tp.credits_per_cycle
+                """,
                 new { TenantId = tenantId });
 
             return result != null ? ((decimal)result.used, (decimal)result.daily_limit) : (0, 1000);

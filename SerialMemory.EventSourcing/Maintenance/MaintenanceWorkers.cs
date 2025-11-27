@@ -4,7 +4,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.EventSourcing.CQRS;
-using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Retrieval;
 
 namespace SerialMemory.EventSourcing.Maintenance;

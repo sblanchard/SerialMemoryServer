@@ -1,11 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -29,12 +24,14 @@ public sealed class TimeTravelDebugger(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Gather current state statistics
-        const string countsSql = @"
-            SELECT
-                (SELECT COUNT(*) FROM memories) as memory_count,
-                (SELECT COUNT(*) FROM entities) as entity_count,
-                (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
-                (SELECT COUNT(*) FROM memory_clusters WHERE is_stable = TRUE) as cluster_count";
+        const string countsSql = """
+
+                                             SELECT
+                                                 (SELECT COUNT(*) FROM memories) as memory_count,
+                                                 (SELECT COUNT(*) FROM entities) as entity_count,
+                                                 (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
+                                                 (SELECT COUNT(*) FROM memory_clusters WHERE is_stable = TRUE) as cluster_count
+                                 """;
 
         var counts = await connection.QuerySingleAsync<(long memory_count, long entity_count, long relationship_count, long cluster_count)>(countsSql);
 
@@ -43,16 +40,18 @@ public sealed class TimeTravelDebugger(
         var checkpointHash = ComputeHash(checkpointData);
 
         // Store snapshot record
-        const string insertSql = @"
-            INSERT INTO memory_snapshots (
-                snapshot_id, snapshot_timestamp, snapshot_type,
-                memory_count, entity_count, relationship_count, cluster_count,
-                checkpoint_hash, metadata
-            ) VALUES (
-                @SnapshotId, @SnapshotTimestamp, @SnapshotType,
-                @MemoryCount, @EntityCount, @RelationshipCount, @ClusterCount,
-                @CheckpointHash, '{}'::jsonb
-            )";
+        const string insertSql = """
+
+                                             INSERT INTO memory_snapshots (
+                                                 snapshot_id, snapshot_timestamp, snapshot_type,
+                                                 memory_count, entity_count, relationship_count, cluster_count,
+                                                 checkpoint_hash, metadata
+                                             ) VALUES (
+                                                 @SnapshotId, @SnapshotTimestamp, @SnapshotType,
+                                                 @MemoryCount, @EntityCount, @RelationshipCount, @ClusterCount,
+                                                 @CheckpointHash, '{}'::jsonb
+                                             )
+                                 """;
 
         await connection.ExecuteAsync(insertSql, new
         {
@@ -93,21 +92,23 @@ public sealed class TimeTravelDebugger(
         CancellationToken cancellationToken)
     {
         // Capture current state of all memories into timeline
-        const string captureSql = @"
-            INSERT INTO memory_state_timeline (
-                memory_id, state_at, content, embedding, confidence, layer, is_active
-            )
-            SELECT
-                m.id,
-                @Timestamp,
-                m.content,
-                m.embedding,
-                COALESCE(mp.confidence_score, 1.0),
-                COALESCE(mp.layer, 'L0_RAW'),
-                COALESCE(mp.is_active, TRUE)
-            FROM memories m
-            LEFT JOIN memory_projections mp ON m.id = mp.memory_id
-            ON CONFLICT (memory_id, state_at) DO NOTHING";
+        const string captureSql = """
+
+                                              INSERT INTO memory_state_timeline (
+                                                  memory_id, state_at, content, embedding, confidence, layer, is_active
+                                              )
+                                              SELECT
+                                                  m.id,
+                                                  @Timestamp,
+                                                  m.content,
+                                                  m.embedding,
+                                                  COALESCE(mp.confidence_score, 1.0),
+                                                  COALESCE(mp.layer, 'L0_RAW'),
+                                                  COALESCE(mp.is_active, TRUE)
+                                              FROM memories m
+                                              LEFT JOIN memory_projections mp ON m.id = mp.memory_id
+                                              ON CONFLICT (memory_id, state_at) DO NOTHING
+                                  """;
 
         await connection.ExecuteAsync(captureSql, new { Timestamp = timestamp });
     }
@@ -120,12 +121,14 @@ public sealed class TimeTravelDebugger(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Use the stored function to get state at timestamp
-        const string sql = @"
-            SELECT memory_id, state_at, content, embedding, confidence, layer, is_active, source_event_id
-            FROM memory_state_timeline
-            WHERE memory_id = @MemoryId AND state_at <= @Timestamp
-            ORDER BY state_at DESC
-            LIMIT 1";
+        const string sql = """
+
+                                       SELECT memory_id, state_at, content, embedding, confidence, layer, is_active, source_event_id
+                                       FROM memory_state_timeline
+                                       WHERE memory_id = @MemoryId AND state_at <= @Timestamp
+                                       ORDER BY state_at DESC
+                                       LIMIT 1
+                           """;
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("MemoryId", memoryId);
@@ -138,10 +141,12 @@ public sealed class TimeTravelDebugger(
             // No state found before timestamp, try to get initial state from memories table
             await reader.CloseAsync();
 
-            const string fallbackSql = @"
-                SELECT id, created_at, content, embedding
-                FROM memories
-                WHERE id = @MemoryId AND created_at <= @Timestamp";
+            const string fallbackSql = """
+
+                                                       SELECT id, created_at, content, embedding
+                                                       FROM memories
+                                                       WHERE id = @MemoryId AND created_at <= @Timestamp
+                                       """;
 
             await using var fallbackCmd = new NpgsqlCommand(fallbackSql, connection);
             fallbackCmd.Parameters.AddWithValue("MemoryId", memoryId);
@@ -189,24 +194,26 @@ public sealed class TimeTravelDebugger(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all active memory states at the given timestamp
-        const string sql = @"
-            WITH latest_states AS (
-                SELECT DISTINCT ON (memory_id)
-                    memory_id,
-                    state_at,
-                    content,
-                    confidence,
-                    layer,
-                    is_active
-                FROM memory_state_timeline
-                WHERE state_at <= @Timestamp
-                ORDER BY memory_id, state_at DESC
-            )
-            SELECT memory_id, state_at, content, confidence, layer
-            FROM latest_states
-            WHERE is_active = TRUE
-            ORDER BY state_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       WITH latest_states AS (
+                                           SELECT DISTINCT ON (memory_id)
+                                               memory_id,
+                                               state_at,
+                                               content,
+                                               confidence,
+                                               layer,
+                                               is_active
+                                           FROM memory_state_timeline
+                                           WHERE state_at <= @Timestamp
+                                           ORDER BY memory_id, state_at DESC
+                                       )
+                                       SELECT memory_id, state_at, content, confidence, layer
+                                       FROM latest_states
+                                       WHERE is_active = TRUE
+                                       ORDER BY state_at DESC
+                                       LIMIT @Limit
+                           """;
 
         var states = new List<MemoryStateAtTime>();
 
@@ -244,12 +251,14 @@ public sealed class TimeTravelDebugger(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        var sql = @"
-            SELECT snapshot_id, snapshot_timestamp, snapshot_type,
-                   memory_count, entity_count, relationship_count, cluster_count,
-                   checkpoint_hash, created_at, metadata::text
-            FROM memory_snapshots
-            WHERE 1=1";
+        var sql = """
+
+                              SELECT snapshot_id, snapshot_timestamp, snapshot_type,
+                                     memory_count, entity_count, relationship_count, cluster_count,
+                                     checkpoint_hash, created_at, metadata::text
+                              FROM memory_snapshots
+                              WHERE 1=1
+                  """;
 
         var parameters = new DynamicParameters();
 
@@ -295,12 +304,14 @@ public sealed class TimeTravelDebugger(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        var sql = @"
-            SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
-                   input_data::text as input_data, output_data::text as output_data,
-                   embedding_cache_key, duration_ms, created_at
-            FROM reasoning_steps
-            WHERE session_id = @SessionId";
+        var sql = """
+
+                              SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
+                                     input_data::text as input_data, output_data::text as output_data,
+                                     embedding_cache_key, duration_ms, created_at
+                              FROM reasoning_steps
+                              WHERE session_id = @SessionId
+                  """;
 
         var parameters = new DynamicParameters();
         parameters.Add("SessionId", sessionId);
@@ -315,7 +326,7 @@ public sealed class TimeTravelDebugger(
 
         var rows = await connection.QueryAsync<dynamic>(sql, parameters);
 
-        var steps = rows.Select(row => new Core.Interfaces.ReasoningStep(
+        var steps = rows.Select(row => new ReasoningStep(
             (Guid)row.step_id,
             (Guid)row.session_id,
             (int)row.step_sequence,
@@ -375,31 +386,35 @@ public sealed class TimeTravelDebugger(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find memories added between snapshots
-        const string addedMemoriesSql = @"
-            SELECT id, content, created_at
-            FROM memories
-            WHERE created_at > @TimestampA AND created_at <= @TimestampB
-            ORDER BY created_at";
+        const string addedMemoriesSql = """
+
+                                                    SELECT id, content, created_at
+                                                    FROM memories
+                                                    WHERE created_at > @TimestampA AND created_at <= @TimestampB
+                                                    ORDER BY created_at
+                                        """;
 
         var addedMemories = (await connection.QueryAsync<(Guid id, string content, DateTime created_at)>(
             addedMemoriesSql,
             new { TimestampA = snapshotA.SnapshotTimestamp, TimestampB = snapshotB.SnapshotTimestamp })).ToList();
 
         // Find memories whose state changed
-        const string changedMemoriesSql = @"
-            SELECT DISTINCT t1.memory_id,
-                   t1.content as old_content, t2.content as new_content,
-                   t1.confidence as old_confidence, t2.confidence as new_confidence,
-                   t1.layer as old_layer, t2.layer as new_layer,
-                   t1.is_active as old_active, t2.is_active as new_active
-            FROM memory_state_timeline t1
-            JOIN memory_state_timeline t2 ON t1.memory_id = t2.memory_id
-            WHERE t1.state_at <= @TimestampA
-              AND t2.state_at > @TimestampA AND t2.state_at <= @TimestampB
-              AND (t1.content != t2.content
-                   OR t1.confidence != t2.confidence
-                   OR t1.layer != t2.layer
-                   OR t1.is_active != t2.is_active)";
+        const string changedMemoriesSql = """
+
+                                                      SELECT DISTINCT t1.memory_id,
+                                                             t1.content as old_content, t2.content as new_content,
+                                                             t1.confidence as old_confidence, t2.confidence as new_confidence,
+                                                             t1.layer as old_layer, t2.layer as new_layer,
+                                                             t1.is_active as old_active, t2.is_active as new_active
+                                                      FROM memory_state_timeline t1
+                                                      JOIN memory_state_timeline t2 ON t1.memory_id = t2.memory_id
+                                                      WHERE t1.state_at <= @TimestampA
+                                                        AND t2.state_at > @TimestampA AND t2.state_at <= @TimestampB
+                                                        AND (t1.content != t2.content
+                                                             OR t1.confidence != t2.confidence
+                                                             OR t1.layer != t2.layer
+                                                             OR t1.is_active != t2.is_active)
+                                          """;
 
         var changedMemories = (await connection.QueryAsync<dynamic>(
             changedMemoriesSql,
@@ -481,10 +496,12 @@ public sealed class TimeTravelDebugger(
             // Archive memories created after snapshot
             if (memoriesToArchive.Count > 0)
             {
-                const string archiveSql = @"
-                    UPDATE memory_projections
-                    SET is_archived = TRUE, is_active = FALSE
-                    WHERE memory_id = ANY(@MemoryIds)";
+                const string archiveSql = """
+
+                                                              UPDATE memory_projections
+                                                              SET is_archived = TRUE, is_active = FALSE
+                                                              WHERE memory_id = ANY(@MemoryIds)
+                                          """;
 
                 await connection.ExecuteAsync(
                     archiveSql,
@@ -495,13 +512,15 @@ public sealed class TimeTravelDebugger(
             // Restore confidence/layer for changed memories
             foreach (var state in stateAtSnapshot.Memories)
             {
-                const string restoreSql = @"
-                    UPDATE memory_projections
-                    SET confidence_score = @Confidence,
-                        layer = @Layer::memory_layer,
-                        is_active = TRUE,
-                        is_archived = FALSE
-                    WHERE memory_id = @MemoryId";
+                const string restoreSql = """
+
+                                                              UPDATE memory_projections
+                                                              SET confidence_score = @Confidence,
+                                                                  layer = @Layer::memory_layer,
+                                                                  is_active = TRUE,
+                                                                  is_archived = FALSE
+                                                              WHERE memory_id = @MemoryId
+                                          """;
 
                 await connection.ExecuteAsync(restoreSql, new
                 {
@@ -542,22 +561,26 @@ public sealed class TimeTravelDebugger(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all timeline states for this memory
-        const string timelineSql = @"
-            SELECT state_at, content, confidence, layer, is_active, source_event_id
-            FROM memory_state_timeline
-            WHERE memory_id = @MemoryId
-            ORDER BY state_at";
+        const string timelineSql = """
+
+                                               SELECT state_at, content, confidence, layer, is_active, source_event_id
+                                               FROM memory_state_timeline
+                                               WHERE memory_id = @MemoryId
+                                               ORDER BY state_at
+                                   """;
 
         var states = (await connection.QueryAsync<TimelineStateRow>(
             timelineSql,
             new { MemoryId = memoryId })).ToList();
 
         // Get all events for this memory (if using event sourcing)
-        const string eventsSql = @"
-            SELECT event_id, event_type::text, event_version, event_data::text, created_at
-            FROM memory_events
-            WHERE stream_id = @MemoryId
-            ORDER BY event_version";
+        const string eventsSql = """
+
+                                             SELECT event_id, event_type::text, event_version, event_data::text, created_at
+                                             FROM memory_events
+                                             WHERE stream_id = @MemoryId
+                                             ORDER BY event_version
+                                 """;
 
         var events = (await connection.QueryAsync<EventRow>(
             eventsSql,

@@ -1,11 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -131,13 +126,15 @@ public sealed class HybridRetrievalEngine(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT id, 1 - (embedding <=> @QueryEmbedding::vector) as similarity
-            FROM memories
-            WHERE embedding IS NOT NULL
-              AND 1 - (embedding <=> @QueryEmbedding::vector) >= @Threshold
-            ORDER BY embedding <=> @QueryEmbedding::vector
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT id, 1 - (embedding <=> @QueryEmbedding::vector) as similarity
+                                       FROM memories
+                                       WHERE embedding IS NOT NULL
+                                         AND 1 - (embedding <=> @QueryEmbedding::vector) >= @Threshold
+                                       ORDER BY embedding <=> @QueryEmbedding::vector
+                                       LIMIT @Limit
+                           """;
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("QueryEmbedding", new Vector(queryEmbedding));
@@ -272,33 +269,41 @@ public sealed class HybridRetrievalEngine(
         // Different query strategies based on rule type
         var sql = rule.RuleType switch
         {
-            "full_text_boost" => @"
-                SELECT id, ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as score
-                FROM memories
-                WHERE content_tsvector @@ plainto_tsquery('english', @Query)
-                ORDER BY score DESC
-                LIMIT 50",
+            "full_text_boost" => """
 
-            "entity_match" => @"
-                SELECT DISTINCT m.id, 0.8 as score
-                FROM memories m
-                JOIN memory_entities me ON m.id = me.memory_id
-                JOIN entities e ON me.entity_id = e.id
-                WHERE LOWER(e.name) LIKE '%' || LOWER(@Query) || '%'
-                LIMIT 50",
+                                                 SELECT id, ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as score
+                                                 FROM memories
+                                                 WHERE content_tsvector @@ plainto_tsquery('english', @Query)
+                                                 ORDER BY score DESC
+                                                 LIMIT 50
+                                 """,
 
-            "recency_boost" => @"
-                SELECT id, 1.0 - EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / 30.0 as score
-                FROM memories
-                WHERE created_at > NOW() - INTERVAL '30 days'
-                ORDER BY created_at DESC
-                LIMIT 50",
+            "entity_match" => """
 
-            "source_filter" => @"
-                SELECT id, 1.0 as score
-                FROM memories
-                WHERE source = @Query
-                LIMIT 50",
+                                              SELECT DISTINCT m.id, 0.8 as score
+                                              FROM memories m
+                                              JOIN memory_entities me ON m.id = me.memory_id
+                                              JOIN entities e ON me.entity_id = e.id
+                                              WHERE LOWER(e.name) LIKE '%' || LOWER(@Query) || '%'
+                                              LIMIT 50
+                              """,
+
+            "recency_boost" => """
+
+                                               SELECT id, 1.0 - EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / 30.0 as score
+                                               FROM memories
+                                               WHERE created_at > NOW() - INTERVAL '30 days'
+                                               ORDER BY created_at DESC
+                                               LIMIT 50
+                               """,
+
+            "source_filter" => """
+
+                                               SELECT id, 1.0 as score
+                                               FROM memories
+                                               WHERE source = @Query
+                                               LIMIT 50
+                               """,
 
             _ => null
         };
@@ -320,14 +325,16 @@ public sealed class HybridRetrievalEngine(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // First, find entities related to the query
-        const string findEntitiesSql = @"
-            SELECT DISTINCT e.id, e.name
-            FROM entities e
-            JOIN memory_entities me ON e.id = me.entity_id
-            JOIN memories m ON me.memory_id = m.id
-            WHERE m.embedding IS NOT NULL
-            ORDER BY m.embedding <=> @QueryEmbedding::vector
-            LIMIT 10";
+        const string findEntitiesSql = """
+
+                                                   SELECT DISTINCT e.id, e.name
+                                                   FROM entities e
+                                                   JOIN memory_entities me ON e.id = me.entity_id
+                                                   JOIN memories m ON me.memory_id = m.id
+                                                   WHERE m.embedding IS NOT NULL
+                                                   ORDER BY m.embedding <=> @QueryEmbedding::vector
+                                                   LIMIT 10
+                                       """;
 
         await using var cmd = new NpgsqlCommand(findEntitiesSql, connection);
         cmd.Parameters.AddWithValue("QueryEmbedding", new Vector(queryEmbedding));
@@ -351,12 +358,14 @@ public sealed class HybridRetrievalEngine(
 
         for (int hop = 0; hop < 2; hop++)
         {
-            const string traverseSql = @"
-                SELECT DISTINCT
-                    CASE WHEN source_entity_id = ANY(@Frontier) THEN target_entity_id
-                         ELSE source_entity_id END as entity_id
-                FROM entity_relationships
-                WHERE source_entity_id = ANY(@Frontier) OR target_entity_id = ANY(@Frontier)";
+            const string traverseSql = """
+
+                                                       SELECT DISTINCT
+                                                           CASE WHEN source_entity_id = ANY(@Frontier) THEN target_entity_id
+                                                                ELSE source_entity_id END as entity_id
+                                                       FROM entity_relationships
+                                                       WHERE source_entity_id = ANY(@Frontier) OR target_entity_id = ANY(@Frontier)
+                                       """;
 
             var newEntities = await connection.QueryAsync<Guid>(
                 traverseSql,
@@ -372,14 +381,16 @@ public sealed class HybridRetrievalEngine(
         }
 
         // Get memories linked to traversed entities
-        const string getMemoriesSql = @"
-            SELECT DISTINCT m.id, COUNT(DISTINCT me.entity_id)::float / @TotalEntities as score
-            FROM memories m
-            JOIN memory_entities me ON m.id = me.memory_id
-            WHERE me.entity_id = ANY(@Entities)
-            GROUP BY m.id
-            ORDER BY score DESC
-            LIMIT @Limit";
+        const string getMemoriesSql = """
+
+                                                  SELECT DISTINCT m.id, COUNT(DISTINCT me.entity_id)::float / @TotalEntities as score
+                                                  FROM memories m
+                                                  JOIN memory_entities me ON m.id = me.memory_id
+                                                  WHERE me.entity_id = ANY(@Entities)
+                                                  GROUP BY m.id
+                                                  ORDER BY score DESC
+                                                  LIMIT @Limit
+                                      """;
 
         var memoriesFromGraph = await connection.QueryAsync<(Guid id, float score)>(
             getMemoriesSql,
@@ -411,11 +422,13 @@ public sealed class HybridRetrievalEngine(
 
         // Exponential decay: score = e^(-decay_rate * days_elapsed)
         // With half-life of 30 days: decay_rate = ln(2) / 30
-        const string sql = @"
-            SELECT id,
-                   EXP(-0.0231 * EXTRACT(EPOCH FROM (@Anchor - created_at)) / 86400.0)::float as score
-            FROM memories
-            WHERE id = ANY(@MemoryIds)";
+        const string sql = """
+
+                                       SELECT id,
+                                              EXP(-0.0231 * EXTRACT(EPOCH FROM (@Anchor - created_at)) / 86400.0)::float as score
+                                       FROM memories
+                                       WHERE id = ANY(@MemoryIds)
+                           """;
 
         var rows = await connection.QueryAsync<(Guid id, float score)>(
             sql,
@@ -436,12 +449,14 @@ public sealed class HybridRetrievalEngine(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Try memory_projections first (event-sourced), fallback to default confidence
-        const string sql = @"
-            SELECT m.id,
-                   COALESCE(mp.confidence_score, 1.0)::float as confidence
-            FROM memories m
-            LEFT JOIN memory_projections mp ON m.id = mp.memory_id
-            WHERE m.id = ANY(@MemoryIds)";
+        const string sql = """
+
+                                       SELECT m.id,
+                                              COALESCE(mp.confidence_score, 1.0)::float as confidence
+                                       FROM memories m
+                                       LEFT JOIN memory_projections mp ON m.id = mp.memory_id
+                                       WHERE m.id = ANY(@MemoryIds)
+                           """;
 
         var rows = await connection.QueryAsync<(Guid id, float confidence)>(
             sql,
@@ -532,10 +547,12 @@ public sealed class HybridRetrievalEngine(
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT id, content, created_at
-            FROM memories
-            WHERE id = ANY(@MemoryIds)";
+        const string sql = """
+
+                                       SELECT id, content, created_at
+                                       FROM memories
+                                       WHERE id = ANY(@MemoryIds)
+                           """;
 
         var rows = await connection.QueryAsync<MemoryRecord>(sql, new { MemoryIds = memoryIds.ToArray() });
         return rows.ToList();
@@ -545,12 +562,14 @@ public sealed class HybridRetrievalEngine(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT rule_id, rule_name, rule_type, condition_expression,
-                   priority, weight, is_active, created_at, updated_at, metadata::text
-            FROM symbolic_rules
-            WHERE is_active = TRUE
-            ORDER BY priority DESC";
+        const string sql = """
+
+                                       SELECT rule_id, rule_name, rule_type, condition_expression,
+                                              priority, weight, is_active, created_at, updated_at, metadata::text
+                                       FROM symbolic_rules
+                                       WHERE is_active = TRUE
+                                       ORDER BY priority DESC
+                           """;
 
         var rows = await connection.QueryAsync<RuleRow>(sql);
 
@@ -573,22 +592,24 @@ public sealed class HybridRetrievalEngine(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO symbolic_rules (
-                rule_id, rule_name, rule_type, condition_expression,
-                priority, weight, is_active, metadata
-            ) VALUES (
-                @RuleId, @RuleName, @RuleType, @ConditionExpression,
-                @Priority, @Weight, @IsActive, @Metadata::jsonb
-            )
-            ON CONFLICT (rule_name) DO UPDATE SET
-                rule_type = EXCLUDED.rule_type,
-                condition_expression = EXCLUDED.condition_expression,
-                priority = EXCLUDED.priority,
-                weight = EXCLUDED.weight,
-                is_active = EXCLUDED.is_active,
-                metadata = EXCLUDED.metadata,
-                updated_at = NOW()";
+        const string sql = """
+
+                                       INSERT INTO symbolic_rules (
+                                           rule_id, rule_name, rule_type, condition_expression,
+                                           priority, weight, is_active, metadata
+                                       ) VALUES (
+                                           @RuleId, @RuleName, @RuleType, @ConditionExpression,
+                                           @Priority, @Weight, @IsActive, @Metadata::jsonb
+                                       )
+                                       ON CONFLICT (rule_name) DO UPDATE SET
+                                           rule_type = EXCLUDED.rule_type,
+                                           condition_expression = EXCLUDED.condition_expression,
+                                           priority = EXCLUDED.priority,
+                                           weight = EXCLUDED.weight,
+                                           is_active = EXCLUDED.is_active,
+                                           metadata = EXCLUDED.metadata,
+                                           updated_at = NOW()
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -619,17 +640,19 @@ public sealed class HybridRetrievalEngine(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            UPDATE symbolic_rules SET
-                rule_name = @RuleName,
-                rule_type = @RuleType,
-                condition_expression = @ConditionExpression,
-                priority = @Priority,
-                weight = @Weight,
-                is_active = @IsActive,
-                metadata = @Metadata::jsonb,
-                updated_at = NOW()
-            WHERE rule_id = @RuleId";
+        const string sql = """
+
+                                       UPDATE symbolic_rules SET
+                                           rule_name = @RuleName,
+                                           rule_type = @RuleType,
+                                           condition_expression = @ConditionExpression,
+                                           priority = @Priority,
+                                           weight = @Weight,
+                                           is_active = @IsActive,
+                                           metadata = @Metadata::jsonb,
+                                           updated_at = NOW()
+                                       WHERE rule_id = @RuleId
+                           """;
 
         var updated = await connection.ExecuteAsync(sql, new
         {

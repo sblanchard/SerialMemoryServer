@@ -3,7 +3,6 @@ using SerialMemory.Contracts.Events;
 using StackExchange.Redis;
 using Npgsql;
 using Dapper;
-using Microsoft.Extensions.Logging;
 
 namespace SerialMemory.Worker.Consumers;
 

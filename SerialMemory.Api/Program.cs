@@ -1,18 +1,27 @@
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
+using SerialMemory.Core.Operations;
 using SerialMemory.Infrastructure;
 using SerialMemory.ML;
 using StackExchange.Redis;
-using Microsoft.AspNetCore.SignalR;
 using SerialMemory.Api.Realtime;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using SerialMemory.Core.Telemetry;
 using MassTransit;
-using SerialMemory.Core.Models;
+using Metrics = SerialMemory.Core.Telemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Load operational config from environment
+var operationalConfig = OperationalConfig.FromEnvironment();
+builder.Services.AddSingleton(operationalConfig);
+
+// Log panic switch status at startup
+if (operationalConfig.HasActivePanicSwitch)
+{
+    Console.WriteLine($"[WARN] {operationalConfig.GetPanicSwitchStatus()}");
+}
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -134,14 +143,84 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
+// Panic Switch Middleware - must be early to block requests
+app.Use(async (context, next) =>
+{
+    var config = context.RequestServices.GetRequiredService<OperationalConfig>();
+    var (blocked, statusCode, message) = PanicSwitchMiddleware.CheckPanicSwitches(
+        config,
+        context.Request.Method,
+        context.Request.Path);
+
+    if (blocked)
+    {
+        context.Response.StatusCode = statusCode;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(PanicSwitchMiddleware.CreateErrorResponse(message));
+        return;
+    }
+
+    await next();
+});
+
 app.UseCors();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Add custom metrics middleware for detailed HTTP tracking
+app.UseMetricsMiddleware();
 
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.MapPrometheusScrapingEndpoint();
+
+// ============================================
+// HEALTH CHECK ENDPOINTS (for operators)
+// ============================================
+
+// Initialize health check service
+var healthService = new HealthCheckService(operationalConfig, "2.1.0", Environment.GetEnvironmentVariable("ENVIRONMENT") ?? "development");
+healthService.AddCheck(new LivenessCheck());
+healthService.AddCheck(new DatabaseHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
+healthService.AddCheck(new RlsHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
+
+// Liveness probe - is the process running?
+app.MapGet("/health/live", async () =>
+{
+    var result = await healthService.CheckLiveAsync();
+    return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
+});
+
+// Readiness probe - can the service accept traffic?
+app.MapGet("/health/ready", async () =>
+{
+    var result = await healthService.CheckReadyAsync();
+    return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
+});
+
+// Database health check
+app.MapGet("/health/db", async () =>
+{
+    var dbCheck = new DatabaseHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds);
+    var result = await dbCheck.CheckAsync();
+    return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
+});
+
+// RLS guardrail health check
+app.MapGet("/health/rls", async () =>
+{
+    var rlsCheck = new RlsHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds);
+    var result = await rlsCheck.CheckAsync();
+    return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
+});
+
+// Full health status with all checks and panic switch status
+app.MapGet("/health", async () =>
+{
+    var result = await healthService.CheckAllAsync();
+    return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
+});
 
 // Try to map SignalR hub if available
 try

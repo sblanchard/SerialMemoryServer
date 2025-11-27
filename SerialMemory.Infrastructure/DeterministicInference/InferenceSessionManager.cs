@@ -1,10 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -30,14 +26,16 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO inference_sessions (
-                session_id, seed, session_hash, input_hash, config_snapshot,
-                status, parent_session_id, metadata
-            ) VALUES (
-                @SessionId, @Seed, @SessionHash, @InputHash, @ConfigSnapshot::jsonb,
-                'active', @ParentSessionId, '{}'::jsonb
-            )";
+        const string sql = """
+
+                                       INSERT INTO inference_sessions (
+                                           session_id, seed, session_hash, input_hash, config_snapshot,
+                                           status, parent_session_id, metadata
+                                       ) VALUES (
+                                           @SessionId, @Seed, @SessionHash, @InputHash, @ConfigSnapshot::jsonb,
+                                           'active', @ParentSessionId, '{}'::jsonb
+                                       )
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -68,10 +66,12 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string getSourceSql = @"
-            SELECT seed, config_snapshot::text as config_snapshot
-            FROM inference_sessions
-            WHERE session_id = @SessionId";
+        const string getSourceSql = """
+
+                                                SELECT seed, config_snapshot::text as config_snapshot
+                                                FROM inference_sessions
+                                                WHERE session_id = @SessionId
+                                    """;
 
         var source = await connection.QuerySingleOrDefaultAsync<(long Seed, string ConfigSnapshot)>(
             getSourceSql,
@@ -87,10 +87,12 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
 
         var replaySession = await CreateSessionAsync(actualSeed, config, cancellationToken: cancellationToken);
 
-        const string updateSql = @"
-            UPDATE inference_sessions
-            SET replay_source_session_id = @SourceSessionId, status = 'replaying'
-            WHERE session_id = @SessionId";
+        const string updateSql = """
+
+                                             UPDATE inference_sessions
+                                             SET replay_source_session_id = @SourceSessionId, status = 'replaying'
+                                             WHERE session_id = @SessionId
+                                 """;
 
         await connection.ExecuteAsync(updateSql, new
         {
@@ -112,11 +114,13 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT session_id, seed, session_hash, config_snapshot::text as config_snapshot,
-                   status, parent_session_id
-            FROM inference_sessions
-            WHERE session_id = @SessionId";
+        const string sql = """
+
+                                       SELECT session_id, seed, session_hash, config_snapshot::text as config_snapshot,
+                                              status, parent_session_id
+                                       FROM inference_sessions
+                                       WHERE session_id = @SessionId
+                           """;
 
         var row = await connection.QuerySingleOrDefaultAsync<SessionRow>(sql, new { SessionId = sessionId });
 
@@ -126,10 +130,12 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
         }
 
         // Get the current max step sequence to resume from correct position
-        const string maxStepSql = @"
-            SELECT COALESCE(MAX(step_sequence), 0)
-            FROM reasoning_steps
-            WHERE session_id = @SessionId";
+        const string maxStepSql = """
+
+                                              SELECT COALESCE(MAX(step_sequence), 0)
+                                              FROM reasoning_steps
+                                              WHERE session_id = @SessionId
+                                  """;
 
         var maxStepSequence = await connection.ExecuteScalarAsync<int>(maxStepSql, new { SessionId = sessionId });
 
@@ -154,11 +160,13 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string getStepsSql = @"
-            SELECT step_sequence, step_type, input_hash, output_hash, output_data::text as output_data
-            FROM reasoning_steps
-            WHERE session_id = @SessionId
-            ORDER BY step_sequence";
+        const string getStepsSql = """
+
+                                               SELECT step_sequence, step_type, input_hash, output_hash, output_data::text as output_data
+                                               FROM reasoning_steps
+                                               WHERE session_id = @SessionId
+                                               ORDER BY step_sequence
+                                   """;
 
         var originalSteps = (await connection.QueryAsync<StepRow>(
             getStepsSql,
@@ -220,16 +228,18 @@ public sealed class InferenceSessionManager(NpgsqlDataSource dataSource, ILogger
         var verificationHash = ComputeHash(
             $"{originalSessionId}:{replaySessionId}:{stepsReplayed}:{divergencePoints.Count}:{stepCountsMatch}");
 
-        const string logReplaySql = @"
-            INSERT INTO replay_executions (
-                source_session_id, replay_session_id, completed_at,
-                steps_replayed, steps_diverged, divergence_points,
-                is_deterministic, verification_hash
-            ) VALUES (
-                @OriginalSessionId, @ReplaySessionId, NOW(),
-                @StepsReplayed, @StepsDiverged, @DivergencePoints::jsonb,
-                @IsDeterministic, @VerificationHash
-            )";
+        const string logReplaySql = """
+
+                                                INSERT INTO replay_executions (
+                                                    source_session_id, replay_session_id, completed_at,
+                                                    steps_replayed, steps_diverged, divergence_points,
+                                                    is_deterministic, verification_hash
+                                                ) VALUES (
+                                                    @OriginalSessionId, @ReplaySessionId, NOW(),
+                                                    @StepsReplayed, @StepsDiverged, @DivergencePoints::jsonb,
+                                                    @IsDeterministic, @VerificationHash
+                                                )
+                                    """;
 
         await connection.ExecuteAsync(logReplaySql, new
         {
@@ -376,12 +386,14 @@ public sealed class InferenceSession : IInferenceSession
 
         // Scope cache lookup to current session to ensure deterministic replay.
         // Cross-session caching would break determinism if sessions have different seeds.
-        const string sql = @"
-            SELECT output_data::text
-            FROM reasoning_steps
-            WHERE session_id = @SessionId AND input_hash = @InputHash AND step_type = @StepType
-            ORDER BY created_at DESC
-            LIMIT 1";
+        const string sql = """
+
+                                       SELECT output_data::text
+                                       FROM reasoning_steps
+                                       WHERE session_id = @SessionId AND input_hash = @InputHash AND step_type = @StepType
+                                       ORDER BY created_at DESC
+                                       LIMIT 1
+                           """;
 
         var outputJson = await connection.QuerySingleOrDefaultAsync<string>(
             sql,
@@ -407,19 +419,21 @@ public sealed class InferenceSession : IInferenceSession
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO reasoning_steps (
-                session_id, step_sequence, step_type, input_hash, output_hash,
-                input_data, output_data, duration_ms
-            ) VALUES (
-                @SessionId, @StepSequence, @StepType, @InputHash, @OutputHash,
-                @InputData::jsonb, @OutputData::jsonb, @DurationMs
-            )
-            ON CONFLICT (session_id, step_sequence)
-            DO UPDATE SET
-                output_hash = EXCLUDED.output_hash,
-                output_data = EXCLUDED.output_data,
-                duration_ms = EXCLUDED.duration_ms";
+        const string sql = """
+
+                                       INSERT INTO reasoning_steps (
+                                           session_id, step_sequence, step_type, input_hash, output_hash,
+                                           input_data, output_data, duration_ms
+                                       ) VALUES (
+                                           @SessionId, @StepSequence, @StepType, @InputHash, @OutputHash,
+                                           @InputData::jsonb, @OutputData::jsonb, @DurationMs
+                                       )
+                                       ON CONFLICT (session_id, step_sequence)
+                                       DO UPDATE SET
+                                           output_hash = EXCLUDED.output_hash,
+                                           output_data = EXCLUDED.output_data,
+                                           duration_ms = EXCLUDED.duration_ms
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -438,12 +452,14 @@ public sealed class InferenceSession : IInferenceSession
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
-                   input_data::text as input_data, output_data::text as output_data,
-                   embedding_cache_key, duration_ms, created_at
-            FROM reasoning_steps
-            WHERE session_id = @SessionId AND step_sequence = @StepSequence";
+        const string sql = """
+
+                                       SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
+                                              input_data::text as input_data, output_data::text as output_data,
+                                              embedding_cache_key, duration_ms, created_at
+                                       FROM reasoning_steps
+                                       WHERE session_id = @SessionId AND step_sequence = @StepSequence
+                           """;
 
         var row = await connection.QuerySingleOrDefaultAsync<dynamic>(
             sql,
@@ -472,13 +488,15 @@ public sealed class InferenceSession : IInferenceSession
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
-                   input_data::text as input_data, output_data::text as output_data,
-                   embedding_cache_key, duration_ms, created_at
-            FROM reasoning_steps
-            WHERE session_id = @SessionId
-            ORDER BY step_sequence";
+        const string sql = """
+
+                                       SELECT step_id, session_id, step_sequence, step_type, input_hash, output_hash,
+                                              input_data::text as input_data, output_data::text as output_data,
+                                              embedding_cache_key, duration_ms, created_at
+                                       FROM reasoning_steps
+                                       WHERE session_id = @SessionId
+                                       ORDER BY step_sequence
+                           """;
 
         var rows = await connection.QueryAsync<dynamic>(sql, new { SessionId });
 
@@ -506,10 +524,12 @@ public sealed class InferenceSession : IInferenceSession
         var steps = await GetAllStepsAsync(cancellationToken);
         var outputHash = ComputeHash(string.Join(":", steps.Select(s => s.OutputHash)));
 
-        const string sql = @"
-            UPDATE inference_sessions
-            SET status = 'completed', completed_at = NOW(), output_hash = @OutputHash
-            WHERE session_id = @SessionId";
+        const string sql = """
+
+                                       UPDATE inference_sessions
+                                       SET status = 'completed', completed_at = NOW(), output_hash = @OutputHash
+                                       WHERE session_id = @SessionId
+                           """;
 
         await connection.ExecuteAsync(sql, new { SessionId, OutputHash = outputHash });
 

@@ -134,13 +134,15 @@ public sealed class SelfAuditService : ISelfAuditService
         var limitClause = options.MaxRecords.HasValue ? $"LIMIT {options.MaxRecords}" : "";
 
         var records = await conn.QueryAsync<AuditLogRecordDto>(
-            $@"SELECT
-                id, tenant_id, actor_type, actor_id, action, resource_type, resource_id,
-                details, occurred_at, ip_address, user_agent, entry_hash
-               FROM admin_audit_log
-               {whereClause}
-               ORDER BY occurred_at DESC
-               {limitClause}",
+            $"""
+             SELECT
+                             id, tenant_id, actor_type, actor_id, action, resource_type, resource_id,
+                             details, occurred_at, ip_address, user_agent, entry_hash
+                            FROM admin_audit_log
+                            {whereClause}
+                            ORDER BY occurred_at DESC
+                            {limitClause}
+             """,
             parameters);
 
         var recordList = records.ToList();
@@ -178,13 +180,15 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get operation counts
         var operationCounts = await conn.QueryAsync<OperationCountDto>(
-            @"SELECT action, COUNT(*) AS count
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-              GROUP BY action
-              ORDER BY count DESC",
+            """
+            SELECT action, COUNT(*) AS count
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                          GROUP BY action
+                          ORDER BY count DESC
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         var counts = operationCounts.ToDictionary(x => x.action, x => x.count);
@@ -199,17 +203,19 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get daily breakdown
         var dailyBreakdown = await conn.QueryAsync<DailyActivityDto>(
-            @"SELECT
-                DATE(occurred_at) AS date,
-                COUNT(*) AS operation_count,
-                COUNT(DISTINCT actor_id) AS unique_users,
-                0 AS credits_consumed
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-              GROUP BY DATE(occurred_at)
-              ORDER BY date",
+            """
+            SELECT
+                            DATE(occurred_at) AS date,
+                            COUNT(*) AS operation_count,
+                            COUNT(DISTINCT actor_id) AS unique_users,
+                            0 AS credits_consumed
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                          GROUP BY DATE(occurred_at)
+                          ORDER BY date
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         // Get top operations
@@ -248,15 +254,17 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get hourly patterns
         var hourlyPatterns = await conn.QueryAsync<HourlyPatternDto>(
-            @"SELECT
-                EXTRACT(HOUR FROM occurred_at)::INT AS hour,
-                COUNT(*) AS request_count
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-              GROUP BY EXTRACT(HOUR FROM occurred_at)
-              ORDER BY hour",
+            """
+            SELECT
+                            EXTRACT(HOUR FROM occurred_at)::INT AS hour,
+                            COUNT(*) AS request_count
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                          GROUP BY EXTRACT(HOUR FROM occurred_at)
+                          ORDER BY hour
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         var patternList = hourlyPatterns.ToList();
@@ -278,15 +286,17 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get access sources
         var sources = await conn.QueryAsync<AccessSourceDto>(
-            @"SELECT
-                COALESCE(details->>'source', 'unknown') AS source,
-                COUNT(*) AS request_count
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-              GROUP BY COALESCE(details->>'source', 'unknown')
-              ORDER BY request_count DESC",
+            """
+            SELECT
+                            COALESCE(details->>'source', 'unknown') AS source,
+                            COUNT(*) AS request_count
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                          GROUP BY COALESCE(details->>'source', 'unknown')
+                          ORDER BY request_count DESC
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         var sourceList = sources.ToList();
@@ -301,16 +311,18 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get endpoint usage
         var endpoints = await conn.QueryAsync<EndpointUsageDto>(
-            @"SELECT
-                resource_type AS endpoint,
-                COUNT(*) AS count
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-              GROUP BY resource_type
-              ORDER BY count DESC
-              LIMIT 20",
+            """
+            SELECT
+                            resource_type AS endpoint,
+                            COUNT(*) AS count
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                          GROUP BY resource_type
+                          ORDER BY count DESC
+                          LIMIT 20
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         var endpointUsage = endpoints.ToDictionary(e => e.endpoint ?? "unknown", e => e.count);
@@ -321,14 +333,16 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get max concurrent sessions (approximated by distinct actor_id per minute)
         var maxConcurrent = await conn.QueryFirstOrDefaultAsync<long>(
-            @"SELECT MAX(concurrent_count) FROM (
-                SELECT COUNT(DISTINCT actor_id) AS concurrent_count
-                FROM admin_audit_log
-                WHERE tenant_id = @TenantId::uuid
-                  AND occurred_at >= @FromDate
-                  AND occurred_at <= @ToDate
-                GROUP BY DATE_TRUNC('minute', occurred_at)
-              ) sub",
+            """
+            SELECT MAX(concurrent_count) FROM (
+                            SELECT COUNT(DISTINCT actor_id) AS concurrent_count
+                            FROM admin_audit_log
+                            WHERE tenant_id = @TenantId::uuid
+                              AND occurred_at >= @FromDate
+                              AND occurred_at <= @ToDate
+                            GROUP BY DATE_TRUNC('minute', occurred_at)
+                          ) sub
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         return new AccessPatternAnalysis
@@ -359,15 +373,17 @@ public sealed class SelfAuditService : ISelfAuditService
         };
 
         var events = await conn.QueryAsync<SecurityEventDto>(
-            @"SELECT
-                id, occurred_at, action, actor_id, ip_address, details
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate
-                AND action = ANY(@Actions)
-              ORDER BY occurred_at DESC
-              LIMIT 1000",
+            """
+            SELECT
+                            id, occurred_at, action, actor_id, ip_address, details
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+                            AND action = ANY(@Actions)
+                          ORDER BY occurred_at DESC
+                          LIMIT 1000
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate, Actions = securityActions });
 
         return events.Select(e => new SecurityEvent
@@ -392,9 +408,11 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get memory details
         var memory = await conn.QueryFirstOrDefaultAsync<MemoryDto>(
-            @"SELECT id, created_at, content_hash, causal_parents
-              FROM memories
-              WHERE tenant_id = @TenantId::uuid AND id = @MemoryId",
+            """
+            SELECT id, created_at, content_hash, causal_parents
+                          FROM memories
+                          WHERE tenant_id = @TenantId::uuid AND id = @MemoryId
+            """,
             new { TenantId = tenantId, MemoryId = memoryId });
 
         if (memory == null)
@@ -404,12 +422,14 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get all events related to this memory
         var events = await conn.QueryAsync<LineageEventDto>(
-            @"SELECT occurred_at, action, actor_id, details
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND resource_type = 'memory'
-                AND resource_id = @MemoryId::text
-              ORDER BY occurred_at",
+            """
+            SELECT occurred_at, action, actor_id, details
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND resource_type = 'memory'
+                            AND resource_id = @MemoryId::text
+                          ORDER BY occurred_at
+            """,
             new { TenantId = tenantId, MemoryId = memoryId });
 
         var lineageEvents = events.Select(e => new LineageEvent
@@ -422,9 +442,11 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get child memories (that reference this as causal parent)
         var children = await conn.QueryAsync<Guid>(
-            @"SELECT id FROM memories
-              WHERE tenant_id = @TenantId::uuid
-                AND @MemoryId::uuid = ANY(causal_parents)",
+            """
+            SELECT id FROM memories
+                          WHERE tenant_id = @TenantId::uuid
+                            AND @MemoryId::uuid = ANY(causal_parents)
+            """,
             new { TenantId = tenantId, MemoryId = memoryId });
 
         return new DataLineage
@@ -449,48 +471,58 @@ public sealed class SelfAuditService : ISelfAuditService
 
         // Get credit usage
         var creditUsage = await conn.QueryFirstOrDefaultAsync<decimal>(
-            @"SELECT COALESCE(SUM(credits_consumed), 0)
-              FROM usage_events
-              WHERE tenant_id = @TenantId::uuid
-                AND event_timestamp >= @FromDate
-                AND event_timestamp <= @ToDate",
+            """
+            SELECT COALESCE(SUM(credits_consumed), 0)
+                          FROM usage_events
+                          WHERE tenant_id = @TenantId::uuid
+                            AND event_timestamp >= @FromDate
+                            AND event_timestamp <= @ToDate
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         // Get remaining credits
         var creditsRemaining = await conn.QueryFirstOrDefaultAsync<decimal>(
-            @"SELECT COALESCE(credits_allocated - credits_used, 0)
-              FROM billing_cycles
-              WHERE tenant_id = @TenantId::uuid AND is_current = TRUE",
+            """
+            SELECT COALESCE(credits_allocated - credits_used, 0)
+                          FROM billing_cycles
+                          WHERE tenant_id = @TenantId::uuid AND is_current = TRUE
+            """,
             new { TenantId = tenantId });
 
         // Get counts
         var counts = await conn.QueryFirstOrDefaultAsync<CountsDto>(
-            @"SELECT
-                (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId::uuid) AS memory_count,
-                (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId::uuid) AS entity_count,
-                (SELECT pg_total_relation_size('memories') / COUNT(DISTINCT tenant_id)) AS storage_bytes
-              FROM memories
-              WHERE tenant_id = @TenantId::uuid",
+            """
+            SELECT
+                            (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId::uuid) AS memory_count,
+                            (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId::uuid) AS entity_count,
+                            (SELECT pg_total_relation_size('memories') / COUNT(DISTINCT tenant_id)) AS storage_bytes
+                          FROM memories
+                          WHERE tenant_id = @TenantId::uuid
+            """,
             new { TenantId = tenantId });
 
         // Get API calls
         var apiCalls = await conn.QueryFirstOrDefaultAsync<long>(
-            @"SELECT COUNT(*)
-              FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at >= @FromDate
-                AND occurred_at <= @ToDate",
+            """
+            SELECT COUNT(*)
+                          FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at >= @FromDate
+                            AND occurred_at <= @ToDate
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         // Get costs by operation
         var costsByOp = await conn.QueryAsync<CostByOpDto>(
-            @"SELECT operation, SUM(cost) AS total_cost
-              FROM cost_records
-              WHERE tenant_id = @TenantId::uuid
-                AND recorded_at >= @FromDate
-                AND recorded_at <= @ToDate
-              GROUP BY operation
-              ORDER BY total_cost DESC",
+            """
+            SELECT operation, SUM(cost) AS total_cost
+                          FROM cost_records
+                          WHERE tenant_id = @TenantId::uuid
+                            AND recorded_at >= @FromDate
+                            AND recorded_at <= @ToDate
+                          GROUP BY operation
+                          ORDER BY total_cost DESC
+            """,
             new { TenantId = tenantId, FromDate = fromDate, ToDate = toDate });
 
         return new UsageMetrics

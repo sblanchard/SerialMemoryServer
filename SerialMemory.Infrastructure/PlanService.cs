@@ -33,13 +33,15 @@ public sealed class PlanService : IPlanService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var plans = await conn.QueryAsync<TenantPlanDto>(
-            @"SELECT id, plan_name, display_name, credits_per_cycle, cycle_days,
-                     max_memories, max_entities, is_active, metadata,
-                     rate_limit_per_minute, credit_carryover_enabled,
-                     credit_carryover_max_percent, created_at, updated_at
-              FROM tenant_plans
-              WHERE is_active = TRUE
-              ORDER BY credits_per_cycle");
+            """
+            SELECT id, plan_name, display_name, credits_per_cycle, cycle_days,
+                                 max_memories, max_entities, is_active, metadata,
+                                 rate_limit_per_minute, credit_carryover_enabled,
+                                 credit_carryover_max_percent, created_at, updated_at
+                          FROM tenant_plans
+                          WHERE is_active = TRUE
+                          ORDER BY credits_per_cycle
+            """);
 
         return plans.Select(MapToPlan).ToList();
     }
@@ -51,12 +53,14 @@ public sealed class PlanService : IPlanService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var plan = await conn.QueryFirstOrDefaultAsync<TenantPlanDto>(
-            @"SELECT id, plan_name, display_name, credits_per_cycle, cycle_days,
-                     max_memories, max_entities, is_active, metadata,
-                     rate_limit_per_minute, credit_carryover_enabled,
-                     credit_carryover_max_percent, created_at, updated_at
-              FROM tenant_plans
-              WHERE plan_name = @PlanName",
+            """
+            SELECT id, plan_name, display_name, credits_per_cycle, cycle_days,
+                                 max_memories, max_entities, is_active, metadata,
+                                 rate_limit_per_minute, credit_carryover_enabled,
+                                 credit_carryover_max_percent, created_at, updated_at
+                          FROM tenant_plans
+                          WHERE plan_name = @PlanName
+            """,
             new { PlanName = planName });
 
         return plan != null ? MapToPlan(plan) : null;
@@ -70,27 +74,31 @@ public sealed class PlanService : IPlanService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var sub = await conn.QueryFirstOrDefaultAsync<SubscriptionDto>(
-            @"SELECT ts.id, ts.tenant_id, ts.workspace_id, ts.plan_id,
-                     tp.plan_name, ts.status, ts.started_at, ts.cancelled_at,
-                     ts.effective_end_date, pp.plan_name AS pending_plan_name,
-                     ts.pending_change_date
-              FROM tenant_subscriptions ts
-              JOIN tenant_plans tp ON ts.plan_id = tp.id
-              LEFT JOIN tenant_plans pp ON ts.pending_plan_id = pp.id
-              WHERE ts.tenant_id = @TenantId
-                AND ts.workspace_id = @WorkspaceId",
+            """
+            SELECT ts.id, ts.tenant_id, ts.workspace_id, ts.plan_id,
+                                 tp.plan_name, ts.status, ts.started_at, ts.cancelled_at,
+                                 ts.effective_end_date, pp.plan_name AS pending_plan_name,
+                                 ts.pending_change_date
+                          FROM tenant_subscriptions ts
+                          JOIN tenant_plans tp ON ts.plan_id = tp.id
+                          LEFT JOIN tenant_plans pp ON ts.pending_plan_id = pp.id
+                          WHERE ts.tenant_id = @TenantId
+                            AND ts.workspace_id = @WorkspaceId
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         if (sub == null) return null;
 
         // Get current billing cycle
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-            @"SELECT id, tenant_id, workspace_id, plan_id, cycle_start, cycle_end,
-                     credits_allocated, credits_used, is_current, closed_at, created_at
-              FROM billing_cycles
-              WHERE tenant_id = @TenantId
-                AND workspace_id = @WorkspaceId
-                AND is_current = TRUE",
+            """
+            SELECT id, tenant_id, workspace_id, plan_id, cycle_start, cycle_end,
+                                 credits_allocated, credits_used, is_current, closed_at, created_at
+                          FROM billing_cycles
+                          WHERE tenant_id = @TenantId
+                            AND workspace_id = @WorkspaceId
+                            AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         return new TenantSubscription
@@ -143,11 +151,13 @@ public sealed class PlanService : IPlanService
             {
                 // Update existing subscription
                 await conn.ExecuteAsync(
-                    @"UPDATE tenant_subscriptions
-                      SET plan_id = @PlanId, status = 'active', cancelled_at = NULL,
-                          effective_end_date = NULL, pending_plan_id = NULL,
-                          pending_change_date = NULL, updated_at = NOW()
-                      WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId",
+                    """
+                    UPDATE tenant_subscriptions
+                                          SET plan_id = @PlanId, status = 'active', cancelled_at = NULL,
+                                              effective_end_date = NULL, pending_plan_id = NULL,
+                                              pending_change_date = NULL, updated_at = NOW()
+                                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                    """,
                     new { PlanId = plan.id, TenantId = tenantId, WorkspaceId = workspaceId },
                     tx);
                 subId = existingSub.id;
@@ -156,26 +166,32 @@ public sealed class PlanService : IPlanService
             {
                 // Create new subscription
                 subId = await conn.QueryFirstAsync<Guid>(
-                    @"INSERT INTO tenant_subscriptions (tenant_id, workspace_id, plan_id, status)
-                      VALUES (@TenantId, @WorkspaceId, @PlanId, 'active')
-                      RETURNING id",
+                    """
+                    INSERT INTO tenant_subscriptions (tenant_id, workspace_id, plan_id, status)
+                                          VALUES (@TenantId, @WorkspaceId, @PlanId, 'active')
+                                          RETURNING id
+                    """,
                     new { TenantId = tenantId, WorkspaceId = workspaceId, PlanId = plan.id },
                     tx);
             }
 
             // Close any existing billing cycles
             await conn.ExecuteAsync(
-                @"UPDATE billing_cycles
-                  SET is_current = FALSE, closed_at = NOW()
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+                """
+                UPDATE billing_cycles
+                                  SET is_current = FALSE, closed_at = NOW()
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+                """,
                 new { TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
             // Create new billing cycle
             var cycleId = await conn.QueryFirstAsync<Guid>(
-                @"INSERT INTO billing_cycles (tenant_id, workspace_id, plan_id, cycle_start, cycle_end, credits_allocated)
-                  VALUES (@TenantId, @WorkspaceId, @PlanId, NOW(), NOW() + (@CycleDays || ' days')::INTERVAL, @Credits)
-                  RETURNING id",
+                """
+                INSERT INTO billing_cycles (tenant_id, workspace_id, plan_id, cycle_start, cycle_end, credits_allocated)
+                                  VALUES (@TenantId, @WorkspaceId, @PlanId, NOW(), NOW() + (@CycleDays || ' days')::INTERVAL, @Credits)
+                                  RETURNING id
+                """,
                 new
                 {
                     TenantId = tenantId,
@@ -214,10 +230,12 @@ public sealed class PlanService : IPlanService
         {
             // Get current subscription
             var currentSub = await conn.QueryFirstOrDefaultAsync<SubscriptionDto>(
-                @"SELECT ts.*, tp.plan_name AS plan_name, tp.credits_per_cycle AS current_credits
-                  FROM tenant_subscriptions ts
-                  JOIN tenant_plans tp ON ts.plan_id = tp.id
-                  WHERE ts.tenant_id = @TenantId AND ts.workspace_id = @WorkspaceId",
+                """
+                SELECT ts.*, tp.plan_name AS plan_name, tp.credits_per_cycle AS current_credits
+                                  FROM tenant_subscriptions ts
+                                  JOIN tenant_plans tp ON ts.plan_id = tp.id
+                                  WHERE ts.tenant_id = @TenantId AND ts.workspace_id = @WorkspaceId
+                """,
                 new { TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
@@ -260,8 +278,10 @@ public sealed class PlanService : IPlanService
 
             // Get current billing cycle
             var currentCycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-                @"SELECT * FROM billing_cycles
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+                """
+                SELECT * FROM billing_cycles
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+                """,
                 new { TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
@@ -279,16 +299,20 @@ public sealed class PlanService : IPlanService
 
                 // Update current cycle with additional credits
                 await conn.ExecuteAsync(
-                    @"UPDATE billing_cycles
-                      SET credits_allocated = credits_allocated + @Adjustment, plan_id = @NewPlanId
-                      WHERE id = @CycleId",
+                    """
+                    UPDATE billing_cycles
+                                          SET credits_allocated = credits_allocated + @Adjustment, plan_id = @NewPlanId
+                                          WHERE id = @CycleId
+                    """,
                     new { Adjustment = creditAdjustment, NewPlanId = newPlan.id, CycleId = currentCycle.id },
                     tx);
 
                 // Record credit adjustment
                 await conn.ExecuteAsync(
-                    @"INSERT INTO credit_adjustments (billing_cycle_id, adjustment_type, amount, reason)
-                      VALUES (@CycleId, 'upgrade_proration', @Amount, @Reason)",
+                    """
+                    INSERT INTO credit_adjustments (billing_cycle_id, adjustment_type, amount, reason)
+                                          VALUES (@CycleId, 'upgrade_proration', @Amount, @Reason)
+                    """,
                     new
                     {
                         CycleId = currentCycle.id,
@@ -300,9 +324,11 @@ public sealed class PlanService : IPlanService
 
             // Update subscription
             await conn.ExecuteAsync(
-                @"UPDATE tenant_subscriptions
-                  SET plan_id = @NewPlanId, updated_at = NOW()
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId",
+                """
+                UPDATE tenant_subscriptions
+                                  SET plan_id = @NewPlanId, updated_at = NOW()
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                """,
                 new { NewPlanId = newPlan.id, TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
@@ -348,10 +374,12 @@ public sealed class PlanService : IPlanService
         {
             // Get current subscription
             var currentSub = await conn.QueryFirstOrDefaultAsync<SubscriptionDto>(
-                @"SELECT ts.*, tp.plan_name AS plan_name, tp.credits_per_cycle AS current_credits
-                  FROM tenant_subscriptions ts
-                  JOIN tenant_plans tp ON ts.plan_id = tp.id
-                  WHERE ts.tenant_id = @TenantId AND ts.workspace_id = @WorkspaceId",
+                """
+                SELECT ts.*, tp.plan_name AS plan_name, tp.credits_per_cycle AS current_credits
+                                  FROM tenant_subscriptions ts
+                                  JOIN tenant_plans tp ON ts.plan_id = tp.id
+                                  WHERE ts.tenant_id = @TenantId AND ts.workspace_id = @WorkspaceId
+                """,
                 new { TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
@@ -394,8 +422,10 @@ public sealed class PlanService : IPlanService
 
             // Get current billing cycle end date
             var currentCycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-                @"SELECT * FROM billing_cycles
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+                """
+                SELECT * FROM billing_cycles
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+                """,
                 new { TenantId = tenantId, WorkspaceId = workspaceId },
                 tx);
 
@@ -403,12 +433,14 @@ public sealed class PlanService : IPlanService
 
             // Schedule downgrade for end of current cycle
             await conn.ExecuteAsync(
-                @"UPDATE tenant_subscriptions
-                  SET status = 'pending_downgrade',
-                      pending_plan_id = @NewPlanId,
-                      pending_change_date = @EffectiveDate,
-                      updated_at = NOW()
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId",
+                """
+                UPDATE tenant_subscriptions
+                                  SET status = 'pending_downgrade',
+                                      pending_plan_id = @NewPlanId,
+                                      pending_change_date = @EffectiveDate,
+                                      updated_at = NOW()
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                """,
                 new
                 {
                     NewPlanId = newPlan.id,
@@ -454,17 +486,21 @@ public sealed class PlanService : IPlanService
 
         // Get current cycle end
         var cycleEnd = await conn.QueryFirstOrDefaultAsync<DateTimeOffset?>(
-            @"SELECT cycle_end FROM billing_cycles
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT cycle_end FROM billing_cycles
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         await conn.ExecuteAsync(
-            @"UPDATE tenant_subscriptions
-              SET status = 'cancelled',
-                  cancelled_at = NOW(),
-                  effective_end_date = @EffectiveEnd,
-                  updated_at = NOW()
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId",
+            """
+            UPDATE tenant_subscriptions
+                          SET status = 'cancelled',
+                              cancelled_at = NOW(),
+                              effective_end_date = @EffectiveEnd,
+                              updated_at = NOW()
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+            """,
             new
             {
                 TenantId = tenantId,
@@ -481,8 +517,10 @@ public sealed class PlanService : IPlanService
         string workspaceId)
     {
         var dto = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-            @"SELECT * FROM billing_cycles
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT * FROM billing_cycles
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         return dto != null ? MapToCycle(dto) : null;

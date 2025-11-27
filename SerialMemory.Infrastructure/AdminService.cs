@@ -43,32 +43,36 @@ public sealed class AdminService : IAdminService
         };
 
         // Get total count
-        var countSql = $@"
-            SELECT COUNT(*) FROM tenants t
-            WHERE 1=1 {statusFilter}";
+        var countSql = $"""
+
+                                    SELECT COUNT(*) FROM tenants t
+                                    WHERE 1=1 {statusFilter}
+                        """;
 
         var totalCount = await connection.ExecuteScalarAsync<int>(countSql);
 
         // Get tenants with summary info
-        var sql = $@"
-            SELECT
-                t.id,
-                t.name,
-                t.slug,
-                COALESCE(ts.plan, 'free') as plan,
-                t.status,
-                t.created_at,
-                (SELECT MAX(created_at) FROM memories WHERE tenant_id = t.id) as last_activity_at,
-                (SELECT COUNT(*) FROM tenant_users WHERE tenant_id = t.id) as user_count,
-                (SELECT COUNT(*) FROM memories WHERE tenant_id = t.id AND is_active = true) as memory_count,
-                COALESCE(bc.credits_used, 0) as credits_used_this_cycle
-            FROM tenants t
-            LEFT JOIN tenant_settings ts ON ts.tenant_id = t.id
-            LEFT JOIN billing_cycles bc ON bc.tenant_id = t.id
-                AND bc.cycle_start <= NOW() AND bc.cycle_end > NOW()
-            WHERE 1=1 {statusFilter}
-            ORDER BY t.created_at DESC
-            LIMIT @Limit OFFSET @Offset";
+        var sql = $"""
+
+                               SELECT
+                                   t.id,
+                                   t.name,
+                                   t.slug,
+                                   COALESCE(ts.plan, 'free') as plan,
+                                   t.status,
+                                   t.created_at,
+                                   (SELECT MAX(created_at) FROM memories WHERE tenant_id = t.id) as last_activity_at,
+                                   (SELECT COUNT(*) FROM tenant_users WHERE tenant_id = t.id) as user_count,
+                                   (SELECT COUNT(*) FROM memories WHERE tenant_id = t.id AND is_active = true) as memory_count,
+                                   COALESCE(bc.credits_used, 0) as credits_used_this_cycle
+                               FROM tenants t
+                               LEFT JOIN tenant_settings ts ON ts.tenant_id = t.id
+                               LEFT JOIN billing_cycles bc ON bc.tenant_id = t.id
+                                   AND bc.cycle_start <= NOW() AND bc.cycle_end > NOW()
+                               WHERE 1=1 {statusFilter}
+                               ORDER BY t.created_at DESC
+                               LIMIT @Limit OFFSET @Offset
+                   """;
 
         var tenants = await connection.QueryAsync<TenantSummary>(sql, new { Limit = limit, Offset = offset });
 
@@ -88,21 +92,25 @@ public sealed class AdminService : IAdminService
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get basic tenant info
-        var tenantSql = @"
-            SELECT t.id, t.name, t.status
-            FROM tenants t
-            WHERE t.id = @TenantId";
+        const string tenantSql = """
+
+                                             SELECT t.id, t.name, t.status
+                                             FROM tenants t
+                                             WHERE t.id = @TenantId
+                                 """;
 
         var tenant = await connection.QuerySingleOrDefaultAsync<dynamic>(tenantSql, new { TenantId = tenantId });
         if (tenant == null) return null;
 
         // Isolation check - verify tenant_id consistency
-        var isolationSql = @"
-            SELECT
-                (SELECT COUNT(*) FROM memories WHERE tenant_id != @TenantId AND id IN
-                    (SELECT memory_id FROM memory_entities WHERE entity_id IN
-                        (SELECT id FROM entities WHERE tenant_id = @TenantId))) as cross_tenant_references
-            ";
+        const string isolationSql = """
+
+                                                SELECT
+                                                    (SELECT COUNT(*) FROM memories WHERE tenant_id != @TenantId AND id IN
+                                                        (SELECT memory_id FROM memory_entities WHERE entity_id IN
+                                                            (SELECT id FROM entities WHERE tenant_id = @TenantId))) as cross_tenant_references
+                                                
+                                    """;
 
         var crossRefs = await connection.ExecuteScalarAsync<int>(isolationSql, new { TenantId = tenantId });
         var isolationCheck = new IsolationCheckResult
@@ -113,13 +121,15 @@ public sealed class AdminService : IAdminService
         };
 
         // Error rate (from usage events)
-        var errorSql = @"
-            SELECT
-                COUNT(*) as total_requests,
-                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count
-            FROM usage_events
-            WHERE tenant_id = @TenantId
-              AND timestamp > NOW() - INTERVAL '24 hours'";
+        const string errorSql = """
+
+                                            SELECT
+                                                COUNT(*) as total_requests,
+                                                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count
+                                            FROM usage_events
+                                            WHERE tenant_id = @TenantId
+                                              AND timestamp > NOW() - INTERVAL '24 hours'
+                                """;
 
         var errorStats = await connection.QuerySingleOrDefaultAsync<dynamic>(errorSql, new { TenantId = tenantId });
         var totalReqs = (int)(errorStats?.total_requests ?? 0);
@@ -134,19 +144,21 @@ public sealed class AdminService : IAdminService
         };
 
         // Quota usage
-        var quotaSql = @"
-            SELECT
-                COALESCE(bc.credits_used, 0) as credits_used,
-                COALESCE(ts.credits_per_cycle, 100) as credits_limit,
-                (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND is_active = true) as memories_count,
-                ts.max_memories,
-                (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId) as entities_count,
-                ts.max_entities
-            FROM tenants t
-            LEFT JOIN tenant_settings ts ON ts.tenant_id = t.id
-            LEFT JOIN billing_cycles bc ON bc.tenant_id = t.id
-                AND bc.cycle_start <= NOW() AND bc.cycle_end > NOW()
-            WHERE t.id = @TenantId";
+        const string quotaSql = """
+
+                                            SELECT
+                                                COALESCE(bc.credits_used, 0) as credits_used,
+                                                COALESCE(ts.credits_per_cycle, 100) as credits_limit,
+                                                (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND is_active = true) as memories_count,
+                                                ts.max_memories,
+                                                (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId) as entities_count,
+                                                ts.max_entities
+                                            FROM tenants t
+                                            LEFT JOIN tenant_settings ts ON ts.tenant_id = t.id
+                                            LEFT JOIN billing_cycles bc ON bc.tenant_id = t.id
+                                                AND bc.cycle_start <= NOW() AND bc.cycle_end > NOW()
+                                            WHERE t.id = @TenantId
+                                """;
 
         var quota = await connection.QuerySingleOrDefaultAsync<dynamic>(quotaSql, new { TenantId = tenantId });
 
@@ -189,9 +201,11 @@ public sealed class AdminService : IAdminService
         }
 
         // Last self-audit (from admin_audit_log)
-        var auditSql = @"
-            SELECT MAX(created_at) FROM admin_audit_log
-            WHERE tenant_id = @TenantId AND action_type = 'self_audit'";
+        var auditSql = """
+
+                                   SELECT MAX(created_at) FROM admin_audit_log
+                                   WHERE tenant_id = @TenantId AND action_type = 'self_audit'
+                       """;
 
         var lastAudit = await connection.ExecuteScalarAsync<DateTimeOffset?>(auditSql, new { TenantId = tenantId });
 
@@ -217,11 +231,13 @@ public sealed class AdminService : IAdminService
         try
         {
             await connection.ExecuteScalarAsync<int>("SELECT 1");
-            var dbStats = await connection.QuerySingleAsync<dynamic>(@"
-                SELECT
-                    pg_database_size(current_database()) as db_size,
-                    (SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active') as active_connections
-            ");
+            var dbStats = await connection.QuerySingleAsync<dynamic>("""
+
+                                                                                     SELECT
+                                                                                         pg_database_size(current_database()) as db_size,
+                                                                                         (SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active') as active_connections
+                                                                                 
+                                                                     """);
 
             dbHealth = new ComponentHealth
             {
@@ -246,10 +262,12 @@ public sealed class AdminService : IAdminService
         }
 
         // Rate limiter health (check recent rejections from usage_events)
-        var rateLimitSql = @"
-            SELECT COUNT(*) FROM usage_events
-            WHERE status_code = 429
-              AND timestamp > NOW() - INTERVAL '1 hour'";
+        const string rateLimitSql = """
+
+                                                SELECT COUNT(*) FROM usage_events
+                                                WHERE status_code = 429
+                                                  AND timestamp > NOW() - INTERVAL '1 hour'
+                                    """;
 
         var recentRejections = await connection.ExecuteScalarAsync<int>(rateLimitSql);
 
@@ -261,14 +279,16 @@ public sealed class AdminService : IAdminService
         };
 
         // System stats
-        var statsSql = @"
-            SELECT
-                (SELECT COUNT(*) FROM tenants) as total_tenants,
-                (SELECT COUNT(*) FROM tenants WHERE status = 'active') as active_tenants,
-                (SELECT COUNT(*) FROM memories WHERE is_active = true) as total_memories,
-                (SELECT COUNT(*) FROM entities) as total_entities,
-                COALESCE((SELECT SUM(credits_consumed) FROM usage_events
-                    WHERE timestamp > CURRENT_DATE), 0) as credits_today";
+        const string statsSql = """
+
+                                            SELECT
+                                                (SELECT COUNT(*) FROM tenants) as total_tenants,
+                                                (SELECT COUNT(*) FROM tenants WHERE status = 'active') as active_tenants,
+                                                (SELECT COUNT(*) FROM memories WHERE is_active = true) as total_memories,
+                                                (SELECT COUNT(*) FROM entities) as total_entities,
+                                                COALESCE((SELECT SUM(credits_consumed) FROM usage_events
+                                                    WHERE timestamp > CURRENT_DATE), 0) as credits_today
+                                """;
 
         var stats = await connection.QuerySingleAsync<dynamic>(statsSql);
 

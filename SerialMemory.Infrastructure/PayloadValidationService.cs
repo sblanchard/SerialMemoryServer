@@ -197,10 +197,12 @@ public sealed class PayloadValidationService : IPayloadValidationService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         var actualCounts = await conn.QueryFirstOrDefaultAsync<dynamic>(
-            @"SELECT
-                (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId::uuid) AS memory_count,
-                (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId::uuid) AS entity_count,
-                (SELECT COUNT(*) FROM entity_relationships WHERE tenant_id = @TenantId::uuid) AS relationship_count",
+            """
+            SELECT
+                            (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId::uuid) AS memory_count,
+                            (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId::uuid) AS entity_count,
+                            (SELECT COUNT(*) FROM entity_relationships WHERE tenant_id = @TenantId::uuid) AS relationship_count
+            """,
             new { TenantId = tenantId });
 
         if (actualCounts != null)
@@ -271,9 +273,11 @@ public sealed class PayloadValidationService : IPayloadValidationService
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
         var planName = await conn.QueryFirstOrDefaultAsync<string>(
-            @"SELECT ts.plan FROM tenant_settings ts
-              JOIN tenants t ON ts.tenant_id = t.id
-              WHERE t.id = @TenantId::uuid OR t.slug = @TenantId",
+            """
+            SELECT ts.plan FROM tenant_settings ts
+                          JOIN tenants t ON ts.tenant_id = t.id
+                          WHERE t.id = @TenantId::uuid OR t.slug = @TenantId
+            """,
             new { TenantId = tenantId });
 
         return planName?.ToLowerInvariant() switch

@@ -1,14 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Core.Models;
 
 namespace SerialMemory.Infrastructure.Crawlers;
 
@@ -63,11 +57,13 @@ public sealed class RelationshipCrawler(
             if (options.ForceReprocess)
             {
                 // ForceReprocess=true: use offset-based pagination (rows stay in result set)
-                var sql = @"
-                    SELECT m.id, m.content, m.created_at
-                    FROM memories m
-                    ORDER BY m.id
-                    LIMIT @BatchSize OFFSET @Offset";
+                var sql = """
+
+                                              SELECT m.id, m.content, m.created_at
+                                              FROM memories m
+                                              ORDER BY m.id
+                                              LIMIT @BatchSize OFFSET @Offset
+                          """;
 
                 memories = (await connection.QueryAsync<MemoryRow>(sql, new
                 {
@@ -86,27 +82,31 @@ public sealed class RelationshipCrawler(
 
                 if (failedIds.Count > 0)
                 {
-                    sql = @"
-                        SELECT m.id, m.content, m.created_at
-                        FROM memories m
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-                        )
-                        AND m.id != ALL(@FailedIds)
-                        ORDER BY m.created_at DESC
-                        LIMIT @BatchSize";
+                    sql = """
+
+                                                  SELECT m.id, m.content, m.created_at
+                                                  FROM memories m
+                                                  WHERE NOT EXISTS (
+                                                      SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                                                  )
+                                                  AND m.id != ALL(@FailedIds)
+                                                  ORDER BY m.created_at DESC
+                                                  LIMIT @BatchSize
+                          """;
                     parameters = new { BatchSize = options.BatchSize, FailedIds = failedIds.ToArray() };
                 }
                 else
                 {
-                    sql = @"
-                        SELECT m.id, m.content, m.created_at
-                        FROM memories m
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-                        )
-                        ORDER BY m.created_at DESC
-                        LIMIT @BatchSize";
+                    sql = """
+
+                                                  SELECT m.id, m.content, m.created_at
+                                                  FROM memories m
+                                                  WHERE NOT EXISTS (
+                                                      SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                                                  )
+                                                  ORDER BY m.created_at DESC
+                                                  LIMIT @BatchSize
+                          """;
                     parameters = new { BatchSize = options.BatchSize };
                 }
 
@@ -367,12 +367,14 @@ public sealed class RelationshipCrawler(
         float confidence,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO entities (id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
-            VALUES (@Id, @Name, @EntityType, @CanonicalName, @SourceMemoryId, '{}'::jsonb)
-            ON CONFLICT (name, entity_type) DO UPDATE SET
-                metadata = entities.metadata
-            RETURNING id";
+        const string sql = """
+
+                                       INSERT INTO entities (id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
+                                       VALUES (@Id, @Name, @EntityType, @CanonicalName, @SourceMemoryId, '{}'::jsonb)
+                                       ON CONFLICT (name, entity_type) DO UPDATE SET
+                                           metadata = entities.metadata
+                                       RETURNING id
+                           """;
 
         var id = Guid.CreateVersion7();
         var existingId = await connection.QuerySingleOrDefaultAsync<Guid?>(sql, new
@@ -394,11 +396,13 @@ public sealed class RelationshipCrawler(
         float relevance,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO memory_entities (memory_id, entity_id, relevance)
-            VALUES (@MemoryId, @EntityId, @Relevance)
-            ON CONFLICT (memory_id, entity_id) DO UPDATE SET
-                relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)";
+        const string sql = """
+
+                                       INSERT INTO memory_entities (memory_id, entity_id, relevance)
+                                       VALUES (@MemoryId, @EntityId, @Relevance)
+                                       ON CONFLICT (memory_id, entity_id) DO UPDATE SET
+                                           relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -417,17 +421,19 @@ public sealed class RelationshipCrawler(
         Guid sourceMemoryId,
         CancellationToken cancellationToken)
     {
-        const string sql = @"
-            INSERT INTO entity_relationships (
-                id, source_entity_id, target_entity_id, relationship_type,
-                confidence, first_seen_memory_id, metadata
-            )
-            VALUES (
-                @Id, @SourceEntityId, @TargetEntityId, @RelationshipType,
-                @Confidence, @SourceMemoryId, '{}'::jsonb
-            )
-            ON CONFLICT (source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
-                confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence)";
+        const string sql = """
+
+                                       INSERT INTO entity_relationships (
+                                           id, source_entity_id, target_entity_id, relationship_type,
+                                           confidence, first_seen_memory_id, metadata
+                                       )
+                                       VALUES (
+                                           @Id, @SourceEntityId, @TargetEntityId, @RelationshipType,
+                                           @Confidence, @SourceMemoryId, '{}'::jsonb
+                                       )
+                                       ON CONFLICT (source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
+                                           confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence)
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -447,23 +453,27 @@ public sealed class RelationshipCrawler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        var sql = @"
-            SELECT
-                (SELECT COUNT(*) FROM memories) as memory_count,
-                (SELECT COUNT(*) FROM entities) as entity_count,
-                (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
-                (SELECT COUNT(DISTINCT memory_id) FROM memory_entities) as memories_with_entities,
-                (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type != 'MENTIONED_WITH') as explicit_relationships,
-                (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type = 'MENTIONED_WITH') as inferred_relationships";
+        var sql = """
+
+                              SELECT
+                                  (SELECT COUNT(*) FROM memories) as memory_count,
+                                  (SELECT COUNT(*) FROM entities) as entity_count,
+                                  (SELECT COUNT(*) FROM entity_relationships) as relationship_count,
+                                  (SELECT COUNT(DISTINCT memory_id) FROM memory_entities) as memories_with_entities,
+                                  (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type != 'MENTIONED_WITH') as explicit_relationships,
+                                  (SELECT COUNT(*) FROM entity_relationships WHERE relationship_type = 'MENTIONED_WITH') as inferred_relationships
+                  """;
 
         var stats = await connection.QuerySingleAsync<dynamic>(sql);
 
         // Get relationship type breakdown
-        var typesSql = @"
-            SELECT relationship_type, COUNT(*) as count
-            FROM entity_relationships
-            GROUP BY relationship_type
-            ORDER BY count DESC";
+        var typesSql = """
+
+                                   SELECT relationship_type, COUNT(*) as count
+                                   FROM entity_relationships
+                                   GROUP BY relationship_type
+                                   ORDER BY count DESC
+                       """;
 
         var types = await connection.QueryAsync<(string relationship_type, int count)>(typesSql);
 

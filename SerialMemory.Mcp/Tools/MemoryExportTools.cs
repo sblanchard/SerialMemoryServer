@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Store;
 
 namespace SerialMemory.Mcp.Tools;

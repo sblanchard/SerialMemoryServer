@@ -1,8 +1,5 @@
-using System;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -23,11 +20,13 @@ public sealed class EmbeddingCache(
 
         var cacheKey = ComputeCacheKey(contentHash);
 
-        const string sql = @"
-            UPDATE embedding_cache
-            SET last_accessed_at = NOW(), access_count = access_count + 1
-            WHERE cache_key = @CacheKey AND model_version = @ModelVersion
-            RETURNING embedding";
+        const string sql = """
+
+                                       UPDATE embedding_cache
+                                       SET last_accessed_at = NOW(), access_count = access_count + 1
+                                       WHERE cache_key = @CacheKey AND model_version = @ModelVersion
+                                       RETURNING embedding
+                           """;
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("CacheKey", cacheKey);
@@ -55,14 +54,16 @@ public sealed class EmbeddingCache(
         var cacheKey = ComputeCacheKey(contentHash);
 
         // Use composite key (cache_key, model_version) so different models can coexist
-        const string sql = @"
-            INSERT INTO embedding_cache (cache_key, content_hash, embedding, model_version)
-            VALUES (@CacheKey, @ContentHash, @Embedding, @ModelVersion)
-            ON CONFLICT (cache_key, model_version)
-            DO UPDATE SET
-                embedding = EXCLUDED.embedding,
-                last_accessed_at = NOW(),
-                access_count = embedding_cache.access_count + 1";
+        const string sql = """
+
+                                       INSERT INTO embedding_cache (cache_key, content_hash, embedding, model_version)
+                                       VALUES (@CacheKey, @ContentHash, @Embedding, @ModelVersion)
+                                       ON CONFLICT (cache_key, model_version)
+                                       DO UPDATE SET
+                                           embedding = EXCLUDED.embedding,
+                                           last_accessed_at = NOW(),
+                                           access_count = embedding_cache.access_count + 1
+                           """;
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("CacheKey", cacheKey);
@@ -80,11 +81,13 @@ public sealed class EmbeddingCache(
 
         var cacheKey = ComputeCacheKey(contentHash);
 
-        const string sql = @"
-            SELECT EXISTS(
-                SELECT 1 FROM embedding_cache
-                WHERE cache_key = @CacheKey AND model_version = @ModelVersion
-            )";
+        const string sql = """
+
+                                       SELECT EXISTS(
+                                           SELECT 1 FROM embedding_cache
+                                           WHERE cache_key = @CacheKey AND model_version = @ModelVersion
+                                       )
+                           """;
 
         return await connection.ExecuteScalarAsync<bool>(
             sql,
@@ -97,10 +100,12 @@ public sealed class EmbeddingCache(
 
         var cacheKey = ComputeCacheKey(contentHash);
 
-        const string sql = @"
-            UPDATE embedding_cache
-            SET is_compiled = TRUE
-            WHERE cache_key = @CacheKey AND model_version = @ModelVersion";
+        const string sql = """
+
+                                       UPDATE embedding_cache
+                                       SET is_compiled = TRUE
+                                       WHERE cache_key = @CacheKey AND model_version = @ModelVersion
+                           """;
 
         await connection.ExecuteAsync(sql, new { CacheKey = cacheKey, ModelVersion = modelVersion });
     }
@@ -109,9 +114,11 @@ public sealed class EmbeddingCache(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT COUNT(*) FROM embedding_cache
-            WHERE is_compiled = TRUE AND model_version = @ModelVersion";
+        const string sql = """
+
+                                       SELECT COUNT(*) FROM embedding_cache
+                                       WHERE is_compiled = TRUE AND model_version = @ModelVersion
+                           """;
 
         return await connection.ExecuteScalarAsync<int>(sql, new { ModelVersion = modelVersion });
     }
@@ -120,11 +127,13 @@ public sealed class EmbeddingCache(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            DELETE FROM embedding_cache
-            WHERE is_compiled = FALSE
-              AND last_accessed_at < NOW() - @MaxAge::interval
-              AND access_count < 5";
+        const string sql = """
+
+                                       DELETE FROM embedding_cache
+                                       WHERE is_compiled = FALSE
+                                         AND last_accessed_at < NOW() - @MaxAge::interval
+                                         AND access_count < 5
+                           """;
 
         var deleted = await connection.ExecuteAsync(
             sql,

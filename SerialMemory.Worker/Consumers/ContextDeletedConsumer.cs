@@ -1,6 +1,5 @@
 using MassTransit;
 using SerialMemory.Contracts.Events;
-using Microsoft.Extensions.Logging;
 
 namespace SerialMemory.Worker.Consumers;
 
