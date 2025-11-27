@@ -68,7 +68,7 @@ public sealed class AdminMcpServer : McpServerBase
 
         // Log admin action BEFORE execution (tamper-evident audit)
         AdminActionEntry? auditEntry = null;
-        if (CurrentAuth?.TenantId.HasValue == true && !SelfHostedMode)
+        if (CurrentAuth?.TenantId.HasValue == true)
         {
             try
             {

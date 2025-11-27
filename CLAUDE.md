@@ -752,3 +752,4 @@ Files: [Affected files]
 - **By component**: "waterfall", "spectrum", "CAT emulation"
 - **By problem type**: "rendering", "protocol", "performance"
 - **By date**: Include date in queries for recent context
+- forget self hosted, remove it

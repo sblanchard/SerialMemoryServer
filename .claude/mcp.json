@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "serialmemory-memory": {
-      "command": "D:\\DEV\\SerialMemoryServer\\publish\\mcp\\SerialMemory.Mcp.exe",
+      "command": "D:\\DEV\\SerialMemoryServer\\publish\\SerialMemory.Mcp.exe",
       "args": [],
       "env": {
         "POSTGRES_HOST": "localhost",

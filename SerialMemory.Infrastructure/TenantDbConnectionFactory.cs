@@ -1,5 +1,7 @@
 using System.Data;
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
 
@@ -13,16 +15,19 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly ITenantContext _tenantContext;
+    private readonly ILogger<TenantDbConnectionFactory> _logger;
 
     /// <summary>
     /// Creates a new connection factory with the specified data source and tenant context.
     /// </summary>
     /// <param name="dataSource">Pre-configured NpgsqlDataSource with pgvector support</param>
     /// <param name="tenantContext">Current tenant context for resolving tenant ID</param>
-    public TenantDbConnectionFactory(NpgsqlDataSource dataSource, ITenantContext tenantContext)
+    /// <param name="logger">Optional logger</param>
+    public TenantDbConnectionFactory(NpgsqlDataSource dataSource, ITenantContext tenantContext, ILogger<TenantDbConnectionFactory>? logger = null)
     {
         _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
+        _logger = logger ?? NullLogger<TenantDbConnectionFactory>.Instance;
     }
 
     /// <summary>
@@ -30,12 +35,14 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
     /// </summary>
     /// <param name="connectionString">PostgreSQL connection string</param>
     /// <param name="tenantContext">Current tenant context for resolving tenant ID</param>
-    public TenantDbConnectionFactory(string connectionString, ITenantContext tenantContext)
+    /// <param name="logger">Optional logger</param>
+    public TenantDbConnectionFactory(string connectionString, ITenantContext tenantContext, ILogger<TenantDbConnectionFactory>? logger = null)
     {
         if (string.IsNullOrEmpty(connectionString))
             throw new ArgumentNullException(nameof(connectionString));
 
         _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
+        _logger = logger ?? NullLogger<TenantDbConnectionFactory>.Instance;
 
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         builder.UseVector();
@@ -52,6 +59,7 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
     public async Task<IDbConnection> OpenAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
         // Note: Guid.Empty (00000000-0000-0000-0000-000000000000) is valid for the Self-Hosted tenant
+        _logger.LogDebug("Opening connection for tenant {TenantId}", tenantId);
 
         var connection = _dataSource.CreateConnection();
 
@@ -61,14 +69,17 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
 
             // CRITICAL: Set tenant context BEFORE any queries
             // This enables RLS policies to filter by tenant
+            _logger.LogDebug("Setting tenant context via set_tenant_context({TenantId})", tenantId);
             await connection.ExecuteAsync(
                 "SELECT set_tenant_context(@TenantId)",
                 new { TenantId = tenantId });
 
+            _logger.LogDebug("Connection opened and tenant context set for {TenantId}", tenantId);
             return connection;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to open connection for tenant {TenantId}", tenantId);
             await connection.DisposeAsync();
             throw;
         }
@@ -77,11 +88,19 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
     /// <inheritdoc />
     public Task<IDbConnection> OpenAsync(CancellationToken cancellationToken = default)
     {
+        _logger.LogDebug("OpenAsync called with TenantContext.TenantId={TenantId}", _tenantContext.TenantId);
+
         if (string.IsNullOrEmpty(_tenantContext.TenantId))
+        {
+            _logger.LogError("Tenant context is not set. TenantId is null or empty.");
             throw new InvalidOperationException("Tenant context is not set. Cannot open connection without tenant ID.");
+        }
 
         if (!Guid.TryParse(_tenantContext.TenantId, out var tenantId))
+        {
+            _logger.LogError("Invalid tenant ID format: {TenantId}", _tenantContext.TenantId);
             throw new InvalidOperationException($"Invalid tenant ID format: {_tenantContext.TenantId}");
+        }
 
         return OpenAsync(tenantId, cancellationToken);
     }
