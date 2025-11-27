@@ -15,16 +15,9 @@ namespace SerialMemory.Tests;
 [Trait("Category", "Chaos")]
 public class ChaosTests
 {
-    private readonly Mock<ILogger<JobSupervisionService>> _jobLoggerMock;
-    private readonly Mock<ILogger<CircuitBreakerService>> _cbLoggerMock;
-    private readonly Mock<ILogger<RateLimitingService>> _rlLoggerMock;
-
-    public ChaosTests()
-    {
-        _jobLoggerMock = new Mock<ILogger<JobSupervisionService>>();
-        _cbLoggerMock = new Mock<ILogger<CircuitBreakerService>>();
-        _rlLoggerMock = new Mock<ILogger<RateLimitingService>>();
-    }
+    private readonly Mock<ILogger<JobSupervisionService>> _jobLoggerMock = new();
+    private readonly Mock<ILogger<CircuitBreakerService>> _cbLoggerMock = new();
+    private readonly Mock<ILogger<RateLimitingService>> _rlLoggerMock = new();
 
     #region Worker Kill Tests
 

@@ -124,7 +124,7 @@ public class OllamaEmbeddingServiceIntegrationTests
     // These tests require a running Ollama service
     // They are marked with Skip to allow selective running
 
-    [Fact(Skip = "Integration test - requires running Ollama service")]
+    [Fact]
     public async Task EmbedTextAsync_ReturnsEmbeddingOfCorrectDimension()
     {
         // Arrange
@@ -139,7 +139,7 @@ public class OllamaEmbeddingServiceIntegrationTests
         embedding.Should().OnlyContain(v => !float.IsNaN(v));
     }
 
-    [Fact(Skip = "Integration test - requires running Ollama service")]
+    [Fact]
     public async Task EmbedBatchAsync_ReturnsEmbeddingsForAllTexts()
     {
         // Arrange
@@ -154,7 +154,7 @@ public class OllamaEmbeddingServiceIntegrationTests
         embeddings.Should().OnlyContain(e => e.Length == 768);
     }
 
-    [Fact(Skip = "Integration test - requires running Ollama service")]
+    [Fact]
     public async Task EmbedTextAsync_SimilarTextsShouldHaveSimilarEmbeddings()
     {
         // Arrange
@@ -183,3 +183,4 @@ public class OllamaEmbeddingServiceIntegrationTests
         return dotProduct / (magnitudeA * magnitudeB);
     }
 }
+

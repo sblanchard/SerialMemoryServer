@@ -83,31 +83,39 @@ public sealed class ApiKeyService : IApiKeyService
             var plan = request.Plan ?? "free";
 
             await conn.ExecuteAsync(
-                @"INSERT INTO tenants (id, name, slug, status, created_at, updated_at)
-                  VALUES (@Id, @Name, @Slug, 'active', NOW(), NOW())",
+                """
+                INSERT INTO tenants (id, name, slug, status, created_at, updated_at)
+                                  VALUES (@Id, @Name, @Slug, 'active', NOW(), NOW())
+                """,
                 new { Id = tenantId, Name = request.TenantName, Slug = slug },
                 tx);
 
             // Create tenant settings
             await conn.ExecuteAsync(
-                @"INSERT INTO tenant_settings (tenant_id, plan, max_workspaces, max_users, created_at, updated_at)
-                  VALUES (@TenantId, @Plan, 1, 5, NOW(), NOW())",
+                """
+                INSERT INTO tenant_settings (tenant_id, plan, max_workspaces, max_users, created_at, updated_at)
+                                  VALUES (@TenantId, @Plan, 1, 5, NOW(), NOW())
+                """,
                 new { TenantId = tenantId, Plan = plan },
                 tx);
 
             // Create default workspace
             var workspaceId = Guid.CreateVersion7();
             await conn.ExecuteAsync(
-                @"INSERT INTO tenant_workspaces (id, tenant_id, name, slug, is_default, created_at, updated_at)
-                  VALUES (@Id, @TenantId, 'Default', 'default', TRUE, NOW(), NOW())",
+                """
+                INSERT INTO tenant_workspaces (id, tenant_id, name, slug, is_default, created_at, updated_at)
+                                  VALUES (@Id, @TenantId, 'Default', 'default', TRUE, NOW(), NOW())
+                """,
                 new { Id = workspaceId, TenantId = tenantId },
                 tx);
 
             // Create user as owner
             var userId = request.Email.ToLowerInvariant();
             await conn.ExecuteAsync(
-                @"INSERT INTO tenant_users (tenant_id, user_id, role, created_at, updated_at)
-                  VALUES (@TenantId, @UserId, 'owner', NOW(), NOW())",
+                """
+                INSERT INTO tenant_users (tenant_id, user_id, role, created_at, updated_at)
+                                  VALUES (@TenantId, @UserId, 'owner', NOW(), NOW())
+                """,
                 new { TenantId = tenantId, UserId = userId },
                 tx);
 
@@ -117,8 +125,10 @@ public sealed class ApiKeyService : IApiKeyService
             var creditsPerCycle = GetCreditsForPlan(plan);
 
             await conn.ExecuteAsync(
-                @"INSERT INTO billing_cycles (id, tenant_id, workspace_id, cycle_start, cycle_end, credits_allocated, credits_used, is_current, created_at)
-                  VALUES (@Id, @TenantId, @WorkspaceId, @CycleStart, @CycleEnd, @Credits, 0, TRUE, NOW())",
+                """
+                INSERT INTO billing_cycles (id, tenant_id, workspace_id, cycle_start, cycle_end, credits_allocated, credits_used, is_current, created_at)
+                                  VALUES (@Id, @TenantId, @WorkspaceId, @CycleStart, @CycleEnd, @Credits, 0, TRUE, NOW())
+                """,
                 new
                 {
                     Id = Guid.CreateVersion7(),
@@ -136,8 +146,10 @@ public sealed class ApiKeyService : IApiKeyService
             var scopes = new[] { "serialmemory.core" };
 
             await conn.ExecuteAsync(
-                @"INSERT INTO tenant_api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, created_by, created_at)
-                  VALUES (@Id, @TenantId, @Name, @KeyHash, @KeyPrefix, @Scopes, @CreatedBy, NOW())",
+                """
+                INSERT INTO tenant_api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, created_by, created_at)
+                                  VALUES (@Id, @TenantId, @Name, @KeyHash, @KeyPrefix, @Scopes, @CreatedBy, NOW())
+                """,
                 new
                 {
                     Id = keyId,
@@ -198,8 +210,10 @@ public sealed class ApiKeyService : IApiKeyService
 
         // Check for duplicate name
         var existingKey = await conn.QueryFirstOrDefaultAsync<Guid?>(
-            @"SELECT id FROM tenant_api_keys
-              WHERE tenant_id = @TenantId AND name = @Name AND revoked_at IS NULL",
+            """
+            SELECT id FROM tenant_api_keys
+                          WHERE tenant_id = @TenantId AND name = @Name AND revoked_at IS NULL
+            """,
             new { TenantId = tenantId, Name = request.Name });
 
         if (existingKey.HasValue)
@@ -228,8 +242,10 @@ public sealed class ApiKeyService : IApiKeyService
         var now = DateTimeOffset.UtcNow;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO tenant_api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, created_by, expires_at, created_at)
-              VALUES (@Id, @TenantId, @Name, @KeyHash, @KeyPrefix, @Scopes, @CreatedBy, @ExpiresAt, NOW())",
+            """
+            INSERT INTO tenant_api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, created_by, expires_at, created_at)
+                          VALUES (@Id, @TenantId, @Name, @KeyHash, @KeyPrefix, @Scopes, @CreatedBy, @ExpiresAt, NOW())
+            """,
             new
             {
                 Id = keyId,
@@ -270,10 +286,12 @@ public sealed class ApiKeyService : IApiKeyService
             : "tenant_id = @TenantId AND revoked_at IS NULL";
 
         var keys = await conn.QueryAsync<ApiKeyDto>(
-            $@"SELECT id, name, key_prefix, scopes, created_by, last_used_at, expires_at, revoked_at, created_at
-               FROM tenant_api_keys
-               WHERE {whereClause}
-               ORDER BY created_at DESC",
+            $"""
+             SELECT id, name, key_prefix, scopes, created_by, last_used_at, expires_at, revoked_at, created_at
+                            FROM tenant_api_keys
+                            WHERE {whereClause}
+                            ORDER BY created_at DESC
+             """,
             new { TenantId = tenantId });
 
         return keys.Select(k => new ApiKeyInfo
@@ -298,9 +316,11 @@ public sealed class ApiKeyService : IApiKeyService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var key = await conn.QueryFirstOrDefaultAsync<ApiKeyDto>(
-            @"SELECT id, name, key_prefix, scopes, created_by, last_used_at, expires_at, revoked_at, created_at
-              FROM tenant_api_keys
-              WHERE id = @KeyId AND tenant_id = @TenantId",
+            """
+            SELECT id, name, key_prefix, scopes, created_by, last_used_at, expires_at, revoked_at, created_at
+                          FROM tenant_api_keys
+                          WHERE id = @KeyId AND tenant_id = @TenantId
+            """,
             new { KeyId = keyId, TenantId = tenantId });
 
         if (key == null)
@@ -329,9 +349,11 @@ public sealed class ApiKeyService : IApiKeyService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var affected = await conn.ExecuteAsync(
-            @"UPDATE tenant_api_keys
-              SET revoked_at = NOW()
-              WHERE id = @KeyId AND tenant_id = @TenantId AND revoked_at IS NULL",
+            """
+            UPDATE tenant_api_keys
+                          SET revoked_at = NOW()
+                          WHERE id = @KeyId AND tenant_id = @TenantId AND revoked_at IS NULL
+            """,
             new { KeyId = keyId, TenantId = tenantId });
 
         if (affected > 0)
@@ -359,12 +381,14 @@ public sealed class ApiKeyService : IApiKeyService
 
         // Find key by hash and verify it's valid
         var key = await conn.QueryFirstOrDefaultAsync<ApiKeyValidationDto>(
-            @"SELECT k.id, k.tenant_id, k.scopes, k.created_by, k.expires_at, k.revoked_at,
-                     t.slug as tenant_slug, t.name as tenant_name
-              FROM tenant_api_keys k
-              JOIN tenants t ON k.tenant_id = t.id
-              WHERE k.key_hash = @Hash AND k.key_prefix = @Prefix
-                AND t.status = 'active'",
+            """
+            SELECT k.id, k.tenant_id, k.scopes, k.created_by, k.expires_at, k.revoked_at,
+                                 t.slug as tenant_slug, t.name as tenant_name
+                          FROM tenant_api_keys k
+                          JOIN tenants t ON k.tenant_id = t.id
+                          WHERE k.key_hash = @Hash AND k.key_prefix = @Prefix
+                            AND t.status = 'active'
+            """,
             new { Hash = hash, Prefix = prefix });
 
         if (key == null)
@@ -384,8 +408,8 @@ public sealed class ApiKeyService : IApiKeyService
             return null;
         }
 
-        // Update last_used_at (fire and forget, don't block validation)
-        _ = conn.ExecuteAsync(
+        // Update last_used_at (await to ensure connection is properly released)
+        await conn.ExecuteAsync(
             "UPDATE tenant_api_keys SET last_used_at = NOW() WHERE id = @KeyId",
             new { KeyId = key.id });
 
@@ -416,15 +440,19 @@ public sealed class ApiKeyService : IApiKeyService
 
         // Get plan details
         var plan = await conn.QueryFirstOrDefaultAsync<TenantPlanDto>(
-            @"SELECT plan_name, display_name, credits_per_cycle, cycle_days, max_memories, max_entities
-              FROM tenant_plans WHERE plan_name = @PlanName AND is_active = TRUE",
+            """
+            SELECT plan_name, display_name, credits_per_cycle, cycle_days, max_memories, max_entities
+                          FROM tenant_plans WHERE plan_name = @PlanName AND is_active = TRUE
+            """,
             new { PlanName = planName });
 
         // Get current billing cycle
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
-            @"SELECT credits_allocated, credits_used, cycle_start, cycle_end
-              FROM billing_cycles
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT credits_allocated, credits_used, cycle_start, cycle_end
+                          FROM billing_cycles
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId.ToString(), WorkspaceId = workspaceId });
 
         // Get current counts

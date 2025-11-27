@@ -5,7 +5,6 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Core.Models;
 
 namespace SerialMemory.Infrastructure;
 
@@ -169,14 +168,16 @@ public sealed class UsageExportService : IUsageExportService
             var to = toDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
 
             var rollups = await conn.QueryAsync<RollupDto>(
-                @"SELECT id, tenant_id, workspace_id, rollup_date, event_type,
-                         event_count, total_credits, success_count, failure_count,
-                         avg_latency_ms, p95_latency_ms, p99_latency_ms,
-                         created_at, updated_at
-                  FROM usage_daily_rollups
-                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                    AND rollup_date >= @From AND rollup_date <= @To
-                  ORDER BY rollup_date DESC, event_type",
+                """
+                SELECT id, tenant_id, workspace_id, rollup_date, event_type,
+                                         event_count, total_credits, success_count, failure_count,
+                                         avg_latency_ms, p95_latency_ms, p99_latency_ms,
+                                         created_at, updated_at
+                                  FROM usage_daily_rollups
+                                  WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                                    AND rollup_date >= @From AND rollup_date <= @To
+                                  ORDER BY rollup_date DESC, event_type
+                """,
                 new
                 {
                     TenantId = tenantId,
@@ -246,14 +247,16 @@ public sealed class UsageExportService : IUsageExportService
             await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
             var cycles = await conn.QueryAsync<BillingCycleExportDto>(
-                @"SELECT bc.id, bc.tenant_id, bc.workspace_id, tp.plan_name,
-                         bc.cycle_start, bc.cycle_end, bc.credits_allocated, bc.credits_used,
-                         bc.is_current, bc.closed_at, bc.created_at
-                  FROM billing_cycles bc
-                  LEFT JOIN tenant_plans tp ON bc.plan_id = tp.id
-                  WHERE bc.tenant_id = @TenantId AND bc.workspace_id = @WorkspaceId
-                  ORDER BY bc.cycle_start DESC
-                  LIMIT @Limit",
+                """
+                SELECT bc.id, bc.tenant_id, bc.workspace_id, tp.plan_name,
+                                         bc.cycle_start, bc.cycle_end, bc.credits_allocated, bc.credits_used,
+                                         bc.is_current, bc.closed_at, bc.created_at
+                                  FROM billing_cycles bc
+                                  LEFT JOIN tenant_plans tp ON bc.plan_id = tp.id
+                                  WHERE bc.tenant_id = @TenantId AND bc.workspace_id = @WorkspaceId
+                                  ORDER BY bc.cycle_start DESC
+                                  LIMIT @Limit
+                """,
                 new
                 {
                     TenantId = tenantId,
@@ -267,10 +270,12 @@ public sealed class UsageExportService : IUsageExportService
             var cycleIds = cycleList.Select(c => c.id).ToList();
             var adjustments = cycleIds.Count > 0
                 ? (await conn.QueryAsync<CreditAdjustmentDto>(
-                    @"SELECT billing_cycle_id, adjustment_type, amount, reason, created_at
-                      FROM credit_adjustments
-                      WHERE billing_cycle_id = ANY(@CycleIds)
-                      ORDER BY created_at",
+                    """
+                    SELECT billing_cycle_id, adjustment_type, amount, reason, created_at
+                                          FROM credit_adjustments
+                                          WHERE billing_cycle_id = ANY(@CycleIds)
+                                          ORDER BY created_at
+                    """,
                     new { CycleIds = cycleIds })).ToList()
                 : [];
 
@@ -337,13 +342,15 @@ public sealed class UsageExportService : IUsageExportService
         var to = toDate ?? DateTimeOffset.UtcNow;
 
         var events = await conn.QueryAsync<EventDto>(
-            @"SELECT id, tenant_id, workspace_id, billing_cycle_id, event_type,
-                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
-                     latency_ms, success, error_message
-              FROM usage_events
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                AND event_timestamp >= @From AND event_timestamp <= @To
-              ORDER BY event_timestamp DESC",
+            """
+            SELECT id, tenant_id, workspace_id, billing_cycle_id, event_type,
+                                 credits_consumed, event_timestamp, memory_id, user_id, session_id,
+                                 latency_ms, success, error_message
+                          FROM usage_events
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                            AND event_timestamp >= @From AND event_timestamp <= @To
+                          ORDER BY event_timestamp DESC
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId, From = from, To = to });
 
         return events.ToList();

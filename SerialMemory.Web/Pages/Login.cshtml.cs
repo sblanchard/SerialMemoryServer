@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -18,13 +17,7 @@ public sealed class LoginModel : PageModel
     }
 
     [BindProperty]
-    public string Email { get; set; } = "";
-
-    [BindProperty]
-    public string Password { get; set; } = "";
-
-    [BindProperty]
-    public string? ApiKey { get; set; }
+    public string ApiKey { get; set; } = "";
 
     [BindProperty]
     public bool RememberMe { get; set; }
@@ -40,62 +33,26 @@ public sealed class LoginModel : PageModel
 
     public async Task<IActionResult> OnPostAsync([FromQuery] string? returnUrl)
     {
-        // Prefer API key login if provided
-        if (!string.IsNullOrWhiteSpace(ApiKey))
+        if (string.IsNullOrWhiteSpace(ApiKey))
         {
-            return await LoginWithApiKeyAsync(ApiKey, returnUrl);
-        }
-
-        // Otherwise use email/password
-        if (string.IsNullOrWhiteSpace(Email) || string.IsNullOrWhiteSpace(Password))
-        {
-            ErrorMessage = "Email and password are required.";
+            ErrorMessage = "API Key is required.";
             return Page();
         }
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            // Use Dashboard API for authentication (it has the /me endpoint)
+            var client = _httpClientFactory.CreateClient("DashboardApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
 
-            var loginRequest = new { Email, Password };
-            var response = await client.PostAsJsonAsync("/login", loginRequest);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-                ErrorMessage = error?.Message ?? "Invalid email or password.";
-                return Page();
-            }
-
-            var result = await response.Content.ReadFromJsonAsync<LoginResult>();
-
-            if (result == null)
-            {
-                ErrorMessage = "Unexpected response from server.";
-                return Page();
-            }
-
-            return await SignInUserAsync(result, returnUrl);
-        }
-        catch (HttpRequestException)
-        {
-            ErrorMessage = "Could not connect to the server. Please try again later.";
-            return Page();
-        }
-    }
-
-    private async Task<IActionResult> LoginWithApiKeyAsync(string apiKey, string? returnUrl)
-    {
-        try
-        {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-            var response = await client.GetAsync("/me");
+            // Use a 15-second timeout for the auth request
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var response = await client.GetAsync("/me", cts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
-                ErrorMessage = "Invalid API key.";
+                var errorContent = await response.Content.ReadAsStringAsync();
+                ErrorMessage = "Invalid API key. Please check and try again.";
                 return Page();
             }
 
@@ -107,78 +64,65 @@ public sealed class LoginModel : PageModel
                 return Page();
             }
 
-            var loginResult = new LoginResult
+            // Sign in with claims
+            var claims = new List<Claim>
             {
-                TenantId = result.TenantId,
-                UserId = result.UserId,
-                Email = result.Email ?? "",
-                Role = result.Role,
-                Token = apiKey // Use API key as token
+                new(ClaimTypes.NameIdentifier, result.UserId),
+                new(ClaimTypes.Email, result.Email ?? result.UserId),
+                new(ClaimTypes.Name, result.TenantName ?? result.UserId),
+                new("tenant_id", result.TenantId),
+                new("api_key", ApiKey),
+                new("role", result.Role)
             };
 
-            return await SignInUserAsync(loginResult, returnUrl);
+            var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            var authProperties = new AuthenticationProperties
+            {
+                IsPersistent = RememberMe,
+                ExpiresUtc = RememberMe
+                    ? DateTimeOffset.UtcNow.AddDays(7)
+                    : DateTimeOffset.UtcNow.AddHours(8)
+            };
+
+            await HttpContext.SignInAsync(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                new ClaimsPrincipal(claimsIdentity),
+                authProperties);
+
+            // Store API key in a secure cookie for API calls from pages
+            Response.Cookies.Append("auth_token", ApiKey, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Strict,
+                Expires = RememberMe ? DateTimeOffset.UtcNow.AddDays(7) : DateTimeOffset.UtcNow.AddHours(8)
+            });
+
+            if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
+            {
+                return Redirect(returnUrl);
+            }
+
+            return RedirectToPage("/Dashboard/Index");
         }
-        catch (HttpRequestException)
+        catch (TaskCanceledException)
         {
-            ErrorMessage = "Could not connect to the server. Please try again later.";
+            ErrorMessage = "Authentication service timed out. Please try again.";
             return Page();
         }
-    }
-
-    private async Task<IActionResult> SignInUserAsync(LoginResult result, string? returnUrl)
-    {
-        var claims = new List<Claim>
+        catch (HttpRequestException ex)
         {
-            new(ClaimTypes.NameIdentifier, result.UserId),
-            new(ClaimTypes.Email, result.Email),
-            new(ClaimTypes.Name, result.Email),
-            new("tenant_id", result.TenantId),
-            new("token", result.Token),
-            new("role", result.Role)
-        };
-
-        var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-        var authProperties = new AuthenticationProperties
-        {
-            IsPersistent = RememberMe,
-            ExpiresUtc = RememberMe
-                ? DateTimeOffset.UtcNow.AddDays(7)
-                : DateTimeOffset.UtcNow.AddHours(8)
-        };
-
-        await HttpContext.SignInAsync(
-            CookieAuthenticationDefaults.AuthenticationScheme,
-            new ClaimsPrincipal(claimsIdentity),
-            authProperties);
-
-        if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
-        {
-            return Redirect(returnUrl);
+            ErrorMessage = $"Could not connect to authentication service: {ex.Message}";
+            return Page();
         }
-
-        return RedirectToPage("/Dashboard/Index");
-    }
-
-    private sealed class LoginResult
-    {
-        public string TenantId { get; init; } = "";
-        public string UserId { get; init; } = "";
-        public string Email { get; init; } = "";
-        public string Role { get; init; } = "";
-        public string Token { get; init; } = "";
     }
 
     private sealed class MeResult
     {
         public string TenantId { get; init; } = "";
+        public string? TenantName { get; init; }
         public string UserId { get; init; } = "";
         public string? Email { get; init; }
         public string Role { get; init; } = "";
-    }
-
-    private sealed class ErrorResponse
-    {
-        public string? Error { get; init; }
-        public string? Message { get; init; }
     }
 }

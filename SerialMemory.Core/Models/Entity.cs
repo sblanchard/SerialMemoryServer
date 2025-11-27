@@ -6,6 +6,7 @@ namespace SerialMemory.Core.Models;
 public class Entity
 {
     public Guid Id { get; set; }
+    public string TenantId { get; set; } = "self"; // Default tenant for self-hosted
     public required string Name { get; set; }
     public required string EntityType { get; set; } // PERSON, ORG, GPE, DATE, EVENT, PRODUCT, etc.
     public string? CanonicalName { get; set; } // Normalized form

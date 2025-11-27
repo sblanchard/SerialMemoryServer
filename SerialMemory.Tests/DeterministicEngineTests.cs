@@ -1,13 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using Moq;
 using SerialMemory.Core.Interfaces;
 using Xunit;
 using Xunit.Abstractions;
@@ -17,15 +10,8 @@ namespace SerialMemory.Tests;
 /// <summary>
 /// Deterministic execution tests for the ONNX-based cognitive memory engine.
 /// </summary>
-public class DeterministicEngineTests
+public class DeterministicEngineTests(ITestOutputHelper output)
 {
-    private readonly ITestOutputHelper _output;
-
-    public DeterministicEngineTests(ITestOutputHelper output)
-    {
-        _output = output;
-    }
-
     [Fact]
     public void SeededRandom_ProducesDeterministicSequence()
     {
@@ -46,7 +32,7 @@ public class DeterministicEngineTests
 
         // Assert
         Assert.Equal(sequence1, sequence2);
-        _output.WriteLine($"Generated {sequence1.Count} deterministic random numbers with seed {seed}");
+        output.WriteLine($"Generated {sequence1.Count} deterministic random numbers with seed {seed}");
     }
 
     [Fact]
@@ -67,8 +53,8 @@ public class DeterministicEngineTests
         Assert.NotEqual(hash1, differentHash);
         Assert.Equal(64, hash1.Length); // SHA256 produces 64 hex chars
 
-        _output.WriteLine($"Content: '{content}'");
-        _output.WriteLine($"Hash: {hash1}");
+        output.WriteLine($"Content: '{content}'");
+        output.WriteLine($"Hash: {hash1}");
     }
 
     [Fact]
@@ -92,8 +78,8 @@ public class DeterministicEngineTests
         var norm = MathF.Sqrt(normalized1.Sum(x => x * x));
         Assert.Equal(1.0f, norm, 5);
 
-        _output.WriteLine($"Original: [{string.Join(", ", embedding.Select(x => x.ToString("F4")))}]");
-        _output.WriteLine($"Normalized: [{string.Join(", ", normalized1.Select(x => x.ToString("F4")))}]");
+        output.WriteLine($"Original: [{string.Join(", ", embedding.Select(x => x.ToString("F4")))}]");
+        output.WriteLine($"Normalized: [{string.Join(", ", normalized1.Select(x => x.ToString("F4")))}]");
     }
 
     [Fact]
@@ -111,7 +97,7 @@ public class DeterministicEngineTests
         Assert.Equal(similarity1, similarity2, 6);
         Assert.InRange(similarity1, -1.0f, 1.0f);
 
-        _output.WriteLine($"Similarity: {similarity1:F6}");
+        output.WriteLine($"Similarity: {similarity1:F6}");
     }
 
     [Fact]
@@ -132,8 +118,8 @@ public class DeterministicEngineTests
             Assert.Equal(assignments1[i], assignments2[i]);
         }
 
-        _output.WriteLine($"Clustered {embeddings.Length} embeddings into {k} clusters deterministically");
-        _output.WriteLine($"Cluster sizes: {string.Join(", ", Enumerable.Range(0, k).Select(c => assignments1.Count(a => a == c)))}");
+        output.WriteLine($"Clustered {embeddings.Length} embeddings into {k} clusters deterministically");
+        output.WriteLine($"Cluster sizes: {string.Join(", ", Enumerable.Range(0, k).Select(c => assignments1.Count(a => a == c)))}");
     }
 
     [Fact]
@@ -158,7 +144,7 @@ public class DeterministicEngineTests
 
         for (int i = 0; i < candidates.Length; i++)
         {
-            _output.WriteLine($"Candidate {i + 1}: Score = {scores1[i]:F4}");
+            output.WriteLine($"Candidate {i + 1}: Score = {scores1[i]:F4}");
         }
     }
 
@@ -182,10 +168,10 @@ public class DeterministicEngineTests
         Assert.Equal(0.5f, decayedValues1[2], 2); // Day 30: half-life
         Assert.Equal(0.25f, decayedValues1[4], 2); // Day 60: quarter
 
-        _output.WriteLine("Exponential Decay (half-life = 30 days):");
+        output.WriteLine("Exponential Decay (half-life = 30 days):");
         for (int i = 0; i < testDays.Length; i++)
         {
-            _output.WriteLine($"  Day {testDays[i]:F0}: {decayedValues1[i]:F4}");
+            output.WriteLine($"  Day {testDays[i]:F0}: {decayedValues1[i]:F4}");
         }
     }
 
@@ -208,7 +194,7 @@ public class DeterministicEngineTests
         // Assert
         Assert.Equal(hash1, hash2);
 
-        _output.WriteLine($"Reasoning chain hash: {hash1}");
+        output.WriteLine($"Reasoning chain hash: {hash1}");
     }
 
     [Fact]
@@ -233,7 +219,7 @@ public class DeterministicEngineTests
 
         for (int i = 0; i < texts.Length; i++)
         {
-            _output.WriteLine($"Text ({texts[i].Length} chars): ~{estimates1[i]} tokens");
+            output.WriteLine($"Text ({texts[i].Length} chars): ~{estimates1[i]} tokens");
         }
     }
 
@@ -270,7 +256,7 @@ public class DeterministicEngineTests
         }
 
         var totalTokens = packed1.Sum(p => p.TokenCount);
-        _output.WriteLine($"Packed {packed1.Count}/{candidates.Count} memories using {totalTokens}/{budget} tokens");
+        output.WriteLine($"Packed {packed1.Count}/{candidates.Count} memories using {totalTokens}/{budget} tokens");
     }
 
     [Fact]
@@ -299,12 +285,12 @@ public class DeterministicEngineTests
             Assert.Equal(contradictions1[i].IndexB, contradictions2[i].IndexB);
         }
 
-        _output.WriteLine($"Found {contradictions1.Count} contradictions:");
+        output.WriteLine($"Found {contradictions1.Count} contradictions:");
         foreach (var (idxA, idxB, type) in contradictions1)
         {
-            _output.WriteLine($"  [{idxA}] vs [{idxB}]: {type}");
-            _output.WriteLine($"    A: {facts[idxA]}");
-            _output.WriteLine($"    B: {facts[idxB]}");
+            output.WriteLine($"  [{idxA}] vs [{idxB}]: {type}");
+            output.WriteLine($"    A: {facts[idxA]}");
+            output.WriteLine($"    B: {facts[idxB]}");
         }
     }
 

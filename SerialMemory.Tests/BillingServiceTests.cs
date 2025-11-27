@@ -13,26 +13,17 @@ namespace SerialMemory.Tests;
 /// </summary>
 public sealed class BillingServiceTests
 {
-    private readonly string _connectionString;
-    private readonly Mock<ILogger<StripeBillingService>> _loggerMock;
-    private readonly StripeConfig _mockConfig;
-
-    public BillingServiceTests()
+    private readonly string _connectionString = Environment.GetEnvironmentVariable("TEST_CONNECTION_STRING")
+                                                ?? "Host=localhost;Port=5432;Database=contextdb_test;Username=postgres;Password=postgres";
+    private readonly Mock<ILogger<StripeBillingService>> _loggerMock = new();
+    private readonly StripeConfig _mockConfig = new()
     {
-        _connectionString = Environment.GetEnvironmentVariable("TEST_CONNECTION_STRING")
-            ?? "Host=localhost;Port=5432;Database=contextdb_test;Username=postgres;Password=postgres";
-
-        _loggerMock = new Mock<ILogger<StripeBillingService>>();
-
-        _mockConfig = new StripeConfig
-        {
-            SecretKey = "sk_test_mock",
-            PublishableKey = "pk_test_mock",
-            WebhookSecret = "whsec_mock",
-            ProPriceId = "price_pro_mock",
-            EnterprisePriceId = "price_enterprise_mock"
-        };
-    }
+        SecretKey = "sk_test_mock",
+        PublishableKey = "pk_test_mock",
+        WebhookSecret = "whsec_mock",
+        ProPriceId = "price_pro_mock",
+        EnterprisePriceId = "price_enterprise_mock"
+    };
 
     [Fact]
     public async Task GetBillingSummary_ReturnsNull_WhenTenantNotFound()

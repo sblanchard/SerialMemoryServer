@@ -1,12 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -15,23 +8,13 @@ using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.SelfHealing;
 
-public sealed class MemorySelfHealingEngine : IMemorySelfHealing
+public sealed class MemorySelfHealingEngine(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILogger<MemorySelfHealingEngine> logger)
+    : IMemorySelfHealing
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<MemorySelfHealingEngine> _logger;
-    private readonly string _workerId;
-
-    public MemorySelfHealingEngine(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILogger<MemorySelfHealingEngine> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _logger = logger;
-        _workerId = $"healer-{Environment.MachineName}-{Process.GetCurrentProcess().Id}";
-    }
+    private readonly string _workerId = $"healer-{Environment.MachineName}-{Process.GetCurrentProcess().Id}";
 
     public async Task<SelfHealingResult> RunCycleAsync(
         SelfHealingOptions options,
@@ -59,7 +42,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
                 {
                     operations.Add(new SelfHealingOperation(
                         "detect_contradiction",
-                        new[] { contradiction.MemoryIdA, contradiction.MemoryIdB },
+                        [contradiction.MemoryIdA, contradiction.MemoryIdB],
                         null,
                         "detected",
                         0));
@@ -133,7 +116,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
             await LogSelfHealingCycleAsync(operations, stopwatch.ElapsedMilliseconds, cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Self-healing cycle completed in {Duration}ms: {Contradictions} contradictions, " +
                 "{Merged} merged, {Decayed} decayed, {Reinforced} reinforced",
                 stopwatch.ElapsedMilliseconds, contradictionsDetected, memoriesMerged,
@@ -149,7 +132,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Self-healing cycle failed after {Duration}ms", stopwatch.ElapsedMilliseconds);
+            logger.LogError(ex, "Self-healing cycle failed after {Duration}ms", stopwatch.ElapsedMilliseconds);
             throw;
         }
     }
@@ -158,16 +141,18 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get the memory's embedding and entities
-        const string getMemorySql = @"
-            SELECT m.content, m.embedding, array_agg(e.id) as entity_ids
-            FROM memories m
-            LEFT JOIN memory_entities me ON m.id = me.memory_id
-            LEFT JOIN entities e ON me.entity_id = e.id
-            WHERE m.id = @MemoryId
-            GROUP BY m.id, m.content, m.embedding";
+        const string getMemorySql = """
+
+                                                SELECT m.content, m.embedding, array_agg(e.id) as entity_ids
+                                                FROM memories m
+                                                LEFT JOIN memory_entities me ON m.id = me.memory_id
+                                                LEFT JOIN entities e ON me.entity_id = e.id
+                                                WHERE m.id = @MemoryId
+                                                GROUP BY m.id, m.content, m.embedding
+                                    """;
 
         await using var cmd = new NpgsqlCommand(getMemorySql, connection);
         cmd.Parameters.AddWithValue("MemoryId", memoryId);
@@ -191,16 +176,18 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         }
 
         // Find semantically similar memories that share entities
-        const string findSimilarSql = @"
-            SELECT m.id, m.content, 1 - (m.embedding <=> @Embedding::vector) as similarity
-            FROM memories m
-            JOIN memory_entities me ON m.id = me.memory_id
-            WHERE m.id != @MemoryId
-              AND m.embedding IS NOT NULL
-              AND 1 - (m.embedding <=> @Embedding::vector) > 0.7
-              AND me.entity_id = ANY(@EntityIds)
-            ORDER BY similarity DESC
-            LIMIT 20";
+        const string findSimilarSql = """
+
+                                                  SELECT m.id, m.content, 1 - (m.embedding <=> @Embedding::vector) as similarity
+                                                  FROM memories m
+                                                  JOIN memory_entities me ON m.id = me.memory_id
+                                                  WHERE m.id != @MemoryId
+                                                    AND m.embedding IS NOT NULL
+                                                    AND 1 - (m.embedding <=> @Embedding::vector) > 0.7
+                                                    AND me.entity_id = ANY(@EntityIds)
+                                                  ORDER BY similarity DESC
+                                                  LIMIT 20
+                                      """;
 
         await using var similarCmd = new NpgsqlCommand(findSimilarSql, connection);
         similarCmd.Parameters.AddWithValue("MemoryId", memoryId);
@@ -322,19 +309,21 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         int maxOperations,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get recent memories not yet checked for contradictions
-        const string sql = @"
-            SELECT DISTINCT m.id
-            FROM memories m
-            WHERE m.embedding IS NOT NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM memory_contradictions mc
-                  WHERE mc.memory_id_a = m.id OR mc.memory_id_b = m.id
-              )
-            ORDER BY m.created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT DISTINCT m.id
+                                       FROM memories m
+                                       WHERE m.embedding IS NOT NULL
+                                         AND NOT EXISTS (
+                                             SELECT 1 FROM memory_contradictions mc
+                                             WHERE mc.memory_id_a = m.id OR mc.memory_id_b = m.id
+                                         )
+                                       ORDER BY m.created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         var memoryIds = (await connection.QueryAsync<Guid>(sql, new { Limit = maxOperations })).ToList();
 
@@ -358,17 +347,19 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         MemoryContradiction contradiction,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO memory_contradictions (
-                contradiction_id, memory_id_a, memory_id_b, contradiction_type,
-                confidence, detected_at, detection_method, evidence
-            ) VALUES (
-                @ContradictionId, @MemoryIdA, @MemoryIdB, @ContradictionType,
-                @Confidence, @DetectedAt, @DetectionMethod, @Evidence::jsonb
-            )
-            ON CONFLICT (memory_id_a, memory_id_b) DO NOTHING";
+        const string sql = """
+
+                                       INSERT INTO memory_contradictions (
+                                           contradiction_id, memory_id_a, memory_id_b, contradiction_type,
+                                           confidence, detected_at, detection_method, evidence
+                                       ) VALUES (
+                                           @ContradictionId, @MemoryIdA, @MemoryIdB, @ContradictionType,
+                                           @Confidence, @DetectedAt, @DetectionMethod, @Evidence::jsonb
+                                       )
+                                       ON CONFLICT (memory_id_a, memory_id_b) DO NOTHING
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -394,14 +385,16 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             throw new ArgumentException("At least 2 memories required for merge", nameof(memoryIds));
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Get all memories
-        const string getMemoriesSql = @"
-            SELECT id, content, embedding, created_at
-            FROM memories
-            WHERE id = ANY(@MemoryIds)
-            ORDER BY created_at";
+        const string getMemoriesSql = """
+
+                                                  SELECT id, content, embedding, created_at
+                                                  FROM memories
+                                                  WHERE id = ANY(@MemoryIds)
+                                                  ORDER BY created_at
+                                      """;
 
         await using var cmd = new NpgsqlCommand(getMemoriesSql, connection);
         cmd.Parameters.AddWithValue("MemoryIds", idList.ToArray());
@@ -431,13 +424,15 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         // Create merged content
         var mergedContent = string.Join("\n---\n", memories.Select(m => m.Content));
-        var mergedEmbedding = await _embeddingService.EmbedTextAsync(mergedContent);
+        var mergedEmbedding = await embeddingService.EmbedTextAsync(mergedContent);
         var targetId = Guid.CreateVersion7();
 
         // Create merged memory
-        const string insertMergedSql = @"
-            INSERT INTO memories (id, content, embedding, source, metadata)
-            VALUES (@Id, @Content, @Embedding, 'merged', @Metadata::jsonb)";
+        const string insertMergedSql = """
+
+                                                   INSERT INTO memories (id, content, embedding, source, metadata)
+                                                   VALUES (@Id, @Content, @Embedding, 'merged', @Metadata::jsonb)
+                                       """;
 
         await using var insertCmd = new NpgsqlCommand(insertMergedSql, connection);
         insertCmd.Parameters.AddWithValue("Id", targetId);
@@ -453,14 +448,16 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         await insertCmd.ExecuteNonQueryAsync(cancellationToken);
 
         // Transfer entity links
-        const string transferEntitiesSql = @"
-            INSERT INTO memory_entities (memory_id, entity_id, relevance)
-            SELECT @TargetId, entity_id, MAX(relevance)
-            FROM memory_entities
-            WHERE memory_id = ANY(@SourceIds)
-            GROUP BY entity_id
-            ON CONFLICT (memory_id, entity_id) DO UPDATE SET
-                relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)";
+        const string transferEntitiesSql = """
+
+                                                       INSERT INTO memory_entities (memory_id, entity_id, relevance)
+                                                       SELECT @TargetId, entity_id, MAX(relevance)
+                                                       FROM memory_entities
+                                                       WHERE memory_id = ANY(@SourceIds)
+                                                       GROUP BY entity_id
+                                                       ON CONFLICT (memory_id, entity_id) DO UPDATE SET
+                                                           relevance = GREATEST(memory_entities.relevance, EXCLUDED.relevance)
+                                           """;
 
         await connection.ExecuteAsync(transferEntitiesSql, new
         {
@@ -469,14 +466,16 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         });
 
         // Log the merge
-        const string logMergeSql = @"
-            INSERT INTO memory_merges (
-                source_memory_ids, target_memory_id, merge_type,
-                similarity_score, merged_by, metadata
-            ) VALUES (
-                @SourceIds, @TargetId, 'semantic_duplicate',
-                @Similarity, @MergedBy, '{}'::jsonb
-            )";
+        const string logMergeSql = """
+
+                                               INSERT INTO memory_merges (
+                                                   source_memory_ids, target_memory_id, merge_type,
+                                                   similarity_score, merged_by, metadata
+                                               ) VALUES (
+                                                   @SourceIds, @TargetId, 'semantic_duplicate',
+                                                   @Similarity, @MergedBy, '{}'::jsonb
+                                               )
+                                   """;
 
         await connection.ExecuteAsync(logMergeSql, new
         {
@@ -487,11 +486,13 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         });
 
         // Soft-delete source memories (mark as merged)
-        const string markMergedSql = @"
-            UPDATE memories
-            SET metadata = COALESCE(metadata, '{}'::jsonb) ||
-                jsonb_build_object('merged_into', @TargetId::text, 'merged_at', NOW()::text)
-            WHERE id = ANY(@SourceIds)";
+        const string markMergedSql = """
+
+                                                 UPDATE memories
+                                                 SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+                                                     jsonb_build_object('merged_into', @TargetId::text, 'merged_at', NOW()::text)
+                                                 WHERE id = ANY(@SourceIds)
+                                     """;
 
         await connection.ExecuteAsync(markMergedSql, new
         {
@@ -499,7 +500,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             SourceIds = idList.ToArray()
         });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Merged {Count} memories into {TargetId} with similarity {Similarity:F3}",
             idList.Count, targetId, avgSimilarity);
 
@@ -511,31 +512,33 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         int maxOperations,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find similar memory pairs not yet merged
-        const string findDuplicatesSql = @"
-            WITH memory_pairs AS (
-                SELECT
-                    m1.id as id_a,
-                    m2.id as id_b,
-                    1 - (m1.embedding <=> m2.embedding) as similarity
-                FROM memories m1
-                JOIN memories m2 ON m1.id < m2.id
-                WHERE m1.embedding IS NOT NULL
-                  AND m2.embedding IS NOT NULL
-                  AND 1 - (m1.embedding <=> m2.embedding) >= @Threshold
-                  AND NOT EXISTS (
-                      SELECT 1 FROM memory_merges mm
-                      WHERE m1.id = ANY(mm.source_memory_ids) OR m2.id = ANY(mm.source_memory_ids)
-                  )
-                  AND m1.metadata->>'merged_into' IS NULL
-                  AND m2.metadata->>'merged_into' IS NULL
-            )
-            SELECT id_a, id_b, similarity
-            FROM memory_pairs
-            ORDER BY similarity DESC
-            LIMIT @Limit";
+        const string findDuplicatesSql = """
+
+                                                     WITH memory_pairs AS (
+                                                         SELECT
+                                                             m1.id as id_a,
+                                                             m2.id as id_b,
+                                                             1 - (m1.embedding <=> m2.embedding) as similarity
+                                                         FROM memories m1
+                                                         JOIN memories m2 ON m1.id < m2.id
+                                                         WHERE m1.embedding IS NOT NULL
+                                                           AND m2.embedding IS NOT NULL
+                                                           AND 1 - (m1.embedding <=> m2.embedding) >= @Threshold
+                                                           AND NOT EXISTS (
+                                                               SELECT 1 FROM memory_merges mm
+                                                               WHERE m1.id = ANY(mm.source_memory_ids) OR m2.id = ANY(mm.source_memory_ids)
+                                                           )
+                                                           AND m1.metadata->>'merged_into' IS NULL
+                                                           AND m2.metadata->>'merged_into' IS NULL
+                                                     )
+                                                     SELECT id_a, id_b, similarity
+                                                     FROM memory_pairs
+                                                     ORDER BY similarity DESC
+                                                     LIMIT @Limit
+                                         """;
 
         var pairs = (await connection.QueryAsync<(Guid id_a, Guid id_b, float similarity)>(
             findDuplicatesSql,
@@ -564,7 +567,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to merge memories {IdA} and {IdB}", idA, idB);
+                logger.LogWarning(ex, "Failed to merge memories {IdA} and {IdB}", idA, idB);
             }
 
             if (results.Count >= maxOperations)
@@ -581,22 +584,24 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         float decayFactor,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Apply decay to memories not accessed recently
-        const string sql = @"
-            WITH decayed AS (
-                UPDATE memory_projections mp
-                SET confidence_score = GREATEST(0.1, confidence_score * @DecayFactor),
-                    last_reinforced_at = NOW()
-                WHERE last_accessed_at < NOW() - @MaxAge::interval
-                  AND confidence_score > 0.1
-                  AND is_active = TRUE
-                RETURNING memory_id, confidence_score
-            )
-            INSERT INTO memory_decay_log (memory_id, previous_confidence, new_confidence, decay_factor, decay_reason)
-            SELECT memory_id, confidence_score / @DecayFactor, confidence_score, @DecayFactor, 'time_decay'
-            FROM decayed";
+        const string sql = """
+
+                                       WITH decayed AS (
+                                           UPDATE memory_projections mp
+                                           SET confidence_score = GREATEST(0.1, confidence_score * @DecayFactor),
+                                               last_reinforced_at = NOW()
+                                           WHERE last_accessed_at < NOW() - @MaxAge::interval
+                                             AND confidence_score > 0.1
+                                             AND is_active = TRUE
+                                           RETURNING memory_id, confidence_score
+                                       )
+                                       INSERT INTO memory_decay_log (memory_id, previous_confidence, new_confidence, decay_factor, decay_reason)
+                                       SELECT memory_id, confidence_score / @DecayFactor, confidence_score, @DecayFactor, 'time_decay'
+                                       FROM decayed
+                           """;
 
         var affected = await connection.ExecuteAsync(sql, new
         {
@@ -606,7 +611,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         if (affected > 0)
         {
-            _logger.LogDebug("Applied decay to {Count} memories older than {MaxAge}", affected, maxAge);
+            logger.LogDebug("Applied decay to {Count} memories older than {MaxAge}", affected, maxAge);
         }
 
         return affected;
@@ -624,20 +629,22 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
             return 0;
         }
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            WITH reinforced AS (
-                UPDATE memory_projections mp
-                SET confidence_score = LEAST(1.0, confidence_score * @ReinforcementFactor),
-                    last_reinforced_at = NOW()
-                WHERE memory_id = ANY(@MemoryIds)
-                  AND is_active = TRUE
-                RETURNING memory_id, confidence_score
-            )
-            INSERT INTO memory_reinforcements (memory_id, previous_confidence, new_confidence, reinforcement_factor, reinforcement_reason)
-            SELECT memory_id, confidence_score / @ReinforcementFactor, confidence_score, @ReinforcementFactor, @Reason
-            FROM reinforced";
+        const string sql = """
+
+                                       WITH reinforced AS (
+                                           UPDATE memory_projections mp
+                                           SET confidence_score = LEAST(1.0, confidence_score * @ReinforcementFactor),
+                                               last_reinforced_at = NOW()
+                                           WHERE memory_id = ANY(@MemoryIds)
+                                             AND is_active = TRUE
+                                           RETURNING memory_id, confidence_score
+                                       )
+                                       INSERT INTO memory_reinforcements (memory_id, previous_confidence, new_confidence, reinforcement_factor, reinforcement_reason)
+                                       SELECT memory_id, confidence_score / @ReinforcementFactor, confidence_score, @ReinforcementFactor, @Reason
+                                       FROM reinforced
+                           """;
 
         var affected = await connection.ExecuteAsync(sql, new
         {
@@ -648,7 +655,7 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
         if (affected > 0)
         {
-            _logger.LogDebug("Reinforced {Count} memories with factor {Factor}: {Reason}",
+            logger.LogDebug("Reinforced {Count} memories with factor {Factor}: {Reason}",
                 affected, reinforcementFactor, reason);
         }
 
@@ -657,18 +664,20 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
 
     private async Task<List<Guid>> GetStableMemoryIdsAsync(int limit, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         // Find memories with high access frequency and stable confidence
-        const string sql = @"
-            SELECT memory_id
-            FROM memory_projections
-            WHERE is_active = TRUE
-              AND access_count >= 5
-              AND confidence_score > 0.6
-              AND last_accessed_at > NOW() - INTERVAL '7 days'
-            ORDER BY access_count DESC, confidence_score DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT memory_id
+                                       FROM memory_projections
+                                       WHERE is_active = TRUE
+                                         AND access_count >= 5
+                                         AND confidence_score > 0.6
+                                         AND last_accessed_at > NOW() - INTERVAL '7 days'
+                                       ORDER BY access_count DESC, confidence_score DESC
+                                       LIMIT @Limit
+                           """;
 
         var ids = await connection.QueryAsync<Guid>(sql, new { Limit = limit });
         return ids.ToList();
@@ -679,18 +688,20 @@ public sealed class MemorySelfHealingEngine : IMemorySelfHealing
         long durationMs,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         foreach (var op in operations)
         {
-            const string sql = @"
-                INSERT INTO self_healing_logs (
-                    operation_type, target_memory_ids, result_memory_id,
-                    operation_result, details, duration_ms, worker_id
-                ) VALUES (
-                    @OperationType, @TargetMemoryIds, @ResultMemoryId,
-                    @OperationResult, @Details::jsonb, @DurationMs, @WorkerId
-                )";
+            const string sql = """
+
+                                               INSERT INTO self_healing_logs (
+                                                   operation_type, target_memory_ids, result_memory_id,
+                                                   operation_result, details, duration_ms, worker_id
+                                               ) VALUES (
+                                                   @OperationType, @TargetMemoryIds, @ResultMemoryId,
+                                                   @OperationResult, @Details::jsonb, @DurationMs, @WorkerId
+                                               )
+                               """;
 
             await connection.ExecuteAsync(sql, new
             {

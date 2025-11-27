@@ -49,8 +49,10 @@ public sealed class ProofService : IProofService
         {
             // Check if RLS is enabled
             var rlsEnabled = await conn.QueryFirstOrDefaultAsync<bool>(
-                @"SELECT relrowsecurity FROM pg_class
-                  WHERE relname = @Table AND relnamespace = 'public'::regnamespace",
+                """
+                SELECT relrowsecurity FROM pg_class
+                                  WHERE relname = @Table AND relnamespace = 'public'::regnamespace
+                """,
                 new { Table = table });
 
             checks.Add(new IsolationCheck
@@ -63,11 +65,13 @@ public sealed class ProofService : IProofService
 
             // Check if tenant isolation policy exists
             var policyExists = await conn.QueryFirstOrDefaultAsync<bool>(
-                @"SELECT EXISTS (
-                    SELECT 1 FROM pg_policies
-                    WHERE tablename = @Table
-                      AND (qual LIKE '%tenant_id%' OR qual LIKE '%current_tenant_id%')
-                  )",
+                """
+                SELECT EXISTS (
+                                    SELECT 1 FROM pg_policies
+                                    WHERE tablename = @Table
+                                      AND (qual LIKE '%tenant_id%' OR qual LIKE '%current_tenant_id%')
+                                  )
+                """,
                 new { Table = table });
 
             checks.Add(new IsolationCheck
@@ -163,9 +167,11 @@ public sealed class ProofService : IProofService
 
         // Get records in sequence order
         var records = await conn.QueryAsync<AuditRecordDto>(
-            $@"SELECT sequence_number, entry_hash, previous_hash, occurred_at
-               FROM admin_audit_log {whereClause}
-               ORDER BY sequence_number",
+            $"""
+             SELECT sequence_number, entry_hash, previous_hash, occurred_at
+                            FROM admin_audit_log {whereClause}
+                            ORDER BY sequence_number
+             """,
             parameters);
 
         var recordList = records.ToList();
@@ -225,13 +231,15 @@ public sealed class ProofService : IProofService
 
         // Get tenant's retention policy
         var policy = await conn.QueryFirstOrDefaultAsync<RetentionPolicyDto>(
-            @"SELECT
-                COALESCE(ts.memory_retention_days, 365) AS memory_retention_days,
-                COALESCE(ts.audit_log_retention_days, 730) AS audit_log_retention_days,
-                COALESCE(ts.deleted_data_retention_days, 30) AS deleted_data_retention_days,
-                COALESCE(ts.auto_delete_enabled, FALSE) AS auto_delete_enabled
-              FROM tenant_settings ts
-              WHERE ts.tenant_id = @TenantId::uuid",
+            """
+            SELECT
+                            COALESCE(ts.memory_retention_days, 365) AS memory_retention_days,
+                            COALESCE(ts.audit_log_retention_days, 730) AS audit_log_retention_days,
+                            COALESCE(ts.deleted_data_retention_days, 30) AS deleted_data_retention_days,
+                            COALESCE(ts.auto_delete_enabled, FALSE) AS auto_delete_enabled
+                          FROM tenant_settings ts
+                          WHERE ts.tenant_id = @TenantId::uuid
+            """,
             new { TenantId = tenantId });
 
         policy ??= new RetentionPolicyDto
@@ -244,10 +252,12 @@ public sealed class ProofService : IProofService
 
         // Check for memories older than retention policy
         var overRetainedMemories = await conn.QueryFirstOrDefaultAsync<long>(
-            @"SELECT COUNT(*) FROM memories
-              WHERE tenant_id = @TenantId::uuid
-                AND is_active = FALSE
-                AND created_at < NOW() - (@Days || ' days')::INTERVAL",
+            """
+            SELECT COUNT(*) FROM memories
+                          WHERE tenant_id = @TenantId::uuid
+                            AND is_active = FALSE
+                            AND created_at < NOW() - (@Days || ' days')::INTERVAL
+            """,
             new { TenantId = tenantId, Days = policy.memory_retention_days });
 
         if (overRetainedMemories > 0)
@@ -263,9 +273,11 @@ public sealed class ProofService : IProofService
 
         // Check audit logs older than retention policy
         var overRetainedAuditLogs = await conn.QueryFirstOrDefaultAsync<long>(
-            @"SELECT COUNT(*) FROM admin_audit_log
-              WHERE tenant_id = @TenantId::uuid
-                AND occurred_at < NOW() - (@Days || ' days')::INTERVAL",
+            """
+            SELECT COUNT(*) FROM admin_audit_log
+                          WHERE tenant_id = @TenantId::uuid
+                            AND occurred_at < NOW() - (@Days || ' days')::INTERVAL
+            """,
             new { TenantId = tenantId, Days = policy.audit_log_retention_days });
 
         if (overRetainedAuditLogs > 0)
@@ -442,11 +454,13 @@ public sealed class ProofService : IProofService
 
         // Check memories with content_hash
         var memories = await conn.QueryAsync<MemoryIntegrityDto>(
-            @"SELECT id, content, content_hash
-              FROM memories
-              WHERE tenant_id = @TenantId::uuid
-                AND content_hash IS NOT NULL
-              LIMIT 1000",
+            """
+            SELECT id, content, content_hash
+                          FROM memories
+                          WHERE tenant_id = @TenantId::uuid
+                            AND content_hash IS NOT NULL
+                          LIMIT 1000
+            """,
             new { TenantId = tenantId });
 
         var totalRecords = 0L;
@@ -569,8 +583,10 @@ public sealed class ProofService : IProofService
 
             // Try to access memories from another tenant
             var otherTenantCount = await conn.QueryFirstOrDefaultAsync<long>(
-                @"SELECT COUNT(*) FROM memories
-                  WHERE tenant_id != @TenantId::uuid",
+                """
+                SELECT COUNT(*) FROM memories
+                                  WHERE tenant_id != @TenantId::uuid
+                """,
                 new { TenantId = tenantId });
 
             // If RLS is working, this should return 0 (blocked by policy)

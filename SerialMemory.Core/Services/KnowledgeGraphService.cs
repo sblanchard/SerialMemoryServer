@@ -7,21 +7,14 @@ namespace SerialMemory.Core.Services;
 /// Orchestration service for knowledge graph operations.
 /// Coordinates embedding generation, entity extraction, and storage.
 /// </summary>
-public class KnowledgeGraphService
+public class KnowledgeGraphService(
+    IKnowledgeGraphStore store,
+    IEmbeddingService embeddingService,
+    IEntityExtractionService entityExtractionService)
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly IEntityExtractionService _entityExtractionService;
-
-    public KnowledgeGraphService(
-        IKnowledgeGraphStore store,
-        IEmbeddingService embeddingService,
-        IEntityExtractionService entityExtractionService)
-    {
-        _store = store ?? throw new ArgumentNullException(nameof(store));
-        _embeddingService = embeddingService ?? throw new ArgumentNullException(nameof(embeddingService));
-        _entityExtractionService = entityExtractionService ?? throw new ArgumentNullException(nameof(entityExtractionService));
-    }
+    private readonly IKnowledgeGraphStore _store = store ?? throw new ArgumentNullException(nameof(store));
+    private readonly IEmbeddingService _embeddingService = embeddingService ?? throw new ArgumentNullException(nameof(embeddingService));
+    private readonly IEntityExtractionService _entityExtractionService = entityExtractionService ?? throw new ArgumentNullException(nameof(entityExtractionService));
 
     #region Memory Operations
 

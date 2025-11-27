@@ -33,7 +33,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: contextdb
-    ports: ["5432:5432"]
+    ports: ["5435:5432"]
     volumes:
       - ./ops/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 

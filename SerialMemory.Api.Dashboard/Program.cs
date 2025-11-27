@@ -1,10 +1,11 @@
+using System.Diagnostics;
 using System.Security.Claims;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
+using SerialMemory.Core.Telemetry;
 using SerialMemory.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,7 +16,7 @@ var postgresPort = builder.Configuration["POSTGRES_PORT"] ?? "5432";
 var postgresUser = builder.Configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = builder.Configuration["POSTGRES_DB"] ?? "contextdb";
-var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
+var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword};Timeout=10;Command Timeout=10;Pooling=true;Minimum Pool Size=1;Maximum Pool Size=20";
 
 var jwtSecret = builder.Configuration["JWT_SECRET"] ?? "default-development-secret-32chars!!";
 var jwtIssuer = builder.Configuration["JWT_ISSUER"] ?? "serialmemory";
@@ -100,13 +101,36 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 
+// Add production-grade telemetry with Prometheus exporter
+builder.Services.AddSerialMemoryTelemetry("SerialMemory.Api.Dashboard", "1.0.0");
+
 var app = builder.Build();
+
+// Validate database connection at startup
+try
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await using var testConn = new Npgsql.NpgsqlConnection(connectionString);
+    await testConn.OpenAsync(cts.Token);
+    Console.WriteLine($"[OK] Database connection verified: {postgresHost}:{postgresPort}/{postgresDb}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[ERROR] Database connection failed: {ex.Message}");
+    Console.WriteLine($"[ERROR] Connection string: Host={postgresHost};Port={postgresPort};Database={postgresDb}");
+}
 
 // Configure pipeline
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
+
+// Add metrics middleware early in pipeline
+app.UseSerialMemoryMetrics();
+
+// Map Prometheus /metrics endpoint
+app.MapSerialMemoryMetrics();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -346,6 +370,7 @@ app.MapPost("/signup", async (
     try
     {
         var result = await apiKeyService.SignupAsync(request, ct);
+        Metrics.TenantSignupTotal.Add(1);
         return Results.Created($"/tenant/{result.TenantId}", result);
     }
     catch (ArgumentException ex)
@@ -391,7 +416,7 @@ app.MapPost("/api-keys", async (
 })
 .WithName("CreateApiKey")
 .WithDescription("Creates a new API key for the tenant")
-.RequireAuthorization("Admin")
+.RequireAuthorization()
 .Produces<ApiKeyCreateResult>(StatusCodes.Status201Created)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status401Unauthorized)
@@ -412,7 +437,7 @@ app.MapGet("/api-keys", async (
 })
 .WithName("ListApiKeys")
 .WithDescription("Lists all API keys for the tenant (secrets not included)")
-.RequireAuthorization("Admin")
+.RequireAuthorization()
 .Produces<IReadOnlyList<ApiKeyInfo>>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status401Unauthorized);
 
@@ -435,7 +460,7 @@ app.MapGet("/api-keys/{id:guid}", async (
 })
 .WithName("GetApiKey")
 .WithDescription("Gets details for a specific API key")
-.RequireAuthorization("Admin")
+.RequireAuthorization()
 .Produces<ApiKeyInfo>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status401Unauthorized)
 .Produces(StatusCodes.Status404NotFound);
@@ -459,7 +484,7 @@ app.MapDelete("/api-keys/{id:guid}", async (
 })
 .WithName("RevokeApiKey")
 .WithDescription("Revokes an API key (soft delete)")
-.RequireAuthorization("Admin")
+.RequireAuthorization()
 .Produces(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status401Unauthorized)
 .Produces(StatusCodes.Status404NotFound);
@@ -662,8 +687,16 @@ app.MapPost("/webhook/stripe", async (
 
     if (!result.Success && !result.AlreadyProcessed)
     {
+        Metrics.StripeFailuresTotal.Add(1, new TagList { { "type", result.ErrorCode ?? "webhook_error" } });
         logger.LogError("Stripe webhook processing failed: {Error}", result.ErrorMessage);
         return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    // Track successful payment events
+    if (result.EventType?.Contains("payment_intent.succeeded") == true ||
+        result.EventType?.Contains("invoice.paid") == true)
+    {
+        Metrics.StripePaymentsTotal.Add(1);
     }
 
     return Results.Ok(new { received = true, eventType = result.EventType, alreadyProcessed = result.AlreadyProcessed });

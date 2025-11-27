@@ -19,7 +19,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Tests", "Seria
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.CoreExport", "SerialMemory.CoreExport\SerialMemory.CoreExport.csproj", "{40D729E9-098F-4CE4-8F4A-E6E0F9A071EE}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SerialMemory.Web", "SerialMemory.Web", "{019733BC-0AE7-7000-8000-B1A2C3D4E5F6}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SerialMemory.Web.SolutionItems", "SerialMemory.Web.SolutionItems", "{019733BC-0AE7-7000-8000-B1A2C3D4E5F6}"
 	ProjectSection(SolutionItems) = preProject
 		SerialMemory.Web\package.json = SerialMemory.Web\package.json
 		SerialMemory.Web\Dockerfile = SerialMemory.Web\Dockerfile

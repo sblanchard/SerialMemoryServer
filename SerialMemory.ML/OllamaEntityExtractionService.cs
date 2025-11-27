@@ -17,51 +17,145 @@ namespace SerialMemory.ML;
 ///
 /// Install a model: ollama pull phi3
 /// </summary>
-public sealed class OllamaEntityExtractionService : IEntityExtractionService, IDisposable
+public sealed class OllamaEntityExtractionService(
+    string baseUrl = "http://localhost:11434",
+    string model = "qwen2.5:7b")
+    : IEntityExtractionService, IDisposable
 {
-    private readonly HttpClient _httpClient;
-    private readonly string _model;
-    private readonly JsonSerializerOptions _jsonOptions;
-
-    private static readonly string ExtractionPrompt = """
-        Extract entities and relationships from the following text.
-
-        Entity types to extract:
-        - PERSON: People's names
-        - ORG: Organizations, companies, teams
-        - GPE: Geographic locations (cities, countries)
-        - PRODUCT: Products, software, tools
-        - TECH: Technologies, frameworks, languages
-        - DATE: Dates and time references
-        - EVENT: Events, meetings, releases
-
-        Return ONLY valid JSON in this exact format (no markdown, no explanation):
-        {"entities":[{"text":"entity name","label":"TYPE"}],"relationships":[{"source":"entity1","target":"entity2","type":"RELATIONSHIP_TYPE"}]}
-
-        Common relationship types: WORKS_AT, WORKS_ON, CREATED, USES, INTEGRATES_WITH, FOUNDED, KNOWS, LOCATED_IN
-
-        Text to analyze:
-        {TEXT}
-
-        JSON output:
-        """;
-
-    public OllamaEntityExtractionService(
-        string baseUrl = "http://localhost:11434",
-        string model = "phi3")
+    private readonly HttpClient _httpClient = new()
     {
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(baseUrl),
-            Timeout = TimeSpan.FromSeconds(120)
-        };
-        _model = model;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-    }
+        BaseAddress = new Uri(baseUrl),
+        Timeout = TimeSpan.FromSeconds(120)
+    };
+
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private const string ExtractionPrompt = """
+                                            You are an engineering knowledge extraction engine.
+                                            
+                                            TASK:
+                                            Extract structured entities and relationships from the input text.
+                                            
+                                            You must handle BOTH software engineering and physical engineering concepts.
+                                            
+                                            ────────────────────────────────────────────
+                                            ENTITY TYPES (use ONLY these)
+                                            ────────────────────────────────────────────
+                                            
+                                            PERSON
+                                            ORG
+                                            TEAM
+                                            REPO
+                                            PROJECT
+                                            SERVICE
+                                            MODULE
+                                            API
+                                            DATABASE
+                                            TABLE
+                                            MESSAGE
+                                            CONFIG
+                                            ENV
+                                            VERSION
+                                            DEPLOYMENT
+                                            INCIDENT
+                                            BUG
+                                            TEST
+                                            TECH
+                                            PRODUCT
+                                            EVENT
+                                            DATE
+                                            
+                                            COMPONENT
+                                            ASSEMBLY
+                                            MATERIAL
+                                            SIGNAL
+                                            POWER_RAIL
+                                            VOLTAGE
+                                            CURRENT
+                                            FREQUENCY
+                                            TEMPERATURE
+                                            PRESSURE
+                                            FORCE
+                                            TORQUE
+                                            DIMENSION
+                                            TOLERANCE
+                                            STANDARD
+                                            TOOL
+                                            LOCATION
+                                            
+                                            ────────────────────────────────────────────
+                                            RELATIONSHIP TYPES (use ONLY these)
+                                            ────────────────────────────────────────────
+                                            
+                                            OWNS
+                                            MAINTAINS
+                                            WORKS_AT
+                                            WORKS_ON
+                                            IMPLEMENTS
+                                            CALLS
+                                            DEPENDS_ON
+                                            USES
+                                            INTEGRATES_WITH
+                                            DEPLOYED_TO
+                                            RUNS_ON
+                                            EMITS
+                                            CONSUMES
+                                            CONFIGURED_BY
+                                            TRIGGERS
+                                            VERSIONED_AS
+                                            CAUSED
+                                            FIXED_BY
+                                            TESTS
+                                            RELATED_TO
+                                            
+                                            CONNECTS_TO
+                                            MOUNTED_ON
+                                            FEEDS
+                                            CONVERTS
+                                            MEASURES
+                                            CONTROLS
+                                            CARRIES
+                                            REQUIRES
+                                            LIMITED_BY
+                                            COMPLIES_WITH
+                                            FAILS_UNDER
+                                            CALIBRATED_BY
+                                            PART_OF
+                                            
+                                            ────────────────────────────────────────────
+                                            STRICT RULES
+                                            ────────────────────────────────────────────
+                                            
+                                            - Extract ONLY what is explicitly stated in the text.
+                                            - Never assume unstated facts.
+                                            - Never fabricate entities or relations.
+                                            - Preserve original casing and wording of entity text.
+                                            - Do NOT create relationships unless BOTH entities are explicitly present.
+                                            - Do NOT guess types.
+                                            - Do NOT repeat entities.
+                                            - Output MUST be valid JSON.
+                                            - No comments, no markdown, no explanations.
+                                            
+                                            ────────────────────────────────────────────
+                                            OUTPUT FORMAT (exact)
+                                            ────────────────────────────────────────────
+                                            
+                                            {"entities":[{"text":"...","label":"..."}],"relationships":[{"source":"...","target":"...","type":"..."}]}
+                                            
+                                            If none found:
+                                            
+                                            {"entities":[],"relationships":[]}
+                                            
+                                            ────────────────────────────────────────────
+                                            INPUT TEXT:
+                                            {TEXT}
+                                            
+                                            OUTPUT JSON:
+                                            """;
 
     public async Task<List<ExtractedEntity>> ExtractEntitiesAsync(string text, CancellationToken cancellationToken = default)
     {
@@ -91,7 +185,7 @@ public sealed class OllamaEntityExtractionService : IEntityExtractionService, ID
 
         var request = new OllamaGenerateRequest
         {
-            Model = _model,
+            Model = model,
             Prompt = prompt,
             Stream = false,
             Options = new OllamaOptions
@@ -108,20 +202,15 @@ public sealed class OllamaEntityExtractionService : IEntityExtractionService, ID
 
             var result = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(_jsonOptions, cancellationToken);
 
-            if (string.IsNullOrWhiteSpace(result?.Response))
-            {
-                return ([], []);
-            }
-
-            return ParseExtractionResult(result.Response, text);
+            return string.IsNullOrWhiteSpace(result?.Response) ? ([], []) : ParseExtractionResult(result.Response, text);
         }
         catch (HttpRequestException ex)
         {
-            throw new Exception($"Ollama API error. Is Ollama running? Is model '{_model}' installed? Run: ollama pull {_model}", ex);
+            throw new Exception($"Ollama API error. Is Ollama running? Is model '{model}' installed? Run: ollama pull {model}", ex);
         }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
         {
-            throw new Exception($"Ollama request timed out. Text may be too long or model '{_model}' may be slow.", ex);
+            throw new Exception($"Ollama request timed out. Text may be too long or model '{model}' may be slow.", ex);
         }
     }
 

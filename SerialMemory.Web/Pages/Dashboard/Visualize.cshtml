@@ -1,0 +1,592 @@
+@page "/dashboard/visualize"
+@model SerialMemory.Web.Pages.Dashboard.VisualizeModel
+@{
+    ViewData["Title"] = "Visual Simulations";
+}
+
+@section Styles {
+<style>
+    #graph-container {
+        width: 100%;
+        height: calc(100vh - 300px);
+        min-height: 500px;
+        background: var(--midnight);
+        border-radius: 0.75rem;
+        overflow: hidden;
+    }
+    .node-tooltip {
+        position: absolute;
+        padding: 8px 12px;
+        background: var(--navy);
+        border: 1px solid var(--slate);
+        border-radius: 8px;
+        color: var(--soft-white);
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+        max-width: 250px;
+    }
+    .pulse-critical {
+        animation: pulse-red 1.5s ease-in-out infinite;
+    }
+    .pulse-high {
+        animation: pulse-orange 2s ease-in-out infinite;
+    }
+    @@keyframes pulse-red {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+        50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+    }
+    @@keyframes pulse-orange {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
+        50% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+    }
+    .metadata-drawer {
+        transform: translateX(100%);
+        transition: transform 0.3s ease;
+    }
+    .metadata-drawer.open {
+        transform: translateX(0);
+    }
+</style>
+}
+
+<div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold text-soft-white">Visual Simulations</h1>
+        <p class="mt-2 text-graphite">Interactive 3D knowledge graph visualization with risk overlays.</p>
+    </div>
+
+    @if (Model.IsSampleData)
+    {
+        <div class="mb-6 bg-blue-900/30 border border-blue-500/30 text-blue-300 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                </svg>
+                <span><strong>Sample Data:</strong> Showing demo graph. Select a project to visualize real data.</span>
+            </div>
+        </div>
+    }
+
+    <div class="flex gap-6">
+        <!-- Main Graph Area -->
+        <div class="flex-1">
+            <!-- Graph Controls Bar -->
+            <div class="card mb-4 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <!-- 2D/3D Toggle -->
+                    <div class="flex items-center gap-2">
+                        <span class="text-graphite text-sm">View:</span>
+                        <div class="flex bg-midnight rounded-lg p-1">
+                            <button id="btn-2d" onclick="setDimension(2)" class="px-3 py-1 rounded text-sm text-graphite hover:text-soft-white transition">2D</button>
+                            <button id="btn-3d" onclick="setDimension(3)" class="px-3 py-1 rounded text-sm bg-slate text-soft-white transition">3D</button>
+                        </div>
+                    </div>
+
+                    <!-- Zoom Controls -->
+                    <div class="flex items-center gap-1">
+                        <button onclick="zoomIn()" class="p-2 bg-midnight hover:bg-slate rounded transition" title="Zoom In">
+                            <svg class="w-4 h-4 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                            </svg>
+                        </button>
+                        <button onclick="zoomOut()" class="p-2 bg-midnight hover:bg-slate rounded transition" title="Zoom Out">
+                            <svg class="w-4 h-4 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+                            </svg>
+                        </button>
+                        <button onclick="resetView()" class="p-2 bg-midnight hover:bg-slate rounded transition" title="Reset View">
+                            <svg class="w-4 h-4 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 text-sm text-graphite">
+                    <span id="node-count">0</span> nodes |
+                    <span id="link-count">0</span> links
+                </div>
+            </div>
+
+            <!-- Graph Container -->
+            <div id="graph-container" class="border border-slate relative">
+                <div id="loading-overlay" class="absolute inset-0 bg-midnight/80 flex items-center justify-center z-10">
+                    <div class="text-center">
+                        <svg class="animate-spin h-8 w-8 text-cyan mx-auto mb-2" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="text-graphite">Loading graph...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tooltip -->
+            <div id="node-tooltip" class="node-tooltip hidden"></div>
+        </div>
+
+        <!-- Right Control Panel -->
+        <div class="w-72 flex-shrink-0 space-y-4">
+            <!-- Project Selector -->
+            <div class="card">
+                <h3 class="text-sm font-semibold text-soft-white mb-3 flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    Project
+                </h3>
+                <select id="project-select" onchange="updateGraph()" class="w-full bg-midnight border border-slate rounded-lg px-3 py-2 text-soft-white focus:border-cyan focus:outline-none">
+                    <option value="">All Projects</option>
+                    @foreach (var project in Model.Projects)
+                    {
+                        <option value="@project" selected="@(Model.Project == project)">@project</option>
+                    }
+                </select>
+            </div>
+
+            <!-- Mode Selector -->
+            <div class="card">
+                <h3 class="text-sm font-semibold text-soft-white mb-3 flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    Mode
+                </h3>
+                <div class="space-y-2">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="mode" value="software" onchange="setMode('software')" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                        <span class="ml-2 text-sm text-graphite">Software</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="mode" value="hardware" onchange="setMode('hardware')" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                        <span class="ml-2 text-sm text-graphite">Hardware</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="mode" value="mixed" checked onchange="setMode('mixed')" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                        <span class="ml-2 text-sm text-graphite">Mixed</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Relationship Filters -->
+            <div class="card">
+                <h3 class="text-sm font-semibold text-soft-white mb-3">Relationship Filters</h3>
+                <div class="space-y-2 max-h-40 overflow-y-auto">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" checked onchange="toggleRelationship('calls')" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                        <span class="ml-2 text-sm text-graphite">Calls</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" checked onchange="toggleRelationship('uses')" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                        <span class="ml-2 text-sm text-graphite">Uses</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" checked onchange="toggleRelationship('reads')" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                        <span class="ml-2 text-sm text-graphite">Reads</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" checked onchange="toggleRelationship('writes')" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                        <span class="ml-2 text-sm text-graphite">Writes</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" checked onchange="toggleRelationship('manages')" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                        <span class="ml-2 text-sm text-graphite">Manages</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Risk Overlay Toggle -->
+            <div class="card">
+                <h3 class="text-sm font-semibold text-soft-white mb-3">Overlays</h3>
+                <label class="flex items-center cursor-pointer">
+                    <input type="checkbox" id="risk-overlay" checked onchange="toggleRiskOverlay()" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                    <span class="ml-2 text-sm text-graphite">Risk Indicators</span>
+                </label>
+                <label class="flex items-center cursor-pointer mt-2">
+                    <input type="checkbox" id="critical-paths" checked onchange="toggleCriticalPaths()" class="text-cyan focus:ring-cyan bg-midnight border-slate rounded" />
+                    <span class="ml-2 text-sm text-graphite">Critical Paths</span>
+                </label>
+            </div>
+
+            <!-- Legend -->
+            <div class="card">
+                <h3 class="text-sm font-semibold text-soft-white mb-3">Legend</h3>
+                <div class="space-y-2 text-xs">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                        <span class="text-graphite">Service</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                        <span class="text-graphite">Database</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-purple-500"></span>
+                        <span class="text-graphite">Module</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+                        <span class="text-graphite">Cache</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-cyan-500"></span>
+                        <span class="text-graphite">Gateway</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-gray-500"></span>
+                        <span class="text-graphite">Entity</span>
+                    </div>
+                    <hr class="border-slate my-2" />
+                    <div class="flex items-center gap-2">
+                        <span class="w-6 h-0.5 bg-red-500"></span>
+                        <span class="text-graphite">Critical Path</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-6 h-0.5 bg-slate"></span>
+                        <span class="text-graphite">Normal Link</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metadata Drawer (slides in on node click) -->
+    <div id="metadata-drawer" class="metadata-drawer fixed top-0 right-0 h-full w-80 bg-navy border-l border-slate z-50 p-6 overflow-y-auto">
+        <button onclick="closeDrawer()" class="absolute top-4 right-4 text-graphite hover:text-soft-white">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+        <h3 id="drawer-title" class="text-lg font-semibold text-soft-white mb-4"></h3>
+        <div id="drawer-content" class="space-y-4"></div>
+    </div>
+</div>
+
+@section Scripts {
+<!-- 3D Force Graph Library -->
+<script src="https://unpkg.com/3d-force-graph@1"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+<script>
+    const graphData = @Html.Raw(Model.GraphDataJson);
+    let graph;
+    let dimension = 3;
+    let showRiskOverlay = true;
+    let showCriticalPaths = true;
+    let visibleRelationships = new Set(['calls', 'uses', 'reads', 'writes', 'manages', 'triggers', 'publishes', 'stores', 'configures', 'monitors', 'collects', 'contains']);
+    let currentMode = 'mixed';
+
+    const typeColors = {
+        service: '#3B82F6',    // blue
+        database: '#22C55E',   // green
+        module: '#A855F7',     // purple
+        cache: '#EAB308',      // yellow
+        gateway: '#22D3EE',    // cyan
+        queue: '#F97316',      // orange
+        config: '#6B7280',     // gray
+        monitoring: '#EC4899', // pink
+        entity: '#6B7280'      // gray
+    };
+
+    function initGraph() {
+        const container = document.getElementById('graph-container');
+
+        graph = ForceGraph3D()(container)
+            .graphData(filterGraphData())
+            .nodeLabel(node => node.name)
+            .nodeColor(node => getNodeColor(node))
+            .nodeVal(node => showRiskOverlay ? (5 + node.risk * 15) : 5)
+            .linkColor(link => getLinkColor(link))
+            .linkWidth(link => link.critical && showCriticalPaths ? 3 : 1)
+            .linkDirectionalParticles(link => link.critical && showCriticalPaths ? 4 : 0)
+            .linkDirectionalParticleSpeed(0.005)
+            .linkDirectionalParticleColor(() => '#EF4444')
+            .onNodeClick(node => showNodeDetails(node))
+            .onNodeHover(node => handleNodeHover(node))
+            .onLinkHover(link => handleLinkHover(link))
+            .backgroundColor('#0B0F1A');
+
+        // Update counts
+        updateCounts();
+
+        // Hide loading
+        document.getElementById('loading-overlay').classList.add('hidden');
+    }
+
+    function filterGraphData() {
+        const filteredLinks = graphData.links.filter(link => visibleRelationships.has(link.type));
+        const linkedNodeIds = new Set();
+        filteredLinks.forEach(link => {
+            linkedNodeIds.add(link.source.id || link.source);
+            linkedNodeIds.add(link.target.id || link.target);
+        });
+
+        return {
+            nodes: graphData.nodes,
+            links: filteredLinks
+        };
+    }
+
+    function getNodeColor(node) {
+        if (showRiskOverlay && node.risk > 0.7) return '#EF4444'; // red for high risk
+        if (showRiskOverlay && node.risk > 0.4) return '#F97316'; // orange for medium risk
+        return typeColors[node.type] || '#6B7280';
+    }
+
+    function getLinkColor(link) {
+        if (link.critical && showCriticalPaths) return '#EF4444';
+        return '#374151';
+    }
+
+    function setDimension(dim) {
+        dimension = dim;
+        document.getElementById('btn-2d').classList.toggle('bg-slate', dim === 2);
+        document.getElementById('btn-2d').classList.toggle('text-soft-white', dim === 2);
+        document.getElementById('btn-3d').classList.toggle('bg-slate', dim === 3);
+        document.getElementById('btn-3d').classList.toggle('text-soft-white', dim === 3);
+
+        // Recreate graph with new dimension
+        const container = document.getElementById('graph-container');
+        container.innerHTML = '';
+
+        if (dim === 2) {
+            // Would use ForceGraph() for 2D - simplified for demo
+            initGraph(); // Using 3D for now
+        } else {
+            initGraph();
+        }
+    }
+
+    function zoomIn() {
+        const camera = graph.camera();
+        camera.position.z *= 0.8;
+    }
+
+    function zoomOut() {
+        const camera = graph.camera();
+        camera.position.z *= 1.2;
+    }
+
+    function resetView() {
+        graph.cameraPosition({ x: 0, y: 0, z: 300 }, { x: 0, y: 0, z: 0 }, 1000);
+    }
+
+    function setMode(mode) {
+        currentMode = mode;
+        updateGraph();
+    }
+
+    function toggleRelationship(type) {
+        if (visibleRelationships.has(type)) {
+            visibleRelationships.delete(type);
+        } else {
+            visibleRelationships.add(type);
+        }
+        graph.graphData(filterGraphData());
+        updateCounts();
+    }
+
+    function toggleRiskOverlay() {
+        showRiskOverlay = document.getElementById('risk-overlay').checked;
+        graph.nodeColor(node => getNodeColor(node))
+             .nodeVal(node => showRiskOverlay ? (5 + node.risk * 15) : 5);
+    }
+
+    function toggleCriticalPaths() {
+        showCriticalPaths = document.getElementById('critical-paths').checked;
+        graph.linkColor(link => getLinkColor(link))
+             .linkWidth(link => link.critical && showCriticalPaths ? 3 : 1)
+             .linkDirectionalParticles(link => link.critical && showCriticalPaths ? 4 : 0);
+    }
+
+    function updateCounts() {
+        const data = filterGraphData();
+        document.getElementById('node-count').textContent = data.nodes.length;
+        document.getElementById('link-count').textContent = data.links.length;
+    }
+
+    function handleNodeHover(node) {
+        const tooltip = document.getElementById('node-tooltip');
+        if (node) {
+            tooltip.innerHTML = `
+                <div class="font-semibold">${node.name}</div>
+                <div class="text-graphite">Type: ${node.type}</div>
+                ${showRiskOverlay ? `<div class="text-graphite">Risk: ${(node.risk * 100).toFixed(0)}%</div>` : ''}
+            `;
+            tooltip.classList.remove('hidden');
+            document.addEventListener('mousemove', moveTooltip);
+        } else {
+            tooltip.classList.add('hidden');
+            document.removeEventListener('mousemove', moveTooltip);
+        }
+    }
+
+    function handleLinkHover(link) {
+        const tooltip = document.getElementById('node-tooltip');
+        if (link) {
+            const sourceName = link.source.name || link.source;
+            const targetName = link.target.name || link.target;
+            tooltip.innerHTML = `
+                <div class="font-semibold">${sourceName} → ${targetName}</div>
+                <div class="text-graphite">Relationship: ${link.type}</div>
+                ${link.critical ? '<div class="text-red-400">Critical Path</div>' : ''}
+            `;
+            tooltip.classList.remove('hidden');
+            document.addEventListener('mousemove', moveTooltip);
+        } else {
+            tooltip.classList.add('hidden');
+            document.removeEventListener('mousemove', moveTooltip);
+        }
+    }
+
+    function moveTooltip(e) {
+        const tooltip = document.getElementById('node-tooltip');
+        tooltip.style.left = (e.pageX + 15) + 'px';
+        tooltip.style.top = (e.pageY + 15) + 'px';
+    }
+
+    function showNodeDetails(node) {
+        const drawer = document.getElementById('metadata-drawer');
+        const title = document.getElementById('drawer-title');
+        const content = document.getElementById('drawer-content');
+
+        title.textContent = node.name;
+
+        // Find connected nodes
+        const connections = graphData.links.filter(l =>
+            (l.source.id || l.source) === node.id || (l.target.id || l.target) === node.id
+        );
+
+        content.innerHTML = `
+            <div>
+                <span class="text-graphite text-sm">Type</span>
+                <div class="text-soft-white">${node.type}</div>
+            </div>
+            <div>
+                <span class="text-graphite text-sm">Group</span>
+                <div class="text-soft-white">${node.group}</div>
+            </div>
+            <div>
+                <span class="text-graphite text-sm">Risk Level</span>
+                <div class="flex items-center gap-2">
+                    <div class="flex-1 h-2 bg-midnight rounded-full overflow-hidden">
+                        <div class="h-full ${node.risk > 0.7 ? 'bg-red-500' : node.risk > 0.4 ? 'bg-orange-500' : 'bg-green-500'}" style="width: ${node.risk * 100}%"></div>
+                    </div>
+                    <span class="text-soft-white text-sm">${(node.risk * 100).toFixed(0)}%</span>
+                </div>
+            </div>
+            <div>
+                <span class="text-graphite text-sm">Connections (${connections.length})</span>
+                <div class="mt-2 space-y-1 max-h-48 overflow-y-auto">
+                    ${connections.map(c => {
+                        const isSource = (c.source.id || c.source) === node.id;
+                        const otherNode = isSource ? (c.target.name || c.target) : (c.source.name || c.source);
+                        const direction = isSource ? '→' : '←';
+                        return `<div class="text-sm text-graphite">${direction} ${otherNode} <span class="text-slate">(${c.type})</span></div>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+
+        drawer.classList.add('open');
+
+        // Focus on node
+        graph.cameraPosition(
+            { x: node.x + 100, y: node.y, z: node.z + 100 },
+            { x: node.x, y: node.y, z: node.z },
+            1000
+        );
+    }
+
+    function closeDrawer() {
+        document.getElementById('metadata-drawer').classList.remove('open');
+    }
+
+    function updateGraph() {
+        const project = document.getElementById('project-select').value;
+        window.location.href = `/dashboard/visualize?Project=${project}&Mode=${currentMode}`;
+    }
+
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', initGraph);
+
+    // ========================================
+    // LIVE SIGNALR UPDATES
+    // ========================================
+    let signalRConnection = null;
+
+    async function initLiveUpdates() {
+        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://@(ViewContext.HttpContext.Request.Host.ToString().Replace("5001", "5004"))';
+
+        signalRConnection = new signalR.HubConnectionBuilder()
+            .withUrl(apiBaseUrl + "/hubs/live")
+            .withAutomaticReconnect()
+            .configureLogging(signalR.LogLevel.Information)
+            .build();
+
+        signalRConnection.on("GraphChange", (evt) => {
+            console.log("Graph change:", evt);
+            handleGraphChange(evt);
+        });
+
+        signalRConnection.on("Subscribed", (stream) => {
+            console.log("Subscribed to:", stream);
+        });
+
+        try {
+            await signalRConnection.start();
+            console.log("SignalR connected for graph updates");
+            await signalRConnection.invoke("Subscribe", "graph.changes");
+        } catch (err) {
+            console.error("SignalR connection failed:", err);
+        }
+    }
+
+    function handleGraphChange(evt) {
+        // Show notification
+        showGraphNotification(evt);
+
+        // Update graph data dynamically
+        if (evt.eventType === 'node_created' && evt.nodeName) {
+            const newNode = {
+                id: evt.nodeId,
+                name: evt.nodeName,
+                type: evt.nodeType || 'entity',
+                risk: 0.1,
+                group: graphData.nodes.length % 4 + 1
+            };
+            graphData.nodes.push(newNode);
+            graph.graphData(filterGraphData());
+            updateCounts();
+        }
+    }
+
+    function showGraphNotification(evt) {
+        const notification = document.createElement('div');
+        notification.className = 'fixed top-4 right-4 bg-navy border border-cyan/50 rounded-lg p-4 shadow-xl z-50 animate-pulse';
+        notification.innerHTML = `
+            <div class="flex items-center gap-3">
+                <svg class="w-5 h-5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <div>
+                    <div class="text-soft-white font-medium">${evt.eventType.replace('_', ' ')}</div>
+                    <div class="text-graphite text-sm">${evt.nodeName || evt.edgeType || 'Graph updated'}</div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.remove();
+        }, 3000);
+    }
+
+    // Initialize SignalR after graph
+    document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(initLiveUpdates, 500);
+    });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+}

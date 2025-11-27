@@ -36,12 +36,14 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         await conn.ExecuteAsync(
-            @"INSERT INTO supervised_jobs
-              (job_id, tenant_id, job_type, payload, requested_by, max_retries,
-               heartbeat_timeout_seconds, priority, metadata, status, created_at)
-              VALUES
-              (@JobId, @TenantId, @JobType, @Payload, @RequestedBy, @MaxRetries,
-               @HeartbeatTimeoutSeconds, @Priority, @Metadata::jsonb, 'pending', NOW())",
+            """
+            INSERT INTO supervised_jobs
+                          (job_id, tenant_id, job_type, payload, requested_by, max_retries,
+                           heartbeat_timeout_seconds, priority, metadata, status, created_at)
+                          VALUES
+                          (@JobId, @TenantId, @JobType, @Payload, @RequestedBy, @MaxRetries,
+                           @HeartbeatTimeoutSeconds, @Priority, @Metadata::jsonb, 'pending', NOW())
+            """,
             new
             {
                 JobId = jobId,
@@ -73,13 +75,15 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var affected = await conn.ExecuteAsync(
-            @"UPDATE supervised_jobs
-              SET last_heartbeat = NOW(),
-                  progress_message = COALESCE(@ProgressMessage, progress_message),
-                  progress_percent = COALESCE(@ProgressPercent, progress_percent),
-                  status = CASE WHEN status = 'pending' THEN 'running' ELSE status END,
-                  started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
-              WHERE job_id = @JobId AND status IN ('pending', 'running', 'retrying')",
+            """
+            UPDATE supervised_jobs
+                          SET last_heartbeat = NOW(),
+                              progress_message = COALESCE(@ProgressMessage, progress_message),
+                              progress_percent = COALESCE(@ProgressPercent, progress_percent),
+                              status = CASE WHEN status = 'pending' THEN 'running' ELSE status END,
+                              started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
+                          WHERE job_id = @JobId AND status IN ('pending', 'running', 'retrying')
+            """,
             new { JobId = jobId, ProgressMessage = progressMessage, ProgressPercent = progressPercent });
 
         if (affected == 0)
@@ -96,12 +100,14 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         await conn.ExecuteAsync(
-            @"UPDATE supervised_jobs
-              SET status = 'completed',
-                  completed_at = NOW(),
-                  result_summary = @ResultSummary,
-                  progress_percent = 100
-              WHERE job_id = @JobId",
+            """
+            UPDATE supervised_jobs
+                          SET status = 'completed',
+                              completed_at = NOW(),
+                              result_summary = @ResultSummary,
+                              progress_percent = 100
+                          WHERE job_id = @JobId
+            """,
             new { JobId = jobId, ResultSummary = resultSummary });
 
         _logger.LogInformation("Job {JobId} completed successfully", jobId);
@@ -139,14 +145,16 @@ public sealed class JobSupervisionService : IJobSupervisionService
         {
             // Schedule retry
             await conn.ExecuteAsync(
-                @"UPDATE supervised_jobs
-                  SET status = 'retrying',
-                      retry_count = @RetryCount,
-                      error_message = @ErrorMessage,
-                      error_history = @ErrorHistory,
-                      last_heartbeat = NULL,
-                      scheduled_retry_at = NOW() + INTERVAL '1 minute' * POWER(2, @RetryCount)
-                  WHERE job_id = @JobId",
+                """
+                UPDATE supervised_jobs
+                                  SET status = 'retrying',
+                                      retry_count = @RetryCount,
+                                      error_message = @ErrorMessage,
+                                      error_history = @ErrorHistory,
+                                      last_heartbeat = NULL,
+                                      scheduled_retry_at = NOW() + INTERVAL '1 minute' * POWER(2, @RetryCount)
+                                  WHERE job_id = @JobId
+                """,
                 new
                 {
                     JobId = jobId,
@@ -163,13 +171,15 @@ public sealed class JobSupervisionService : IJobSupervisionService
         {
             // Move to dead letter
             await conn.ExecuteAsync(
-                @"UPDATE supervised_jobs
-                  SET status = 'failed',
-                      retry_count = @RetryCount,
-                      error_message = @ErrorMessage,
-                      error_history = @ErrorHistory,
-                      completed_at = NOW()
-                  WHERE job_id = @JobId",
+                """
+                UPDATE supervised_jobs
+                                  SET status = 'failed',
+                                      retry_count = @RetryCount,
+                                      error_message = @ErrorMessage,
+                                      error_history = @ErrorHistory,
+                                      completed_at = NOW()
+                                  WHERE job_id = @JobId
+                """,
                 new
                 {
                     JobId = jobId,
@@ -191,12 +201,14 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var jobs = await conn.QueryAsync<StuckJobDto>(
-            @"SELECT job_id, tenant_id, job_type, started_at, last_heartbeat,
-                     retry_count, max_retries,
-                     EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) AS seconds_since_heartbeat
-              FROM supervised_jobs
-              WHERE status = 'running'
-                AND last_heartbeat < NOW() - @Timeout::interval",
+            """
+            SELECT job_id, tenant_id, job_type, started_at, last_heartbeat,
+                                 retry_count, max_retries,
+                                 EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) AS seconds_since_heartbeat
+                          FROM supervised_jobs
+                          WHERE status = 'running'
+                            AND last_heartbeat < NOW() - @Timeout::interval
+            """,
             new { Timeout = $"{(int)heartbeatTimeout.TotalSeconds} seconds" });
 
         return jobs.Select(j => new StuckJob
@@ -220,11 +232,13 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         await conn.ExecuteAsync(
-            @"UPDATE supervised_jobs
-              SET status = 'dead_letter',
-                  error_message = @Reason,
-                  moved_to_dlq_at = NOW()
-              WHERE job_id = @JobId",
+            """
+            UPDATE supervised_jobs
+                          SET status = 'dead_letter',
+                              error_message = @Reason,
+                              moved_to_dlq_at = NOW()
+                          WHERE job_id = @JobId
+            """,
             new { JobId = jobId, Reason = reason });
 
         _logger.LogWarning("Job {JobId} moved to dead-letter queue: {Reason}", jobId, reason);
@@ -238,13 +252,15 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var jobs = await conn.QueryAsync<DeadLetterJobDto>(
-            @"SELECT job_id, tenant_id, job_type, payload, error_message,
-                     moved_to_dlq_at, retry_count, error_history
-              FROM supervised_jobs
-              WHERE status = 'dead_letter'
-                AND (@TenantId IS NULL OR tenant_id = @TenantId)
-              ORDER BY moved_to_dlq_at DESC
-              LIMIT @Limit",
+            """
+            SELECT job_id, tenant_id, job_type, payload, error_message,
+                                 moved_to_dlq_at, retry_count, error_history
+                          FROM supervised_jobs
+                          WHERE status = 'dead_letter'
+                            AND (@TenantId IS NULL OR tenant_id = @TenantId)
+                          ORDER BY moved_to_dlq_at DESC
+                          LIMIT @Limit
+            """,
             new { TenantId = tenantId, Limit = limit });
 
         return jobs.Select(j => new DeadLetterJob
@@ -267,17 +283,19 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var affected = await conn.ExecuteAsync(
-            @"UPDATE supervised_jobs
-              SET status = 'pending',
-                  retry_count = 0,
-                  error_message = NULL,
-                  moved_to_dlq_at = NULL,
-                  started_at = NULL,
-                  completed_at = NULL,
-                  last_heartbeat = NULL,
-                  progress_message = 'Retrying from DLQ',
-                  progress_percent = 0
-              WHERE job_id = @JobId AND status = 'dead_letter'",
+            """
+            UPDATE supervised_jobs
+                          SET status = 'pending',
+                              retry_count = 0,
+                              error_message = NULL,
+                              moved_to_dlq_at = NULL,
+                              started_at = NULL,
+                              completed_at = NULL,
+                              last_heartbeat = NULL,
+                              progress_message = 'Retrying from DLQ',
+                              progress_percent = 0
+                          WHERE job_id = @JobId AND status = 'dead_letter'
+            """,
             new { JobId = jobId });
 
         if (affected > 0)
@@ -296,11 +314,13 @@ public sealed class JobSupervisionService : IJobSupervisionService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var job = await conn.QueryFirstOrDefaultAsync<JobStatusDto>(
-            @"SELECT job_id, tenant_id, job_type, status, created_at, started_at,
-                     completed_at, last_heartbeat, progress_message, progress_percent,
-                     retry_count, max_retries, error_message, result_summary
-              FROM supervised_jobs
-              WHERE job_id = @JobId",
+            """
+            SELECT job_id, tenant_id, job_type, status, created_at, started_at,
+                                 completed_at, last_heartbeat, progress_message, progress_percent,
+                                 retry_count, max_retries, error_message, result_summary
+                          FROM supervised_jobs
+                          WHERE job_id = @JobId
+            """,
             new { JobId = jobId });
 
         if (job == null)

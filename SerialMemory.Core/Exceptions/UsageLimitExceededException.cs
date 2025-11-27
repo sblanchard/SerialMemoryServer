@@ -6,26 +6,18 @@ namespace SerialMemory.Core.Exceptions;
 /// Exception thrown when usage limits are exceeded.
 /// Contains structured error information for machine-readable responses.
 /// </summary>
-public sealed class UsageLimitExceededException : Exception
+public sealed class UsageLimitExceededException(
+    UsageLimitType limitType,
+    string message,
+    string? errorCode = null,
+    DateTimeOffset? retryAfter = null,
+    Dictionary<string, object>? details = null)
+    : Exception(message)
 {
-    public UsageLimitType LimitType { get; }
-    public string ErrorCode { get; }
-    public DateTimeOffset? RetryAfter { get; }
-    public Dictionary<string, object>? Details { get; }
-
-    public UsageLimitExceededException(
-        UsageLimitType limitType,
-        string message,
-        string? errorCode = null,
-        DateTimeOffset? retryAfter = null,
-        Dictionary<string, object>? details = null)
-        : base(message)
-    {
-        LimitType = limitType;
-        ErrorCode = errorCode ?? GetDefaultErrorCode(limitType);
-        RetryAfter = retryAfter;
-        Details = details;
-    }
+    public UsageLimitType LimitType { get; } = limitType;
+    public string ErrorCode { get; } = errorCode ?? GetDefaultErrorCode(limitType);
+    public DateTimeOffset? RetryAfter { get; } = retryAfter;
+    public Dictionary<string, object>? Details { get; } = details;
 
     /// <summary>
     /// Creates an exception for credit limit exceeded.

@@ -12,22 +12,16 @@ namespace SerialMemory.EventSourcing.Streaming;
 /// Manages WebSocket connections for real-time event streaming.
 /// Provides broadcast capabilities to connected clients with subscription filtering.
 /// </summary>
-public sealed class WebSocketEventHub : IAsyncDisposable
+public sealed class WebSocketEventHub(ILogger<WebSocketEventHub> logger) : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<Guid, WebSocketConnection> _connections = new();
-    private readonly ILogger<WebSocketEventHub> _logger;
-    private readonly JsonSerializerOptions _jsonOptions;
-    private readonly SemaphoreSlim _broadcastLock = new(1, 1);
 
-    public WebSocketEventHub(ILogger<WebSocketEventHub> logger)
+    private readonly JsonSerializerOptions _jsonOptions = new()
     {
-        _logger = logger;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false
-        };
-    }
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+    private readonly SemaphoreSlim _broadcastLock = new(1, 1);
 
     /// <summary>
     /// Number of active WebSocket connections.
@@ -50,7 +44,7 @@ public sealed class WebSocketEventHub : IAsyncDisposable
 
         _connections.TryAdd(connectionId, connection);
 
-        _logger.LogInformation("WebSocket connection registered: {ConnectionId}", connectionId);
+        logger.LogInformation("WebSocket connection registered: {ConnectionId}", connectionId);
 
         return connectionId;
     }
@@ -74,10 +68,10 @@ public sealed class WebSocketEventHub : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error closing WebSocket {ConnectionId}", connectionId);
+                logger.LogWarning(ex, "Error closing WebSocket {ConnectionId}", connectionId);
             }
 
-            _logger.LogInformation("WebSocket connection unregistered: {ConnectionId}", connectionId);
+            logger.LogInformation("WebSocket connection unregistered: {ConnectionId}", connectionId);
         }
     }
 
@@ -89,7 +83,7 @@ public sealed class WebSocketEventHub : IAsyncDisposable
         if (_connections.TryGetValue(connectionId, out var connection))
         {
             connection.Subscription = subscription;
-            _logger.LogDebug("Updated subscription for {ConnectionId}: {EventTypes}",
+            logger.LogDebug("Updated subscription for {ConnectionId}: {EventTypes}",
                 connectionId, string.Join(", ", subscription.EventTypes));
             return true;
         }
@@ -200,7 +194,7 @@ public sealed class WebSocketEventHub : IAsyncDisposable
         }
         catch (WebSocketException ex)
         {
-            _logger.LogWarning(ex, "WebSocket error for connection {ConnectionId}", connectionId);
+            logger.LogWarning(ex, "WebSocket error for connection {ConnectionId}", connectionId);
         }
         catch (OperationCanceledException)
         {
@@ -248,7 +242,7 @@ public sealed class WebSocketEventHub : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error processing WebSocket message from {ConnectionId}", connectionId);
+            logger.LogWarning(ex, "Error processing WebSocket message from {ConnectionId}", connectionId);
         }
     }
 
@@ -261,7 +255,7 @@ public sealed class WebSocketEventHub : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error sending to WebSocket {ConnectionId}", connection.ConnectionId);
+            logger.LogWarning(ex, "Error sending to WebSocket {ConnectionId}", connection.ConnectionId);
         }
     }
 
