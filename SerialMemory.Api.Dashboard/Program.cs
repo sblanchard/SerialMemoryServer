@@ -16,7 +16,7 @@ var postgresPort = builder.Configuration["POSTGRES_PORT"] ?? "5432";
 var postgresUser = builder.Configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = builder.Configuration["POSTGRES_DB"] ?? "contextdb";
-var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
+var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword};Timeout=10;Command Timeout=10;Pooling=true;Minimum Pool Size=1;Maximum Pool Size=20";
 
 var jwtSecret = builder.Configuration["JWT_SECRET"] ?? "default-development-secret-32chars!!";
 var jwtIssuer = builder.Configuration["JWT_ISSUER"] ?? "serialmemory";
@@ -105,6 +105,20 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSerialMemoryTelemetry("SerialMemory.Api.Dashboard", "1.0.0");
 
 var app = builder.Build();
+
+// Validate database connection at startup
+try
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await using var testConn = new Npgsql.NpgsqlConnection(connectionString);
+    await testConn.OpenAsync(cts.Token);
+    Console.WriteLine($"[OK] Database connection verified: {postgresHost}:{postgresPort}/{postgresDb}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[ERROR] Database connection failed: {ex.Message}");
+    Console.WriteLine($"[ERROR] Connection string: Host={postgresHost};Port={postgresPort};Database={postgresDb}");
+}
 
 // Configure pipeline
 if (app.Environment.IsDevelopment())

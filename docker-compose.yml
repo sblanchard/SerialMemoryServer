@@ -13,7 +13,7 @@
 #   - SerialMemory MCP Core:    stdio (for Claude)
 #   - SerialMemory API:         localhost:5000
 #   - Dashboard API:            localhost:5001
-#   - Ollama (embeddings):      localhost:11434
+#   - Ollama (embeddings):      localhost:11434 (WSL - not in Docker)
 #   - Redis:                    localhost:6379
 #   - Prometheus:               localhost:9090
 #   - Grafana:                  localhost:3001
@@ -48,23 +48,9 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Embeddings: Ollama
+  # Embeddings: Ollama runs locally on WSL (not in Docker)
+  # Access via host.docker.internal:11434 from containers
   # ---------------------------------------------------------------------------
-  ollama:
-    image: ollama/ollama:latest
-    container_name: serialmemory-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    # Uncomment for NVIDIA GPU support:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
   # ---------------------------------------------------------------------------
   # SerialMemory API (REST endpoints)
@@ -83,7 +69,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       - ConnectionStrings__Redis=redis:6379
       - RabbitMq__Host=rabbitmq
@@ -93,8 +79,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_started
       redis:
         condition: service_started
       rabbitmq:
@@ -211,6 +195,5 @@ services:
 
 volumes:
   postgres_data:
-  ollama_data:
   redis_data:
   grafana_data:

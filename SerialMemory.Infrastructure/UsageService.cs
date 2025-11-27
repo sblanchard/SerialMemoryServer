@@ -374,25 +374,8 @@ public sealed class UsageService : IUsageService, IDisposable
         ErrorMessage = dto.error_message
     };
 
-    private static UsageEventType ParseEventType(string eventType) => eventType switch
-    {
-        "memory_ingest" => UsageEventType.MemoryIngest,
-        "memory_search" => UsageEventType.MemorySearch,
-        "memory_multi_hop_search" => UsageEventType.MemoryMultiHopSearch,
-        "memory_update" => UsageEventType.MemoryUpdate,
-        "memory_delete" => UsageEventType.MemoryDelete,
-        "memory_merge" => UsageEventType.MemoryMerge,
-        "memory_split" => UsageEventType.MemorySplit,
-        "memory_decay" => UsageEventType.MemoryDecay,
-        "memory_reinforce" => UsageEventType.MemoryReinforce,
-        "memory_expire" => UsageEventType.MemoryExpire,
-        "crawl_relationships" => UsageEventType.CrawlRelationships,
-        "export_workspace" => UsageEventType.ExportWorkspace,
-        "export_memories" => UsageEventType.ExportMemories,
-        "export_graph" => UsageEventType.ExportGraph,
-        "reembed_memories" => UsageEventType.ReembedMemories,
-        _ => UsageEventType.MemoryIngest
-    };
+    private static UsageEventType ParseEventType(string eventType) =>
+        UsageCreditCosts.FromSnakeCase(eventType) ?? UsageEventType.MemoryIngest;
 
     public void Dispose()
     {

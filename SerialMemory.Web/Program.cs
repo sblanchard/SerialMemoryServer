@@ -20,6 +20,7 @@ builder.Services.AddHttpClient("Api", client =>
 builder.Services.AddHttpClient("DashboardApi", client =>
 {
     client.BaseAddress = new Uri(dashboardApiUrl);
+    client.Timeout = TimeSpan.FromSeconds(10);
 });
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
