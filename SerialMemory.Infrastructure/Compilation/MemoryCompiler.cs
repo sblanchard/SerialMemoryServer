@@ -1,12 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -190,12 +184,14 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT cluster_id, cluster_name, centroid, cluster_radius, memory_count,
-                   created_at, updated_at, compilation_version, is_stable, parent_cluster_id
-            FROM memory_clusters
-            WHERE is_stable = TRUE
-            ORDER BY memory_count DESC";
+        const string sql = """
+
+                                       SELECT cluster_id, cluster_name, centroid, cluster_radius, memory_count,
+                                              created_at, updated_at, compilation_version, is_stable, parent_cluster_id
+                                       FROM memory_clusters
+                                       WHERE is_stable = TRUE
+                                       ORDER BY memory_count DESC
+                           """;
 
         await using var cmd = new NpgsqlCommand(sql, connection);
         var results = new List<MemoryCluster>();
@@ -226,11 +222,13 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT memory_id
-            FROM memory_cluster_members
-            WHERE cluster_id = @ClusterId
-            ORDER BY distance_to_centroid";
+        const string sql = """
+
+                                       SELECT memory_id
+                                       FROM memory_cluster_members
+                                       WHERE cluster_id = @ClusterId
+                                       ORDER BY distance_to_centroid
+                           """;
 
         var rows = await connection.QueryAsync<Guid>(sql, new { ClusterId = clusterId });
         return rows.ToList();
@@ -240,10 +238,12 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            UPDATE memory_clusters
-            SET is_stable = FALSE, updated_at = NOW()
-            WHERE cluster_id = @ClusterId";
+        const string sql = """
+
+                                       UPDATE memory_clusters
+                                       SET is_stable = FALSE, updated_at = NOW()
+                                       WHERE cluster_id = @ClusterId
+                           """;
 
         await connection.ExecuteAsync(sql, new { ClusterId = clusterId });
 
@@ -255,11 +255,13 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT id, content, embedding, created_at
-            FROM memories
-            WHERE embedding IS NOT NULL
-            ORDER BY created_at";
+        const string sql = """
+
+                                       SELECT id, content, embedding, created_at
+                                       FROM memories
+                                       WHERE embedding IS NOT NULL
+                                       ORDER BY created_at
+                           """;
 
         var results = new List<MemoryWithEmbedding>();
 
@@ -285,11 +287,13 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT id, content, embedding, created_at
-            FROM memories
-            WHERE embedding IS NOT NULL AND created_at > @Since
-            ORDER BY created_at";
+        const string sql = """
+
+                                       SELECT id, content, embedding, created_at
+                                       FROM memories
+                                       WHERE embedding IS NOT NULL AND created_at > @Since
+                                       ORDER BY created_at
+                           """;
 
         var results = new List<MemoryWithEmbedding>();
 
@@ -547,21 +551,23 @@ public sealed class MemoryCompiler(
         foreach (var cluster in clusters)
         {
             // Insert cluster
-            const string insertClusterSql = @"
-                INSERT INTO memory_clusters (
-                    cluster_id, centroid, cluster_radius, memory_count,
-                    compilation_version, is_stable
-                ) VALUES (
-                    @ClusterId, @Centroid, @ClusterRadius, @MemoryCount,
-                    @CompilationVersion, TRUE
-                )
-                ON CONFLICT (cluster_id) DO UPDATE SET
-                    centroid = EXCLUDED.centroid,
-                    cluster_radius = EXCLUDED.cluster_radius,
-                    memory_count = EXCLUDED.memory_count,
-                    compilation_version = EXCLUDED.compilation_version,
-                    updated_at = NOW()
-                RETURNING (xmax = 0) as is_insert";
+            const string insertClusterSql = """
+
+                                                            INSERT INTO memory_clusters (
+                                                                cluster_id, centroid, cluster_radius, memory_count,
+                                                                compilation_version, is_stable
+                                                            ) VALUES (
+                                                                @ClusterId, @Centroid, @ClusterRadius, @MemoryCount,
+                                                                @CompilationVersion, TRUE
+                                                            )
+                                                            ON CONFLICT (cluster_id) DO UPDATE SET
+                                                                centroid = EXCLUDED.centroid,
+                                                                cluster_radius = EXCLUDED.cluster_radius,
+                                                                memory_count = EXCLUDED.memory_count,
+                                                                compilation_version = EXCLUDED.compilation_version,
+                                                                updated_at = NOW()
+                                                            RETURNING (xmax = 0) as is_insert
+                                            """;
 
             await using var cmd = new NpgsqlCommand(insertClusterSql, connection);
             cmd.Parameters.AddWithValue("ClusterId", cluster.ClusterId);
@@ -577,13 +583,15 @@ public sealed class MemoryCompiler(
                 updated++;
 
             // Insert cluster members
-            const string insertMemberSql = @"
-                INSERT INTO memory_cluster_members (memory_id, cluster_id, distance_to_centroid, membership_score)
-                VALUES (@MemoryId, @ClusterId, @Distance, @MembershipScore)
-                ON CONFLICT (memory_id, cluster_id) DO UPDATE SET
-                    distance_to_centroid = EXCLUDED.distance_to_centroid,
-                    membership_score = EXCLUDED.membership_score,
-                    assigned_at = NOW()";
+            const string insertMemberSql = """
+
+                                                           INSERT INTO memory_cluster_members (memory_id, cluster_id, distance_to_centroid, membership_score)
+                                                           VALUES (@MemoryId, @ClusterId, @Distance, @MembershipScore)
+                                                           ON CONFLICT (memory_id, cluster_id) DO UPDATE SET
+                                                               distance_to_centroid = EXCLUDED.distance_to_centroid,
+                                                               membership_score = EXCLUDED.membership_score,
+                                                               assigned_at = NOW()
+                                           """;
 
             foreach (var (memoryId, distance) in cluster.Members)
             {
@@ -606,13 +614,15 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            INSERT INTO memory_cluster_members (memory_id, cluster_id, distance_to_centroid, membership_score)
-            VALUES (@MemoryId, @ClusterId, @Distance, @MembershipScore)
-            ON CONFLICT (memory_id, cluster_id) DO UPDATE SET
-                distance_to_centroid = EXCLUDED.distance_to_centroid,
-                membership_score = EXCLUDED.membership_score,
-                assigned_at = NOW()";
+        const string sql = """
+
+                                       INSERT INTO memory_cluster_members (memory_id, cluster_id, distance_to_centroid, membership_score)
+                                       VALUES (@MemoryId, @ClusterId, @Distance, @MembershipScore)
+                                       ON CONFLICT (memory_id, cluster_id) DO UPDATE SET
+                                           distance_to_centroid = EXCLUDED.distance_to_centroid,
+                                           membership_score = EXCLUDED.membership_score,
+                                           assigned_at = NOW()
+                           """;
 
         foreach (var (memoryId, (clusterId, distance)) in assignments)
         {
@@ -626,13 +636,15 @@ public sealed class MemoryCompiler(
         }
 
         // Update cluster memory counts
-        const string updateCountsSql = @"
-            UPDATE memory_clusters mc
-            SET memory_count = (
-                SELECT COUNT(*) FROM memory_cluster_members mcm
-                WHERE mcm.cluster_id = mc.cluster_id
-            ), updated_at = NOW()
-            WHERE cluster_id = ANY(@ClusterIds)";
+        const string updateCountsSql = """
+
+                                                   UPDATE memory_clusters mc
+                                                   SET memory_count = (
+                                                       SELECT COUNT(*) FROM memory_cluster_members mcm
+                                                       WHERE mcm.cluster_id = mc.cluster_id
+                                                   ), updated_at = NOW()
+                                                   WHERE cluster_id = ANY(@ClusterIds)
+                                       """;
 
         var clusterIds = assignments.Values.Select(a => a.ClusterId).Distinct().ToArray();
         await connection.ExecuteAsync(updateCountsSql, new { ClusterIds = clusterIds });
@@ -669,13 +681,15 @@ public sealed class MemoryCompiler(
         }
 
         // Store token index
-        const string insertIndexSql = @"
-            INSERT INTO semantic_index (index_type, key_hash, key_tokens, target_memory_ids, relevance_scores, compilation_version)
-            VALUES ('token', @KeyHash, @KeyTokens, @TargetMemoryIds, @RelevanceScores, @CompilationVersion)
-            ON CONFLICT (index_type, key_hash) DO UPDATE SET
-                target_memory_ids = EXCLUDED.target_memory_ids,
-                relevance_scores = EXCLUDED.relevance_scores,
-                compilation_version = EXCLUDED.compilation_version";
+        const string insertIndexSql = """
+
+                                                  INSERT INTO semantic_index (index_type, key_hash, key_tokens, target_memory_ids, relevance_scores, compilation_version)
+                                                  VALUES ('token', @KeyHash, @KeyTokens, @TargetMemoryIds, @RelevanceScores, @CompilationVersion)
+                                                  ON CONFLICT (index_type, key_hash) DO UPDATE SET
+                                                      target_memory_ids = EXCLUDED.target_memory_ids,
+                                                      relevance_scores = EXCLUDED.relevance_scores,
+                                                      compilation_version = EXCLUDED.compilation_version
+                                      """;
 
         foreach (var (token, entries) in tokenIndex)
         {
@@ -736,13 +750,15 @@ public sealed class MemoryCompiler(
             {
                 var keyHash = ComputeHash(token);
 
-                const string updateSql = @"
-                    INSERT INTO semantic_index (index_type, key_hash, key_tokens, target_memory_ids, relevance_scores, compilation_version)
-                    VALUES ('token', @KeyHash, @KeyTokens, ARRAY[@MemoryId], ARRAY[@Score], @CompilationVersion)
-                    ON CONFLICT (index_type, key_hash) DO UPDATE SET
-                        target_memory_ids = array_append(semantic_index.target_memory_ids, @MemoryId),
-                        relevance_scores = array_append(semantic_index.relevance_scores, @Score),
-                        compilation_version = @CompilationVersion";
+                const string updateSql = """
+
+                                                             INSERT INTO semantic_index (index_type, key_hash, key_tokens, target_memory_ids, relevance_scores, compilation_version)
+                                                             VALUES ('token', @KeyHash, @KeyTokens, ARRAY[@MemoryId], ARRAY[@Score], @CompilationVersion)
+                                                             ON CONFLICT (index_type, key_hash) DO UPDATE SET
+                                                                 target_memory_ids = array_append(semantic_index.target_memory_ids, @MemoryId),
+                                                                 relevance_scores = array_append(semantic_index.relevance_scores, @Score),
+                                                                 compilation_version = @CompilationVersion
+                                         """;
 
                 await connection.ExecuteAsync(updateSql, new
                 {
@@ -773,14 +789,16 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            UPDATE embedding_cache
-            SET is_compiled = TRUE
-            WHERE content_hash IN (
-                SELECT encode(sha256(content::bytea), 'hex')
-                FROM memories
-                WHERE id = ANY(@MemoryIds)
-            )";
+        const string sql = """
+
+                                       UPDATE embedding_cache
+                                       SET is_compiled = TRUE
+                                       WHERE content_hash IN (
+                                           SELECT encode(sha256(content::bytea), 'hex')
+                                           FROM memories
+                                           WHERE id = ANY(@MemoryIds)
+                                       )
+                           """;
 
         await connection.ExecuteAsync(sql, new { MemoryIds = memoryIds.ToArray() });
     }
@@ -789,9 +807,11 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT COALESCE(MAX(compilation_version), 0)
-            FROM memory_clusters";
+        const string sql = """
+
+                                       SELECT COALESCE(MAX(compilation_version), 0)
+                                       FROM memory_clusters
+                           """;
 
         return await connection.ExecuteScalarAsync<int>(sql);
     }
@@ -802,9 +822,11 @@ public sealed class MemoryCompiler(
 
         var taskId = Guid.CreateVersion7();
 
-        const string sql = @"
-            INSERT INTO compilation_tasks (task_id, task_type, status, started_at)
-            VALUES (@TaskId, @TaskType, 'in_progress', NOW())";
+        const string sql = """
+
+                                       INSERT INTO compilation_tasks (task_id, task_type, status, started_at)
+                                       VALUES (@TaskId, @TaskType, 'in_progress', NOW())
+                           """;
 
         await connection.ExecuteAsync(sql, new { TaskId = taskId, TaskType = taskType });
 
@@ -815,10 +837,12 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            UPDATE compilation_tasks
-            SET status = 'completed', completed_at = NOW(), items_processed = @ItemsProcessed
-            WHERE task_id = @TaskId";
+        const string sql = """
+
+                                       UPDATE compilation_tasks
+                                       SET status = 'completed', completed_at = NOW(), items_processed = @ItemsProcessed
+                                       WHERE task_id = @TaskId
+                           """;
 
         await connection.ExecuteAsync(sql, new { TaskId = taskId, ItemsProcessed = itemsProcessed });
     }
@@ -827,10 +851,12 @@ public sealed class MemoryCompiler(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            UPDATE compilation_tasks
-            SET status = 'failed', completed_at = NOW(), error_message = @Error
-            WHERE task_id = @TaskId";
+        const string sql = """
+
+                                       UPDATE compilation_tasks
+                                       SET status = 'failed', completed_at = NOW(), error_message = @Error
+                                       WHERE task_id = @TaskId
+                           """;
 
         await connection.ExecuteAsync(sql, new { TaskId = taskId, Error = error });
     }

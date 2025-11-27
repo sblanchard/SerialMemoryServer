@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -706,14 +701,16 @@ public sealed class DualPassReasoningEngine(
         var inputHash = ComputeHash(JsonSerializer.Serialize(input));
         var outputHash = ComputeHash(JsonSerializer.Serialize(finalOutput));
 
-        const string sql = @"
-            INSERT INTO dual_pass_reasoning (
-                reasoning_id, session_id, pass_number, input_hash, output_hash,
-                input_context, draft_output, critique, final_output,
-                confidence_before, confidence_after, improvements_made, duration_ms
-            ) VALUES
-            (@ReasoningId, @SessionId, 1, @InputHash, @DraftHash, @InputContext::jsonb, @DraftOutput::jsonb, NULL, NULL, @ConfidenceBefore, NULL, NULL, @Pass1Duration),
-            (@ReasoningId, @SessionId, 2, @DraftHash, @OutputHash, NULL, NULL, @Critique::jsonb, @FinalOutput::jsonb, NULL, @ConfidenceAfter, @Improvements::jsonb, @Pass2Duration)";
+        const string sql = """
+
+                                       INSERT INTO dual_pass_reasoning (
+                                           reasoning_id, session_id, pass_number, input_hash, output_hash,
+                                           input_context, draft_output, critique, final_output,
+                                           confidence_before, confidence_after, improvements_made, duration_ms
+                                       ) VALUES
+                                       (@ReasoningId, @SessionId, 1, @InputHash, @DraftHash, @InputContext::jsonb, @DraftOutput::jsonb, NULL, NULL, @ConfidenceBefore, NULL, NULL, @Pass1Duration),
+                                       (@ReasoningId, @SessionId, 2, @DraftHash, @OutputHash, NULL, NULL, @Critique::jsonb, @FinalOutput::jsonb, NULL, @ConfidenceAfter, @Improvements::jsonb, @Pass2Duration)
+                           """;
 
         await connection.ExecuteAsync(sql, new
         {
@@ -740,12 +737,14 @@ public sealed class DualPassReasoningEngine(
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        const string sql = @"
-            SELECT session_id, draft_output::text, critique::text, final_output::text,
-                   confidence_before, confidence_after, improvements_made::text, duration_ms
-            FROM dual_pass_reasoning
-            WHERE reasoning_id = @ReasoningId
-            ORDER BY pass_number";
+        const string sql = """
+
+                                       SELECT session_id, draft_output::text, critique::text, final_output::text,
+                                              confidence_before, confidence_after, improvements_made::text, duration_ms
+                                       FROM dual_pass_reasoning
+                                       WHERE reasoning_id = @ReasoningId
+                                       ORDER BY pass_number
+                           """;
 
         var rows = (await connection.QueryAsync<dynamic>(sql, new { ReasoningId = reasoningId })).ToList();
 

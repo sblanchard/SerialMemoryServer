@@ -41,18 +41,21 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
         _dataSource = dataSourceBuilder.Build();
 
-        // Build validation parameters
-        _validationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = !string.IsNullOrEmpty(options.Issuer),
-            ValidIssuer = options.Issuer,
-            ValidateAudience = !string.IsNullOrEmpty(options.Audience),
-            ValidAudience = options.Audience,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ClockSkew = TimeSpan.FromMinutes(1),
-            IssuerSigningKey = BuildSecurityKey(options)
-        };
+        // Build validation parameters (only if JWT key is configured)
+        var securityKey = BuildSecurityKey(options);
+        _validationParameters = securityKey != null
+            ? new TokenValidationParameters
+            {
+                ValidateIssuer = !string.IsNullOrEmpty(options.Issuer),
+                ValidIssuer = options.Issuer,
+                ValidateAudience = !string.IsNullOrEmpty(options.Audience),
+                ValidAudience = options.Audience,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                IssuerSigningKey = securityKey
+            }
+            : new TokenValidationParameters(); // API key-only mode
     }
 
     /// <summary>
@@ -178,11 +181,13 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
 
             // Look up the API key
             await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-            const string sql = @"
-                SELECT ak.tenant_id, ak.scopes, ak.created_by, ak.expires_at, ak.revoked_at, t.status
-                FROM tenant_api_keys ak
-                JOIN tenants t ON ak.tenant_id = t.id
-                WHERE ak.key_hash = @KeyHash AND ak.key_prefix = @KeyPrefix";
+            const string sql = """
+
+                                               SELECT ak.tenant_id, ak.scopes, ak.created_by, ak.expires_at, ak.revoked_at, t.status
+                                               FROM tenant_api_keys ak
+                                               JOIN tenants t ON ak.tenant_id = t.id
+                                               WHERE ak.key_hash = @KeyHash AND ak.key_prefix = @KeyPrefix
+                               """;
 
             var result = await conn.QuerySingleOrDefaultAsync<ApiKeyRecord>(sql, new { KeyHash = keyHash, KeyPrefix = keyPrefix });
 
@@ -229,8 +234,9 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
 
     /// <summary>
     /// Builds the security key from configuration.
+    /// Returns null if no key is configured (API key-only mode).
     /// </summary>
-    private static SecurityKey BuildSecurityKey(JwtAuthenticationOptions options)
+    private static SecurityKey? BuildSecurityKey(JwtAuthenticationOptions options)
     {
         if (!string.IsNullOrEmpty(options.SymmetricKey))
         {
@@ -255,7 +261,8 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
             return new ECDsaSecurityKey(ecdsa);
         }
 
-        throw new InvalidOperationException("No JWT signing key configured");
+        // No JWT key configured - API key-only mode
+        return null;
     }
 
     /// <summary>
@@ -306,13 +313,15 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
     }
 
     // Record for API key lookup result
-    private sealed record ApiKeyRecord(
-        Guid tenant_id,
-        string[]? scopes,
-        string created_by,
-        DateTimeOffset? expires_at,
-        DateTimeOffset? revoked_at,
-        string status);
+    private sealed class ApiKeyRecord
+    {
+        public Guid tenant_id { get; set; }
+        public string[]? scopes { get; set; }
+        public string created_by { get; set; } = "";
+        public DateTimeOffset? expires_at { get; set; }
+        public DateTimeOffset? revoked_at { get; set; }
+        public string status { get; set; } = "";
+    }
 }
 
 /// <summary>

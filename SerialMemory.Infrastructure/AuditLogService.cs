@@ -41,8 +41,10 @@ public sealed class AuditLogService : IAuditLogService
 
         // Get current billing cycle ID
         var billingCycleId = await conn.QueryFirstOrDefaultAsync<Guid?>(
-            @"SELECT id FROM billing_cycles
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE",
+            """
+            SELECT id FROM billing_cycles
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId AND is_current = TRUE
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId });
 
         var eventTypeString = eventType.ToString();
@@ -50,10 +52,12 @@ public sealed class AuditLogService : IAuditLogService
 
         // Use the SQL function for append
         var dto = await conn.QueryFirstAsync<AuditLogDto>(
-            @"SELECT * FROM append_audit_log(
-                @TenantId, @WorkspaceId, @BillingCycleId,
-                @EventType, @Description, @Data::jsonb,
-                @UserId, @IpAddress::inet)",
+            """
+            SELECT * FROM append_audit_log(
+                            @TenantId, @WorkspaceId, @BillingCycleId,
+                            @EventType, @Description, @Data::jsonb,
+                            @UserId, @IpAddress::inet)
+            """,
             new
             {
                 TenantId = tenantId,
@@ -121,11 +125,13 @@ public sealed class AuditLogService : IAuditLogService
 
         // Get first and last hashes
         var hashes = await conn.QueryFirstOrDefaultAsync<dynamic>(
-            @"SELECT
-                (SELECT content_hash FROM audit_logs
-                 WHERE billing_cycle_id = @CycleId ORDER BY sequence_number LIMIT 1) AS first_hash,
-                (SELECT content_hash FROM audit_logs
-                 WHERE billing_cycle_id = @CycleId ORDER BY sequence_number DESC LIMIT 1) AS last_hash",
+            """
+            SELECT
+                            (SELECT content_hash FROM audit_logs
+                             WHERE billing_cycle_id = @CycleId ORDER BY sequence_number LIMIT 1) AS first_hash,
+                            (SELECT content_hash FROM audit_logs
+                             WHERE billing_cycle_id = @CycleId ORDER BY sequence_number DESC LIMIT 1) AS last_hash
+            """,
             new { CycleId = billingCycleId });
 
         _logger.LogInformation(
@@ -151,13 +157,15 @@ public sealed class AuditLogService : IAuditLogService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var entries = await conn.QueryAsync<AuditLogDto>(
-            @"SELECT id, sequence_number, tenant_id, workspace_id, billing_cycle_id,
-                     event_type, description, data, user_id, ip_address,
-                     timestamp, previous_hash, content_hash
-              FROM audit_logs
-              WHERE billing_cycle_id = @BillingCycleId
-              ORDER BY sequence_number DESC
-              LIMIT @Limit",
+            """
+            SELECT id, sequence_number, tenant_id, workspace_id, billing_cycle_id,
+                                 event_type, description, data, user_id, ip_address,
+                                 timestamp, previous_hash, content_hash
+                          FROM audit_logs
+                          WHERE billing_cycle_id = @BillingCycleId
+                          ORDER BY sequence_number DESC
+                          LIMIT @Limit
+            """,
             new { BillingCycleId = billingCycleId, Limit = limit ?? 1000 });
 
         return entries.Select(MapToEntry).ToList();
@@ -173,13 +181,15 @@ public sealed class AuditLogService : IAuditLogService
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
         var entries = await conn.QueryAsync<AuditLogDto>(
-            @"SELECT id, sequence_number, tenant_id, workspace_id, billing_cycle_id,
-                     event_type, description, data, user_id, ip_address,
-                     timestamp, previous_hash, content_hash
-              FROM audit_logs
-              WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                AND timestamp >= @From AND timestamp <= @To
-              ORDER BY sequence_number DESC",
+            """
+            SELECT id, sequence_number, tenant_id, workspace_id, billing_cycle_id,
+                                 event_type, description, data, user_id, ip_address,
+                                 timestamp, previous_hash, content_hash
+                          FROM audit_logs
+                          WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
+                            AND timestamp >= @From AND timestamp <= @To
+                          ORDER BY sequence_number DESC
+            """,
             new { TenantId = tenantId, WorkspaceId = workspaceId, From = fromDate, To = toDate });
 
         return entries.Select(MapToEntry).ToList();

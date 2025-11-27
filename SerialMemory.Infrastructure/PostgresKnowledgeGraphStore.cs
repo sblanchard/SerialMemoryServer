@@ -8,38 +8,54 @@ namespace SerialMemory.Infrastructure;
 
 /// <summary>
 /// PostgreSQL implementation of the knowledge graph store using pgvector for semantic search.
-/// All operations are scoped to the current tenant via ITenantContext.
+/// All operations are scoped to the current tenant via RLS (Row-Level Security).
 /// </summary>
+/// <remarks>
+/// IMPORTANT: This class relies SOLELY on RLS for tenant isolation.
+/// All connections are opened via ITenantDbConnectionFactory which sets app.tenant_id.
+/// Queries do NOT manually filter by tenant_id - RLS policies handle this automatically.
+/// </remarks>
 public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 {
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly ITenantDbConnectionFactory _connectionFactory;
     private readonly ITenantContext _tenantContext;
 
     /// <summary>
     /// Creates a new tenant-scoped PostgreSQL knowledge graph store.
     /// </summary>
-    /// <param name="connectionString">PostgreSQL connection string</param>
+    /// <param name="connectionFactory">Factory for creating tenant-scoped connections</param>
     /// <param name="tenantContext">Tenant context for multi-tenant isolation</param>
-    public PostgresKnowledgeGraphStore(string connectionString, ITenantContext tenantContext)
+    public PostgresKnowledgeGraphStore(ITenantDbConnectionFactory connectionFactory, ITenantContext tenantContext)
     {
-        if (string.IsNullOrEmpty(connectionString))
-            throw new ArgumentNullException(nameof(connectionString));
-
+        _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
-
-        // Use NpgsqlDataSourceBuilder for proper pgvector type registration (Npgsql 7.0+ recommended approach)
-        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-        dataSourceBuilder.UseVector();
-        _dataSource = dataSourceBuilder.Build();
     }
 
     /// <summary>
-    /// Creates a new PostgreSQL knowledge graph store for self-hosted/single-tenant mode.
-    /// Uses the default self-hosted tenant context.
+    /// Creates a new PostgreSQL knowledge graph store from a connection string.
+    /// For self-hosted/single-tenant mode using the default tenant.
     /// </summary>
     /// <param name="connectionString">PostgreSQL connection string</param>
     public PostgresKnowledgeGraphStore(string connectionString)
-        : this(connectionString, new FixedTenantContext("00000000-0000-0000-0000-000000000000", "default"))
+        : this(
+            new TenantDbConnectionFactory(connectionString, new FixedTenantContext(DefaultTenantId, "default")),
+            new FixedTenantContext(DefaultTenantId, "default"))
+    {
+    }
+
+    /// <summary>
+    /// Default tenant ID for self-hosted single-tenant mode.
+    /// Uses a fixed non-empty GUID to satisfy RLS requirements.
+    /// </summary>
+    private const string DefaultTenantId = "01945c6e-5b9a-7000-8000-000000000001";
+
+    /// <summary>
+    /// Creates a new PostgreSQL knowledge graph store from a connection string with tenant context.
+    /// </summary>
+    /// <param name="connectionString">PostgreSQL connection string</param>
+    /// <param name="tenantContext">Tenant context for multi-tenant isolation</param>
+    public PostgresKnowledgeGraphStore(string connectionString, ITenantContext tenantContext)
+        : this(new TenantDbConnectionFactory(connectionString, tenantContext), tenantContext)
     {
     }
 
@@ -49,25 +65,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     private Guid TenantId => Guid.Parse(_tenantContext.TenantId);
 
     /// <summary>
-    /// Creates a connection and sets the tenant context for RLS.
+    /// Opens a connection with tenant context set for RLS enforcement.
+    /// Returns NpgsqlConnection for pgvector operations.
     /// </summary>
-    private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
-    {
-        var conn = _dataSource.CreateConnection();
-        await conn.OpenAsync(cancellationToken);
-
-        // Set tenant context for Row-Level Security policies
-        await conn.ExecuteAsync(
-            "SELECT set_tenant_context(@TenantId)",
-            new { TenantId });
-
-        return conn;
-    }
-
-    /// <summary>
-    /// Creates a connection without opening it.
-    /// </summary>
-    private NpgsqlConnection CreateConnection() => _dataSource.CreateConnection();
+    private Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
+        => ((TenantDbConnectionFactory)_connectionFactory).OpenNpgsqlAsync(cancellationToken);
 
     #region Memory Operations
 
@@ -76,21 +78,31 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // Use Version 7 GUID (time-ordered) for better indexing and sorting
         var id = Guid.CreateVersion7();
 
-        const string sql = @"
-            INSERT INTO memories (id, tenant_id, content, embedding, source, conversation_session_id, metadata)
-            VALUES (@Id, @TenantId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)";
+        // Capture tenant ID and validate before SQL
+        var tenantId = TenantId;
+        await Console.Error.WriteLineAsync($"[DEBUG CreateMemoryAsync] TenantContext.TenantId={_tenantContext.TenantId}, Parsed TenantId={tenantId}");
+        if (tenantId == Guid.Empty)
+        {
+            throw new InvalidOperationException($"TenantId is Guid.Empty. TenantContext.TenantId was: '{_tenantContext.TenantId}'");
+        }
+
+        const string sql = """
+
+                                       INSERT INTO memories (id, tenant_id, content, embedding, source, conversation_session_id, metadata)
+                                       VALUES (@Id, @TenantId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
         // Use NpgsqlCommand directly to properly handle Vector type
         await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@Id", id);
-        cmd.Parameters.AddWithValue("@TenantId", TenantId);
-        cmd.Parameters.AddWithValue("@Content", memory.Content);
-        cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@Source", (object?)memory.Source ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@SessionId", (object?)memory.ConversationSessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@Metadata", memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value);
+        cmd.Parameters.Add(new NpgsqlParameter("Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
+        cmd.Parameters.Add(new NpgsqlParameter("TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = tenantId });
+        cmd.Parameters.Add(new NpgsqlParameter("Content", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Content });
+        cmd.Parameters.AddWithValue("Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
+        cmd.Parameters.Add(new NpgsqlParameter("Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
@@ -116,11 +128,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT id, content, created_at, updated_at, source, conversation_session_id, metadata
-            FROM memories
-            ORDER BY created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT id, content, created_at, updated_at, source, conversation_session_id, metadata
+                                       FROM memories
+                                       ORDER BY created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -140,14 +154,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT
-                id, content, created_at, updated_at, source, conversation_session_id, metadata,
-                1 - (embedding <=> @QueryEmbedding) as similarity
-            FROM memories
-            WHERE 1 - (embedding <=> @QueryEmbedding) > @Threshold
-            ORDER BY embedding <=> @QueryEmbedding
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT
+                                           id, content, created_at, updated_at, source, conversation_session_id, metadata,
+                                           1 - (embedding <=> @QueryEmbedding) as similarity
+                                       FROM memories
+                                       WHERE 1 - (embedding <=> @QueryEmbedding) > @Threshold
+                                       ORDER BY embedding <=> @QueryEmbedding
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -183,14 +199,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT
-                id, content, created_at, updated_at, source, conversation_session_id, metadata,
-                ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as rank
-            FROM memories
-            WHERE content_tsvector @@ plainto_tsquery('english', @Query)
-            ORDER BY rank DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT
+                                           id, content, created_at, updated_at, source, conversation_session_id, metadata,
+                                           ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as rank
+                                       FROM memories
+                                       WHERE content_tsvector @@ plainto_tsquery('english', @Query)
+                                       ORDER BY rank DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -213,13 +231,15 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var id = Guid.CreateVersion7();
 
         // Unique constraint is now (tenant_id, name, entity_type)
-        const string sql = @"
-            INSERT INTO entities (id, tenant_id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
-            VALUES (@Id, @TenantId, @Name, @EntityType, @CanonicalName, @FirstSeenMemoryId, @Metadata::jsonb)
-            ON CONFLICT (tenant_id, name, entity_type) DO UPDATE SET
-                canonical_name = COALESCE(EXCLUDED.canonical_name, entities.canonical_name),
-                metadata = COALESCE(EXCLUDED.metadata, entities.metadata)
-            RETURNING id";
+        const string sql = """
+
+                                       INSERT INTO entities (id, tenant_id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
+                                       VALUES (@Id, @TenantId, @Name, @EntityType, @CanonicalName, @FirstSeenMemoryId, @Metadata::jsonb)
+                                       ON CONFLICT (tenant_id, name, entity_type) DO UPDATE SET
+                                           canonical_name = COALESCE(EXCLUDED.canonical_name, entities.canonical_name),
+                                           metadata = COALESCE(EXCLUDED.metadata, entities.metadata)
+                                       RETURNING id
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -260,12 +280,14 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Entity>> GetEntitiesForMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT e.*, me.relevance
-            FROM entities e
-            JOIN memory_entities me ON e.id = me.entity_id
-            WHERE me.memory_id = @MemoryId
-            ORDER BY me.relevance DESC";
+        const string sql = """
+
+                                       SELECT e.*, me.relevance
+                                       FROM entities e
+                                       JOIN memory_entities me ON e.id = me.entity_id
+                                       WHERE me.memory_id = @MemoryId
+                                       ORDER BY me.relevance DESC
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -284,10 +306,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         float relevance = 1.0f,
         CancellationToken cancellationToken = default)
     {
-        const string sql = @"
-            INSERT INTO memory_entities (tenant_id, memory_id, entity_id, relevance)
-            VALUES (@TenantId, @MemoryId, @EntityId, @Relevance)
-            ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = EXCLUDED.relevance";
+        const string sql = """
+
+                                       INSERT INTO memory_entities (tenant_id, memory_id, entity_id, relevance)
+                                       VALUES (@TenantId, @MemoryId, @EntityId, @Relevance)
+                                       ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = EXCLUDED.relevance
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -308,14 +332,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var id = Guid.CreateVersion7();
 
         // Unique constraint is now (tenant_id, source_entity_id, target_entity_id, relationship_type)
-        const string sql = @"
-            INSERT INTO entity_relationships
-                (id, tenant_id, source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
-            VALUES (@Id, @TenantId, @SourceEntityId, @TargetEntityId, @RelationshipType, @Confidence, @FirstSeenMemoryId, @Metadata::jsonb)
-            ON CONFLICT (tenant_id, source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
-                confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence),
-                metadata = COALESCE(EXCLUDED.metadata, entity_relationships.metadata)
-            RETURNING id";
+        const string sql = """
+
+                                       INSERT INTO entity_relationships
+                                           (id, tenant_id, source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
+                                       VALUES (@Id, @TenantId, @SourceEntityId, @TargetEntityId, @RelationshipType, @Confidence, @FirstSeenMemoryId, @Metadata::jsonb)
+                                       ON CONFLICT (tenant_id, source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
+                                           confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence),
+                                           metadata = COALESCE(EXCLUDED.metadata, entity_relationships.metadata)
+                                       RETURNING id
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -343,18 +369,20 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT
-                er.*,
-                source.name as source_name,
-                source.entity_type as source_type,
-                target.name as target_name,
-                target.entity_type as target_type
-            FROM entity_relationships er
-            JOIN entities source ON er.source_entity_id = source.id
-            JOIN entities target ON er.target_entity_id = target.id
-            WHERE er.source_entity_id = @EntityId OR er.target_entity_id = @EntityId
-            ORDER BY er.confidence DESC";
+        const string sql = """
+
+                                       SELECT
+                                           er.*,
+                                           source.name as source_name,
+                                           source.entity_type as source_type,
+                                           target.name as target_name,
+                                           target.entity_type as target_type
+                                       FROM entity_relationships er
+                                       JOIN entities source ON er.source_entity_id = source.id
+                                       JOIN entities target ON er.target_entity_id = target.id
+                                       WHERE er.source_entity_id = @EntityId OR er.target_entity_id = @EntityId
+                                       ORDER BY er.confidence DESC
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -372,18 +400,20 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT
-                er.*,
-                source.name as source_name,
-                source.entity_type as source_type,
-                target.name as target_name,
-                target.entity_type as target_type
-            FROM entity_relationships er
-            JOIN entities source ON er.source_entity_id = source.id
-            JOIN entities target ON er.target_entity_id = target.id
-            ORDER BY er.created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT
+                                           er.*,
+                                           source.name as source_name,
+                                           source.entity_type as source_type,
+                                           target.name as target_name,
+                                           target.entity_type as target_type
+                                       FROM entity_relationships er
+                                       JOIN entities source ON er.source_entity_id = source.id
+                                       JOIN entities target ON er.target_entity_id = target.id
+                                       ORDER BY er.created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -401,10 +431,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT * FROM entities
-            ORDER BY created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT * FROM entities
+                                       ORDER BY created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -427,14 +459,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var id = Guid.CreateVersion7();
 
         // Unique constraint is now (tenant_id, user_id, attribute_type, attribute_key)
-        const string sql = @"
-            INSERT INTO user_personas
-                (id, tenant_id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
-            VALUES (@Id, @TenantId, @UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
-            ON CONFLICT (tenant_id, user_id, attribute_type, attribute_key) DO UPDATE SET
-                attribute_value = EXCLUDED.attribute_value,
-                confidence = EXCLUDED.confidence,
-                updated_at = NOW()";
+        const string sql = """
+
+                                       INSERT INTO user_personas
+                                           (id, tenant_id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
+                                       VALUES (@Id, @TenantId, @UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
+                                       ON CONFLICT (tenant_id, user_id, attribute_type, attribute_key) DO UPDATE SET
+                                           attribute_value = EXCLUDED.attribute_value,
+                                           confidence = EXCLUDED.confidence,
+                                           updated_at = NOW()
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -460,11 +494,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT attribute_type, attribute_key, attribute_value, confidence, updated_at
-            FROM user_personas
-            WHERE user_id = @UserId
-            ORDER BY attribute_type, attribute_key";
+        const string sql = """
+
+                                       SELECT attribute_type, attribute_key, attribute_value, confidence, updated_at
+                                       FROM user_personas
+                                       WHERE user_id = @UserId
+                                       ORDER BY attribute_type, attribute_key
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -501,9 +537,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // Use Version 7 GUID (time-ordered) for better indexing and sorting
         var id = Guid.CreateVersion7();
 
-        const string sql = @"
-            INSERT INTO conversation_sessions (id, tenant_id, session_name, client_type, metadata)
-            VALUES (@Id, @TenantId, @SessionName, @ClientType, @Metadata::jsonb)";
+        const string sql = """
+
+                                       INSERT INTO conversation_sessions (id, tenant_id, session_name, client_type, metadata)
+                                       VALUES (@Id, @TenantId, @SessionName, @ClientType, @Metadata::jsonb)
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -540,10 +578,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<ConversationSession>> GetRecentSessionsAsync(int limit = 10, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT * FROM conversation_sessions
-            ORDER BY started_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT * FROM conversation_sessions
+                                       ORDER BY started_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -691,15 +731,17 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Memory>> GetMemoriesWithoutEntitiesAsync(int limit = 100, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT m.id, m.content, m.created_at, m.updated_at, m.source,
-                   m.conversation_session_id, m.metadata::text
-            FROM memories m
-            WHERE NOT EXISTS (
-                SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-            )
-            ORDER BY m.created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT m.id, m.content, m.created_at, m.updated_at, m.source,
+                                              m.conversation_session_id, m.metadata::text
+                                       FROM memories m
+                                       WHERE NOT EXISTS (
+                                           SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+                                       )
+                                       ORDER BY m.created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -725,13 +767,15 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Memory>> GetMemoriesWithNullEmbeddingsAsync(int limit = 100, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT id, content, created_at, updated_at, source,
-                   conversation_session_id, metadata::text
-            FROM memories
-            WHERE embedding IS NULL
-            ORDER BY created_at DESC
-            LIMIT @Limit";
+        const string sql = """
+
+                                       SELECT id, content, created_at, updated_at, source,
+                                              conversation_session_id, metadata::text
+                                       FROM memories
+                                       WHERE embedding IS NULL
+                                       ORDER BY created_at DESC
+                                       LIMIT @Limit
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -757,12 +801,14 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = @"
-            SELECT id, content, created_at, updated_at, source,
-                   conversation_session_id, metadata::text
-            FROM memories
-            ORDER BY created_at DESC
-            LIMIT @Limit OFFSET @Offset";
+        const string sql = """
+
+                                       SELECT id, content, created_at, updated_at, source,
+                                              conversation_session_id, metadata::text
+                                       FROM memories
+                                       ORDER BY created_at DESC
+                                       LIMIT @Limit OFFSET @Offset
+                           """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -791,16 +837,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 /// <summary>
 /// Fixed tenant context for self-hosted/single-tenant scenarios.
 /// </summary>
-internal sealed class FixedTenantContext : ITenantContext
+internal sealed class FixedTenantContext(string tenantId, string workspaceId) : ITenantContext
 {
-    public FixedTenantContext(string tenantId, string workspaceId)
-    {
-        TenantId = tenantId;
-        WorkspaceId = workspaceId;
-    }
-
-    public string TenantId { get; }
-    public string WorkspaceId { get; }
+    public string TenantId { get; } = tenantId;
+    public string WorkspaceId { get; } = workspaceId;
     public string? UserId => null;
     public Guid? SessionId => null;
 }

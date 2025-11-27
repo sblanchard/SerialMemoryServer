@@ -1,12 +1,7 @@
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using Dapper;
 using Microsoft.Extensions.Logging;
-using Npgsql;
-using Pgvector;
 using SerialMemory.Core.Auth;
-using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Mcp.Shared;
 using SerialMemory.Mcp.Shared.Tools;

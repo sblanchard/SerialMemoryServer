@@ -123,29 +123,13 @@ public abstract class McpServerBase
 
     /// <summary>
     /// Authenticates the current request and sets tenant context.
+    /// Both self-hosted and SaaS modes require valid API keys.
+    /// Self-hosted mode skips billing/quota enforcement, not authentication.
     /// </summary>
     /// <param name="params">Request parameters that may contain authentication info.</param>
     /// <returns>Null if authentication succeeds, error response if it fails.</returns>
     protected async Task<object?> AuthenticateRequestAsync(JsonNode? @params)
     {
-        // In self-hosted mode, use default tenant
-        if (SelfHostedMode)
-        {
-            TenantContext.SetContext(
-                "00000000-0000-0000-0000-000000000000",
-                "default",
-                "self-hosted");
-
-            CurrentAuth = AuthenticationResult.Success(
-                tenantId: Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                userId: "self-hosted",
-                role: Roles.Owner,
-                scopes: Scopes.All,
-                workspaceId: "default");
-
-            return null;
-        }
-
         // Try to get token from params or environment
         var token = @params?["_auth"]?["token"]?.GetValue<string>()
             ?? Environment.GetEnvironmentVariable("SERIALMEMORY_TOKEN");

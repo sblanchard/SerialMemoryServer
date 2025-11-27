@@ -11,22 +11,15 @@ namespace SerialMemory.Infrastructure;
 /// Authentication handler that validates API keys.
 /// Supports both X-API-Key header and Authorization: Bearer sm_* format.
 /// </summary>
-public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthenticationOptions>
+public sealed class ApiKeyAuthenticationHandler(
+    IOptionsMonitor<ApiKeyAuthenticationOptions> options,
+    ILoggerFactory loggerFactory,
+    UrlEncoder encoder,
+    IApiKeyService apiKeyService)
+    : AuthenticationHandler<ApiKeyAuthenticationOptions>(options, loggerFactory, encoder)
 {
-    private readonly IApiKeyService _apiKeyService;
-
     public const string SchemeName = "ApiKey";
-    public const string ApiKeyHeaderName = "X-API-Key";
-
-    public ApiKeyAuthenticationHandler(
-        IOptionsMonitor<ApiKeyAuthenticationOptions> options,
-        ILoggerFactory loggerFactory,
-        UrlEncoder encoder,
-        IApiKeyService apiKeyService)
-        : base(options, loggerFactory, encoder)
-    {
-        _apiKeyService = apiKeyService;
-    }
+    private const string ApiKeyHeaderName = "X-API-Key";
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -55,7 +48,7 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
 
         try
         {
-            var validationResult = await _apiKeyService.ValidateApiKeyAsync(apiKey);
+            var validationResult = await apiKeyService.ValidateApiKeyAsync(apiKey);
 
             if (validationResult == null)
             {

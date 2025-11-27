@@ -1,9 +1,7 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Aggregates;
-using SerialMemory.EventSourcing.CQRS;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Store;
 

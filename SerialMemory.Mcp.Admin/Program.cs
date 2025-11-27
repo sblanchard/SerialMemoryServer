@@ -1,13 +1,9 @@
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using Pgvector;
 using SerialMemory.Core.Auth;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Mcp.Shared;
 using SerialMemory.Mcp.Shared.Tools;
@@ -177,7 +173,7 @@ public sealed class AdminMcpServer : McpServerBase
 
     private async Task<object> HandleMultiHopSearch(JsonNode? arguments)
     {
-        var query = arguments?["query"]?.GetValue<string>()?.Trim();
+        var query = arguments?["query"]?.GetValue<string>().Trim();
         if (string.IsNullOrEmpty(query))
             throw new ArgumentException("Query required");
 
@@ -269,7 +265,7 @@ public sealed class AdminMcpServer : McpServerBase
     private async Task<object> HandleImportFromCore(JsonNode? arguments)
     {
         var dataNode = arguments?["data"] ?? throw new Exception("Missing data");
-        var source = arguments?["source"]?.GetValue<string>() ?? "core-import";
+        var source = arguments["source"]?.GetValue<string>() ?? "core-import";
 
         var coreData = new CoreExportData();
 
@@ -330,7 +326,7 @@ public sealed class AdminMcpServer : McpServerBase
         var forceAll = arguments?["force_all"]?.GetValue<bool>() ?? false;
         var batchSize = Math.Clamp(arguments?["batch_size"]?.GetValue<int>() ?? 100, 1, 1000);
 
-        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(ConnectionString);
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
         dataSourceBuilder.UseVector();
         var vectorDataSource = dataSourceBuilder.Build();
 
@@ -354,8 +350,8 @@ public sealed class AdminMcpServer : McpServerBase
                     {
                         var embedding = await EmbeddingService.EmbedTextAsync(memory.Content);
                         await using var connection = await vectorDataSource.OpenConnectionAsync();
-                        await using var cmd = new Npgsql.NpgsqlCommand(
-                            "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
+                        await using var cmd = new NpgsqlCommand(
+                            """UPDATE memories SET embedding = @Embedding WHERE id = @Id""", connection);
                         cmd.Parameters.AddWithValue("@Id", memory.Id);
                         cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
                         await cmd.ExecuteNonQueryAsync();
@@ -377,7 +373,7 @@ public sealed class AdminMcpServer : McpServerBase
                 {
                     var embedding = await EmbeddingService.EmbedTextAsync(memory.Content);
                     await using var connection = await vectorDataSource.OpenConnectionAsync();
-                    await using var cmd = new Npgsql.NpgsqlCommand(
+                    await using var cmd = new NpgsqlCommand(
                         "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                     cmd.Parameters.AddWithValue("@Id", memory.Id);
                     cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));

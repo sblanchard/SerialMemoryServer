@@ -6,6 +6,7 @@ namespace SerialMemory.Core.Models;
 public class EntityRelationship
 {
     public Guid Id { get; set; }
+    public string TenantId { get; set; } = "self"; // Default tenant for self-hosted
     public Guid SourceEntityId { get; set; }
     public Guid TargetEntityId { get; set; }
     public required string RelationshipType { get; set; } // WORKED_WITH, LIVES_IN, CREATED, etc.

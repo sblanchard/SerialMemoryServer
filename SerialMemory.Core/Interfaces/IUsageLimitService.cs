@@ -32,6 +32,75 @@ public interface IUsageLimitService
         string tenantId,
         string workspaceId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records usage after a successful operation and consumes credits.
+    /// Returns any triggered usage alerts.
+    /// </summary>
+    Task<UsageRecordResult> RecordUsageAsync(
+        string tenantId,
+        string workspaceId,
+        UsageEventType eventType,
+        Guid? memoryId = null,
+        string? userId = null,
+        Guid? sessionId = null,
+        int? latencyMs = null,
+        bool success = true,
+        string? errorMessage = null,
+        Dictionary<string, object>? metadata = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets usage alerts that should be shown to the user.
+    /// </summary>
+    Task<IReadOnlyList<UsageAlert>> GetActiveAlertsAsync(
+        string tenantId,
+        string workspaceId,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Result of recording usage.
+/// </summary>
+public sealed class UsageRecordResult
+{
+    public bool Success { get; init; }
+    public decimal CreditsConsumed { get; init; }
+    public decimal CreditsRemaining { get; init; }
+    public decimal UsagePercentage { get; init; }
+    public IReadOnlyList<UsageAlert> TriggeredAlerts { get; init; } = [];
+}
+
+/// <summary>
+/// Usage alert for threshold notifications.
+/// </summary>
+public sealed class UsageAlert
+{
+    public UsageAlertType AlertType { get; init; }
+    public int ThresholdPercent { get; init; }
+    public decimal CurrentPercent { get; init; }
+    public string Message { get; init; } = "";
+    public DateTimeOffset TriggeredAt { get; init; }
+    public bool Acknowledged { get; init; }
+}
+
+/// <summary>
+/// Types of usage alerts.
+/// </summary>
+public enum UsageAlertType
+{
+    /// <summary>75% of credit limit reached.</summary>
+    CreditWarning75,
+    /// <summary>90% of credit limit reached.</summary>
+    CreditWarning90,
+    /// <summary>100% of credit limit reached.</summary>
+    CreditLimitReached,
+    /// <summary>75% of memory limit reached.</summary>
+    MemoryWarning75,
+    /// <summary>90% of memory limit reached.</summary>
+    MemoryWarning90,
+    /// <summary>Memory limit reached.</summary>
+    MemoryLimitReached
 }
 
 /// <summary>
