@@ -98,4 +98,45 @@ public sealed class MultiModelReasoningResult
     public int ModelsUsed { get; init; }
     public int SuccessfulModels { get; init; }
     public string? InputHash { get; init; }
+
+    /// <summary>Disagreement scores between model pairs</summary>
+    public List<ModelDisagreement> Disagreements { get; init; } = [];
+
+    /// <summary>Overall confidence based on model agreement</summary>
+    public float OverallConfidence { get; init; }
+}
+
+/// <summary>
+/// Tracks disagreement between two models on the same input
+/// </summary>
+public sealed class ModelDisagreement
+{
+    public Guid Id { get; init; } = Guid.CreateVersion7();
+    public required string PrimaryModel { get; init; }
+    public required string SecondaryModel { get; init; }
+
+    /// <summary>0.0 = complete agreement, 1.0 = complete disagreement</summary>
+    public float DisagreementScore { get; init; }
+
+    /// <summary>Insights from primary not found in secondary</summary>
+    public List<string> PrimaryOnlyInsights { get; init; } = [];
+
+    /// <summary>Insights from secondary not found in primary</summary>
+    public List<string> SecondaryOnlyInsights { get; init; } = [];
+
+    /// <summary>Insights where confidence differs significantly</summary>
+    public List<ConfidenceDivergence> ConfidenceDivergences { get; init; } = [];
+
+    public DateTimeOffset ComputedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Tracks confidence divergence for the same insight between models
+/// </summary>
+public sealed class ConfidenceDivergence
+{
+    public required string InsightMessage { get; init; }
+    public float PrimaryConfidence { get; init; }
+    public float SecondaryConfidence { get; init; }
+    public float Delta => Math.Abs(PrimaryConfidence - SecondaryConfidence);
 }

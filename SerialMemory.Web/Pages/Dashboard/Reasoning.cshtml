@@ -1,0 +1,444 @@
+@page "/dashboard/reasoning"
+@model SerialMemory.Web.Pages.Dashboard.ReasoningModel
+@{
+    ViewData["Title"] = "Engineering Reasoning";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Engineering Reasoning</h1>
+        <p class="mt-2 text-graphite">Multi-model reasoning analysis for risk detection, conflict resolution, and optimization.</p>
+    </div>
+
+    @if (Model.IsSampleData)
+    {
+        <div class="mb-6 bg-blue-900/30 border border-blue-500/30 text-blue-300 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                </svg>
+                <span><strong>Sample Data:</strong> Select a project or memory and click "Run Analysis" to see real insights.</span>
+            </div>
+        </div>
+    }
+
+    <div class="flex flex-col lg:flex-row gap-6">
+        <!-- Left Panel: Controls -->
+        <div class="lg:w-72 flex-shrink-0 space-y-4">
+            <form method="get" id="filterForm">
+                <!-- Project Selector -->
+                <div class="card mb-4">
+                    <h3 class="text-sm font-semibold text-soft-white mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        Project
+                    </h3>
+                    <select name="Project" asp-for="Project" class="w-full bg-midnight border border-slate rounded-lg px-3 py-2 text-soft-white focus:border-cyan focus:outline-none">
+                        <option value="">All Projects</option>
+                        @foreach (var project in Model.Projects)
+                        {
+                            <option value="@project" selected="@(Model.Project == project)">@project</option>
+                        }
+                    </select>
+                </div>
+
+                <!-- Memory Selector -->
+                <div class="card mb-4">
+                    <h3 class="text-sm font-semibold text-soft-white mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Memory Context
+                    </h3>
+                    <select name="MemoryId" asp-for="MemoryId" class="w-full bg-midnight border border-slate rounded-lg px-3 py-2 text-soft-white focus:border-cyan focus:outline-none text-sm">
+                        <option value="">No specific memory</option>
+                        @foreach (var memory in Model.RecentMemories)
+                        {
+                            <option value="@memory.Id" selected="@(Model.MemoryId == memory.Id)">@memory.Content.Substring(0, Math.Min(40, memory.Content.Length))...</option>
+                        }
+                    </select>
+                </div>
+
+                <!-- Reasoning Mode -->
+                <div class="card mb-4">
+                    <h3 class="text-sm font-semibold text-soft-white mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        Reasoning Mode
+                    </h3>
+                    <div class="space-y-2">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="Mode" value="all" checked="@(Model.Mode == "all")" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                            <span class="ml-2 text-sm text-graphite">All Insights</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="Mode" value="risk" checked="@(Model.Mode == "risk")" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                            <span class="ml-2 text-sm text-graphite">Risk Analysis</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="Mode" value="conflicts" checked="@(Model.Mode == "conflicts")" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                            <span class="ml-2 text-sm text-graphite">Conflict Detection</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="Mode" value="optimization" checked="@(Model.Mode == "optimization")" class="text-cyan focus:ring-cyan bg-midnight border-slate" />
+                            <span class="ml-2 text-sm text-graphite">Optimization</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Sort & Filter -->
+                <div class="card mb-4">
+                    <h3 class="text-sm font-semibold text-soft-white mb-3">Sort By</h3>
+                    <select name="SortBy" asp-for="SortBy" class="w-full bg-midnight border border-slate rounded-lg px-3 py-2 text-soft-white focus:border-cyan focus:outline-none text-sm">
+                        <option value="severity" selected="@(Model.SortBy == "severity")">Severity</option>
+                        <option value="confidence" selected="@(Model.SortBy == "confidence")">Confidence</option>
+                        <option value="recent" selected="@(Model.SortBy == "recent")">Most Recent</option>
+                    </select>
+                </div>
+
+                <!-- Action Buttons -->
+                <button type="submit" class="w-full btn-primary px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Run Analysis
+                </button>
+            </form>
+
+            <button onclick="refreshInsights()" class="w-full bg-slate hover:bg-gray-600 text-soft-white px-4 py-2 rounded-lg font-medium flex items-center justify-center gap-2 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Live Refresh
+            </button>
+        </div>
+
+        <!-- Main Panel: Insights List -->
+        <div class="flex-1">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-soft-white">
+                    Insights
+                    <span class="text-graphite font-normal">(@Model.Insights.Count)</span>
+                </h2>
+                <div class="flex items-center gap-2 text-sm text-graphite">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    Live
+                </div>
+            </div>
+
+            @if (Model.Insights.Count == 0)
+            {
+                <div class="card text-center py-12">
+                    <svg class="w-16 h-16 mx-auto text-slate mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    <p class="text-graphite">No insights found. Select a project or memory and run analysis.</p>
+                </div>
+            }
+            else
+            {
+                <div class="space-y-4">
+                    @foreach (var insight in Model.Insights)
+                    {
+                        var severityClass = insight.Severity.ToLower() switch
+                        {
+                            "critical" => "border-red-500/50 bg-red-900/10",
+                            "high" => "border-orange-500/50 bg-orange-900/10",
+                            "medium" => "border-yellow-500/50 bg-yellow-900/10",
+                            _ => "border-slate bg-navy"
+                        };
+                        var severityBadgeClass = insight.Severity.ToLower() switch
+                        {
+                            "critical" => "bg-red-500/20 text-red-400",
+                            "high" => "bg-orange-500/20 text-orange-400",
+                            "medium" => "bg-yellow-500/20 text-yellow-400",
+                            _ => "bg-slate text-graphite"
+                        };
+                        var typeIcon = insight.Type.ToLower() switch
+                        {
+                            "risk" => "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z",
+                            "conflict" => "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+                            "optimization" => "M13 10V3L4 14h7v7l9-11h-7z",
+                            _ => "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                        };
+                        var typeColor = insight.Type.ToLower() switch
+                        {
+                            "risk" => "text-red-400",
+                            "conflict" => "text-yellow-400",
+                            "optimization" => "text-cyan",
+                            _ => "text-graphite"
+                        };
+
+                        <div class="card border @severityClass" x-data="{ expanded: false }">
+                            <div class="flex items-start gap-4">
+                                <!-- Type Icon -->
+                                <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-midnight flex items-center justify-center">
+                                    <svg class="w-5 h-5 @typeColor" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="@typeIcon" />
+                                    </svg>
+                                </div>
+
+                                <!-- Content -->
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <h3 class="text-soft-white font-medium truncate">@insight.Title</h3>
+                                        <span class="px-2 py-0.5 rounded text-xs font-medium @severityBadgeClass">@insight.Severity</span>
+                                        <span class="px-2 py-0.5 bg-slate text-graphite rounded text-xs">@insight.Type</span>
+                                    </div>
+                                    <p class="text-graphite text-sm mb-2">@insight.Description</p>
+
+                                    <!-- File Location -->
+                                    @if (!string.IsNullOrEmpty(insight.FilePath))
+                                    {
+                                        <div class="text-xs text-cyan font-mono mb-2">
+                                            @insight.FilePath:@insight.LineNumber
+                                        </div>
+                                    }
+
+                                    <!-- Code Snippet -->
+                                    @if (!string.IsNullOrEmpty(insight.CodeSnippet))
+                                    {
+                                        <div class="bg-midnight p-2 rounded text-xs font-mono text-orange-300 overflow-x-auto mb-2">
+                                            <code>@insight.CodeSnippet</code>
+                                        </div>
+                                    }
+
+                                    <!-- Recommendation -->
+                                    @if (!string.IsNullOrEmpty(insight.Recommendation))
+                                    {
+                                        <div class="text-sm text-green-400 mb-2">
+                                            <strong>Fix:</strong> @insight.Recommendation
+                                        </div>
+                                    }
+
+                                    <!-- Meta Info -->
+                                    <div class="flex flex-wrap items-center gap-3 text-xs">
+                                        <!-- Confidence -->
+                                        <div class="flex items-center gap-1">
+                                            <span class="text-graphite">Confidence:</span>
+                                            <span class="text-soft-white font-medium">@((insight.Confidence * 100).ToString("F0"))%</span>
+                                            <div class="w-16 h-1.5 bg-midnight rounded-full overflow-hidden">
+                                                <div class="h-full bg-cyan rounded-full" style="width: @((insight.Confidence * 100).ToString("F0"))%"></div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Source Models -->
+                                        <div class="flex items-center gap-1">
+                                            @foreach (var srcModel in insight.SourceModels)
+                                            {
+                                                <span class="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded text-xs">@srcModel</span>
+                                            }
+                                        </div>
+
+                                        <!-- Timestamp -->
+                                        <span class="text-graphite">@insight.Timestamp.ToString("HH:mm:ss")</span>
+                                    </div>
+
+                                    <!-- Trace (Expandable) -->
+                                    @if (!string.IsNullOrEmpty(insight.Trace))
+                                    {
+                                        <div class="mt-3">
+                                            <button onclick="toggleTrace('@insight.Id')" class="text-cyan text-xs flex items-center gap-1 hover:underline">
+                                                <svg id="trace-icon-@insight.Id" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                                                </svg>
+                                                Show Reasoning Trace
+                                            </button>
+                                            <div id="trace-@insight.Id" class="hidden mt-2 p-3 bg-midnight rounded-lg text-xs text-graphite font-mono">
+                                                @insight.Trace
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- Live Progress Panel -->
+<div id="liveProgressPanel" class="fixed bottom-4 right-4 w-96 bg-navy border border-slate rounded-lg shadow-xl hidden z-50">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate">
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cyan animate-pulse"></span>
+            <span class="text-soft-white font-medium">Live Reasoning</span>
+        </div>
+        <button onclick="closeLivePanel()" class="text-graphite hover:text-soft-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+    </div>
+    <div id="liveProgressContent" class="p-4 max-h-64 overflow-y-auto">
+        <div class="space-y-2" id="progressSteps"></div>
+    </div>
+</div>
+
+@section Scripts {
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script>
+    let connection = null;
+    let isConnected = false;
+
+    // Initialize SignalR connection
+    async function initSignalR() {
+        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://@(ViewContext.HttpContext.Request.Host.ToString().Replace("5001", "5004"))';
+        connection = new signalR.HubConnectionBuilder()
+            .withUrl(apiBaseUrl + "/hubs/live")
+            .withAutomaticReconnect()
+            .configureLogging(signalR.LogLevel.Information)
+            .build();
+
+        connection.on("ReasoningProgress", (evt) => {
+            console.log("Reasoning progress:", evt);
+            showLivePanel();
+            addProgressStep(evt);
+        });
+
+        connection.on("ReasoningResult", (evt) => {
+            console.log("Reasoning result:", evt);
+            addResultStep(evt);
+            setTimeout(() => {
+                refreshInsights();
+            }, 1000);
+        });
+
+        connection.on("Subscribed", (stream) => {
+            console.log("Subscribed to:", stream);
+        });
+
+        connection.onreconnecting(() => {
+            console.log("SignalR reconnecting...");
+            updateConnectionStatus(false);
+        });
+
+        connection.onreconnected(() => {
+            console.log("SignalR reconnected");
+            updateConnectionStatus(true);
+            subscribeToStreams();
+        });
+
+        try {
+            await connection.start();
+            console.log("SignalR connected");
+            isConnected = true;
+            updateConnectionStatus(true);
+            await subscribeToStreams();
+        } catch (err) {
+            console.error("SignalR connection failed:", err);
+            updateConnectionStatus(false);
+        }
+    }
+
+    async function subscribeToStreams() {
+        if (connection && isConnected) {
+            await connection.invoke("Subscribe", "reasoning.progress");
+            await connection.invoke("Subscribe", "reasoning.results");
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        const indicator = document.querySelector('.animate-pulse');
+        if (indicator) {
+            indicator.classList.toggle('bg-green-500', connected);
+            indicator.classList.toggle('bg-red-500', !connected);
+        }
+    }
+
+    function showLivePanel() {
+        document.getElementById('liveProgressPanel').classList.remove('hidden');
+    }
+
+    function closeLivePanel() {
+        document.getElementById('liveProgressPanel').classList.add('hidden');
+    }
+
+    function addProgressStep(evt) {
+        const container = document.getElementById('progressSteps');
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'flex items-start gap-2 text-sm';
+        stepDiv.innerHTML = `
+            <span class="w-5 h-5 rounded-full bg-cyan/20 text-cyan flex items-center justify-center text-xs flex-shrink-0">${evt.stepNumber}</span>
+            <div class="flex-1">
+                <span class="text-soft-white">${evt.description}</span>
+                <span class="text-graphite text-xs block">${evt.stepType}</span>
+            </div>
+        `;
+        container.appendChild(stepDiv);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function addResultStep(evt) {
+        const container = document.getElementById('progressSteps');
+        const resultDiv = document.createElement('div');
+        resultDiv.className = 'mt-3 p-2 bg-green-900/20 border border-green-500/30 rounded text-sm';
+        resultDiv.innerHTML = `
+            <div class="flex items-center gap-2 text-green-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+                <span>Completed in ${evt.totalDurationMs}ms</span>
+            </div>
+            <div class="text-graphite text-xs mt-1">${evt.totalSteps} steps, ${evt.insights?.length || 0} insights</div>
+        `;
+        container.appendChild(resultDiv);
+    }
+
+    function toggleTrace(id) {
+        const trace = document.getElementById('trace-' + id);
+        const icon = document.getElementById('trace-icon-' + id);
+        if (trace.classList.contains('hidden')) {
+            trace.classList.remove('hidden');
+            icon.style.transform = 'rotate(90deg)';
+        } else {
+            trace.classList.add('hidden');
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+
+    function refreshInsights() {
+        document.getElementById('filterForm').submit();
+    }
+
+    // Run live reasoning via API (triggers SignalR events)
+    async function runLiveReasoning() {
+        const project = document.querySelector('select[name="Project"]').value;
+        const memoryId = document.querySelector('select[name="MemoryId"]').value;
+
+        document.getElementById('progressSteps').innerHTML = '';
+        showLivePanel();
+
+        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://@(ViewContext.HttpContext.Request.Host.ToString().Replace("5001", "5004"))';
+
+        try {
+            const response = await fetch(apiBaseUrl + '/api/reasoning/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project, memoryId: memoryId || null, limit: 50 })
+            });
+            const result = await response.json();
+            console.log("Reasoning API result:", result);
+        } catch (err) {
+            console.error("Failed to run reasoning:", err);
+        }
+    }
+
+    // Override form submit to use live API
+    document.getElementById('filterForm').addEventListener('submit', (e) => {
+        if (isConnected) {
+            e.preventDefault();
+            runLiveReasoning();
+        }
+    });
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        initSignalR();
+    });
+</script>
+}

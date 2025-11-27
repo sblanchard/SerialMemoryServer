@@ -14,7 +14,7 @@
 #   - PostgreSQL with pgvector: localhost:5435
 #   - SerialMemory API:         localhost:5000
 #   - Dashboard API:            localhost:5001
-#   - Ollama (embeddings):      localhost:11434
+#   - Ollama (embeddings):      localhost:11434 (WSL - not in Docker)
 #   - Prometheus:               localhost:9090
 #   - Grafana:                  localhost:3001
 #
@@ -50,23 +50,9 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Embeddings: Ollama (or use HTTP embedding service)
+  # Embeddings: Ollama runs locally on WSL (not in Docker)
+  # Access via host.docker.internal:11434 from containers
   # ---------------------------------------------------------------------------
-  ollama:
-    image: ollama/ollama:latest
-    container_name: serialmemory-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    # GPU support (uncomment for NVIDIA GPU)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
   # ---------------------------------------------------------------------------
   # SerialMemory API (REST + Dashboard)
@@ -85,7 +71,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       # Self-hosted mode: bypass JWT auth
       - SERIALMEMORY_MODE=self-hosted
@@ -94,8 +80,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -163,7 +147,6 @@ services:
 
 volumes:
   postgres_dev_data:
-  ollama_data:
   redis_dev_data:
 
 # =============================================================================
@@ -182,7 +165,8 @@ volumes:
 # Reset database (removes all data):
 #   docker compose -f docker-compose.dev.yml down -v
 #
-# Pull Ollama embedding model (after startup):
-#   docker exec serialmemory-ollama ollama pull nomic-embed-text
+# Ollama runs locally on WSL - ensure it's running:
+#   wsl ollama serve
+#   wsl ollama pull nomic-embed-text
 #
 # =============================================================================

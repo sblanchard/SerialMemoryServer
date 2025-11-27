@@ -36,19 +36,21 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration - Ollama (local or cloud)
+// Embedding service configuration - Ollama (local only)
 var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
 var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
-var ollamaCloudApiKey = configuration["OLLAMA_CLOUD_API_KEY"]; // Set this to use Ollama Cloud instead of local
 
 // Entity extraction service configuration
 // Option 1: Ollama (recommended) - uses local LLM for accurate extraction
 // Option 2: HTTP service (legacy) - set EXTRACTION_SERVICE_URL
 // Option 3: Pattern-based (default fallback, no external dependencies)
-var ollamaEntityUrl = configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl;  // Share Ollama URL by default
+// Set DISABLE_OLLAMA_ENTITY=true to skip local Ollama for entity extraction (useful when using cloud embeddings)
+var disableOllamaEntity = configuration["DISABLE_OLLAMA_ENTITY"]?.ToLowerInvariant() is "true" or "1" or "yes";
+var ollamaEntityUrl = disableOllamaEntity ? null : (configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl);
 var ollamaEntityModel = configuration["OLLAMA_ENTITY_MODEL"] ?? "phi3"; // phi3 is good for extraction
 var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];     // Legacy HTTP service
+DebugFileLogger.Log("MCP", $"Entity extraction: disableOllama={disableOllamaEntity}, ollamaEntityUrl={ollamaEntityUrl ?? "null"}");
 
 // API key for SaaS authentication (required)
 var apiKey = configuration["SERIALMEMORY_API_KEY"];
@@ -129,20 +131,9 @@ IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, t
 DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
-// Create embedding service - Ollama (local or cloud)
-IEmbeddingService embeddingService;
-if (!string.IsNullOrEmpty(ollamaCloudApiKey))
-{
-    // Use Ollama Cloud API
-    embeddingService = new OllamaCloudEmbeddingService(ollamaCloudApiKey, ollamaModel, ollamaEmbeddingDim);
-    logger.LogInformation("Using Ollama Cloud embedding service: {Model} (dim={Dim})", ollamaModel, ollamaEmbeddingDim);
-}
-else
-{
-    // Use local Ollama
-    embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-    logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
-}
+// Create embedding service - local Ollama
+IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
 
 // Create entity extraction service (Ollama > HTTP > Pattern-based)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
@@ -172,10 +163,10 @@ IMultiModelReasoningService multiModelService = new SerialMemory.Infrastructure.
     store, reasoningService, modelFactory, loggerFactory.CreateLogger<SerialMemory.Infrastructure.Services.MultiModelReasoningService>());
 var reasoningTools = new EngineeringReasoningTools(reasoningService, visualizationService, multiModelService, logger);
 
-// Initialize usage service (non-blocking metering)
+// Initialize usage service (non-blocking metering) - use authenticated tenant context
 var usageLogger = loggerFactory.CreateLogger<UsageService>();
-using var usageService = new UsageService(connectionString, usageLogger, tenantId: "self", workspaceId: "default");
-logger.LogInformation("Usage metering service initialized");
+using var usageService = new UsageService(connectionString, usageLogger, tenantId: tenantId, workspaceId: tenantContext.WorkspaceId);
+logger.LogInformation("Usage metering service initialized for tenant {TenantId}", tenantId);
 
 // Session state
 Guid? currentSessionId = null;
@@ -675,11 +666,15 @@ async Task<object> HandleToolsCall(JsonNode? @params)
 
 void TrackToolUsage(string? toolName, int latencyMs, bool success, string? errorMessage)
 {
+    // Map ALL MCP tools to usage event types - never miss a tool
     UsageEventType? eventType = toolName switch
     {
+        // Core memory operations
         "memory_ingest" => UsageEventType.MemoryIngest,
         "memory_search" => UsageEventType.MemorySearch,
         "memory_multi_hop_search" => UsageEventType.MemoryMultiHopSearch,
+
+        // Lifecycle operations
         "memory_update" => UsageEventType.MemoryUpdate,
         "memory_delete" => UsageEventType.MemoryDelete,
         "memory_merge" => UsageEventType.MemoryMerge,
@@ -687,14 +682,52 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "memory_decay" => UsageEventType.MemoryDecay,
         "memory_reinforce" => UsageEventType.MemoryReinforce,
         "memory_expire" => UsageEventType.MemoryExpire,
+
+        // Graph operations
         "crawl_relationships" => UsageEventType.CrawlRelationships,
+        "get_graph_statistics" => UsageEventType.GetGraphStatistics,
+
+        // Export operations
         "export_workspace" => UsageEventType.ExportWorkspace,
         "export_memories" => UsageEventType.ExportMemories,
         "export_graph" => UsageEventType.ExportGraph,
+        "export_user_profile" => UsageEventType.ExportUserProfile,
+
+        // Model operations
         "reembed_memories" => UsageEventType.ReembedMemories,
+        "get_model_info" => UsageEventType.GetModelInfo,
+
+        // User/session operations
+        "memory_about_user" => UsageEventType.MemoryAboutUser,
+        "set_user_persona" => UsageEventType.SetUserPersona,
+        "initialise_conversation_session" => UsageEventType.InitialiseSession,
+        "end_conversation_session" => UsageEventType.EndSession,
+
+        // Integration operations
+        "get_integrations" => UsageEventType.GetIntegrations,
+        "import_from_core" => UsageEventType.ImportFromCore,
+
+        // Observability operations
+        "memory_trace" => UsageEventType.MemoryTrace,
+        "memory_lineage" => UsageEventType.MemoryLineage,
+        "memory_explain" => UsageEventType.MemoryExplain,
+        "memory_conflicts" => UsageEventType.MemoryConflicts,
+
+        // Safety operations
+        "detect_contradictions" => UsageEventType.DetectContradictions,
+        "detect_hallucinations" => UsageEventType.DetectHallucinations,
+        "verify_memory_integrity" => UsageEventType.VerifyMemoryIntegrity,
+        "scan_loops" => UsageEventType.ScanLoops,
+
+        // Engineering reasoning operations
+        "engineering_analyze" => UsageEventType.EngineeringAnalyze,
+        "engineering_visualize" => UsageEventType.EngineeringVisualize,
+        "engineering_reason" => UsageEventType.EngineeringReason,
+
         _ => null
     };
 
+    // Track usage for all tools - fire and forget, never block
     if (eventType.HasValue)
     {
         usageService.TrackUsage(
@@ -703,6 +736,11 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
             latencyMs: latencyMs,
             success: success,
             errorMessage: errorMessage);
+    }
+    else if (!string.IsNullOrEmpty(toolName))
+    {
+        // Log unknown tools so we can add them
+        logger.LogWarning("Unknown tool not tracked for usage: {ToolName}", toolName);
     }
 }
 

@@ -45,7 +45,9 @@ public sealed class LoginModel : PageModel
             var client = _httpClientFactory.CreateClient("DashboardApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
 
-            var response = await client.GetAsync("/me");
+            // Use a 15-second timeout for the auth request
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var response = await client.GetAsync("/me", cts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -103,9 +105,14 @@ public sealed class LoginModel : PageModel
 
             return RedirectToPage("/Dashboard/Index");
         }
+        catch (TaskCanceledException)
+        {
+            ErrorMessage = "Authentication service timed out. Please try again.";
+            return Page();
+        }
         catch (HttpRequestException ex)
         {
-            ErrorMessage = $"Could not connect to the server: {ex.Message}";
+            ErrorMessage = $"Could not connect to authentication service: {ex.Message}";
             return Page();
         }
     }

@@ -11,7 +11,8 @@
         "POSTGRES_DB": "contextdb",
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_EMBEDDING_MODEL": "nomic-embed-text",
-        "OLLAMA_ENTITY_MODEL": "qwen2.5:7b", 
+        "OLLAMA_ENTITY_MODEL": "qwen2.5:7b",
+        "DISABLE_OLLAMA_ENTITY": "true",
         "SERIALMEMORY_API_KEY": "sm_live_ab32L3oiZgoh1plqpeSAMIf3nfJSIAOG"
       }
     }

@@ -1,0 +1,326 @@
+@page "/dashboard/security"
+@model SerialMemory.Web.Pages.Dashboard.SecurityModel
+@{
+    ViewData["Title"] = "Security";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Operational Safety & Tenant Proofs</h1>
+        <p class="mt-2 text-graphite">Verify tenant isolation, system integrity, and data residency compliance.</p>
+    </div>
+
+    @if (Model.IsSampleData)
+    {
+        <div class="mb-6 bg-blue-900/30 border border-blue-500/30 text-blue-300 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                </svg>
+                <span><strong>Sample Data:</strong> API unavailable. The data shown below is for demonstration purposes.</span>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.LastVerificationResult))
+    {
+        <div class="mb-6 bg-indigo-900/30 border border-indigo-500/30 text-indigo-300 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                <span>@Model.LastVerificationResult</span>
+            </div>
+        </div>
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Section 1: Tenant Isolation Proof -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-soft-white flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    Tenant Isolation Proof
+                </h3>
+                @{
+                    var isolationStatusClass = Model.IsolationStatus switch
+                    {
+                        "OK" => "bg-green-500",
+                        "Warning" => "bg-yellow-500",
+                        _ => "bg-red-500"
+                    };
+                }
+                <span class="@isolationStatusClass w-3 h-3 rounded-full animate-pulse"></span>
+            </div>
+            <div class="space-y-4">
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Tenant ID</span>
+                    <span class="text-soft-white font-mono text-sm">@Model.TenantId.ToString()[..8]...</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">RLS Status</span>
+                    <span class="@(Model.RlsStatus == "Enabled" ? "text-green-400" : "text-red-400") font-medium">@Model.RlsStatus</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Guards</span>
+                    @if (Model.GuardsActive)
+                    {
+                        <span class="flex items-center text-green-400">
+                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                            </svg>
+                            Active
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="flex items-center text-red-400">
+                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                            </svg>
+                            Inactive
+                        </span>
+                    }
+                </div>
+                <div class="flex justify-between items-center py-2">
+                    <span class="text-graphite">Last Audit</span>
+                    <span class="text-soft-white text-sm">@(Model.LastIsolationAudit?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: System Integrity -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-soft-white flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    System Integrity
+                </h3>
+                @{
+                    var integrityStatusClass = Model.IntegrityStatus switch
+                    {
+                        "OK" => "bg-green-500",
+                        "Warning" => "bg-yellow-500",
+                        _ => "bg-red-500"
+                    };
+                }
+                <span class="@integrityStatusClass w-3 h-3 rounded-full animate-pulse"></span>
+            </div>
+            <div class="space-y-4">
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Hash Chain</span>
+                    <span class="@(Model.HashChainStatus == "Valid" ? "text-green-400" : "text-red-400") font-medium">@Model.HashChainStatus</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Audit Log</span>
+                    <span class="@(Model.AuditLogStatus == "Intact" ? "text-green-400" : "text-red-400") font-medium">@Model.AuditLogStatus</span>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                    <span class="text-graphite">Tamper Detection</span>
+                    @if (!Model.TamperDetected)
+                    {
+                        <span class="flex items-center text-green-400">
+                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                            </svg>
+                            No Tampering
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="flex items-center text-red-400 font-bold">
+                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                            TAMPER DETECTED
+                        </span>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 3: Data Residency -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-soft-white flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Data Residency
+                </h3>
+                @{
+                    var residencyStatusClass = Model.ResidencyStatus switch
+                    {
+                        "OK" => "bg-green-500",
+                        "Warning" => "bg-yellow-500",
+                        _ => "bg-red-500"
+                    };
+                }
+                <span class="@residencyStatusClass w-3 h-3 rounded-full animate-pulse"></span>
+            </div>
+            <div class="space-y-4">
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Region</span>
+                    <span class="text-soft-white font-medium">@Model.Region</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate">
+                    <span class="text-graphite">Retention Policy</span>
+                    <span class="text-soft-white font-medium">@Model.RetentionPolicy</span>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                    <span class="text-graphite">Compliance</span>
+                    <span class="@(Model.ComplianceProof == "Compliant" ? "text-green-400" : Model.ComplianceProof == "Non-Compliant" ? "text-red-400" : "text-yellow-400") font-medium">@Model.ComplianceProof</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 4: Live Verification Tools -->
+        <div class="card">
+            <div class="flex items-center mb-4">
+                <h3 class="text-lg font-semibold text-soft-white flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    Live Verification Tools
+                </h3>
+            </div>
+            <div class="space-y-3">
+                <form method="post" asp-page-handler="Verify" class="flex flex-col gap-3">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" name="action" value="isolation" class="w-full flex items-center justify-center gap-2 bg-slate hover:bg-gray-600 text-soft-white px-4 py-3 rounded-lg transition font-medium">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                        Run Isolation Check
+                    </button>
+                    <button type="submit" name="action" value="audit" class="w-full flex items-center justify-center gap-2 bg-slate hover:bg-gray-600 text-soft-white px-4 py-3 rounded-lg transition font-medium">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        Verify Audit Chain
+                    </button>
+                    <button type="submit" name="action" value="attack" class="w-full flex items-center justify-center gap-2 bg-red-900/50 hover:bg-red-800/50 border border-red-500/30 text-red-300 px-4 py-3 rounded-lg transition font-medium">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        Simulate Attack
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Legend -->
+    <div class="card">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Status Legend</h3>
+        <div class="flex flex-wrap gap-6">
+            <div class="flex items-center gap-2">
+                <span class="bg-green-500 w-3 h-3 rounded-full"></span>
+                <span class="text-graphite">OK - All checks passed</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="bg-yellow-500 w-3 h-3 rounded-full"></span>
+                <span class="text-graphite">Warning - Attention required</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="bg-red-500 w-3 h-3 rounded-full"></span>
+                <span class="text-graphite">Critical - Immediate action needed</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Live Anomaly Feed -->
+<div id="liveAnomalyFeed" class="fixed bottom-4 right-4 w-80 bg-navy border border-slate rounded-lg shadow-xl hidden z-50">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate">
+        <div class="flex items-center gap-2">
+            <span id="feedIndicator" class="w-2 h-2 rounded-full bg-cyan animate-pulse"></span>
+            <span class="text-soft-white font-medium">Live Security Feed</span>
+        </div>
+        <button onclick="closeFeed()" class="text-graphite hover:text-soft-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+    </div>
+    <div id="anomalyList" class="p-4 max-h-64 overflow-y-auto space-y-2"></div>
+</div>
+
+@section Scripts {
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script>
+    let connection = null;
+
+    async function initSignalR() {
+        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://@(ViewContext.HttpContext.Request.Host.ToString().Replace("5001", "5004"))';
+        connection = new signalR.HubConnectionBuilder()
+            .withUrl(apiBaseUrl + "/hubs/live")
+            .withAutomaticReconnect()
+            .configureLogging(signalR.LogLevel.Information)
+            .build();
+
+        connection.on("SecurityAnomaly", (evt) => {
+            console.log("Security anomaly:", evt);
+            showFeed();
+            addAnomalyItem(evt);
+        });
+
+        connection.on("Subscribed", (stream) => {
+            console.log("Subscribed to:", stream);
+        });
+
+        try {
+            await connection.start();
+            console.log("SignalR connected");
+            await connection.invoke("Subscribe", "security.anomalies");
+            document.getElementById('feedIndicator').classList.add('bg-green-500');
+            document.getElementById('feedIndicator').classList.remove('bg-cyan');
+        } catch (err) {
+            console.error("SignalR connection failed:", err);
+            document.getElementById('feedIndicator').classList.add('bg-red-500');
+            document.getElementById('feedIndicator').classList.remove('bg-cyan');
+        }
+    }
+
+    function showFeed() {
+        document.getElementById('liveAnomalyFeed').classList.remove('hidden');
+    }
+
+    function closeFeed() {
+        document.getElementById('liveAnomalyFeed').classList.add('hidden');
+    }
+
+    function addAnomalyItem(evt) {
+        const container = document.getElementById('anomalyList');
+        const statusClass = evt.status === 'pass' ? 'text-green-400' : evt.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
+        const statusIcon = evt.status === 'pass'
+            ? '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />'
+            : '<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />';
+
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'p-2 bg-midnight rounded flex items-start gap-2 text-sm';
+        itemDiv.innerHTML = `
+            <svg class="w-4 h-4 ${statusClass} flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">${statusIcon}</svg>
+            <div class="flex-1">
+                <div class="text-soft-white font-medium">${evt.eventType}</div>
+                <div class="text-graphite text-xs">${evt.message || 'Check completed'}</div>
+                <div class="text-graphite text-xs mt-1">${new Date(evt.timestamp).toLocaleTimeString()}</div>
+            </div>
+        `;
+        container.insertBefore(itemDiv, container.firstChild);
+
+        // Keep only last 10 items
+        while (container.children.length > 10) {
+            container.removeChild(container.lastChild);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initSignalR();
+    });
+</script>
+}

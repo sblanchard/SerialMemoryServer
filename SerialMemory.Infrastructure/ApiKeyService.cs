@@ -408,8 +408,8 @@ public sealed class ApiKeyService : IApiKeyService
             return null;
         }
 
-        // Update last_used_at (fire and forget, don't block validation)
-        _ = conn.ExecuteAsync(
+        // Update last_used_at (await to ensure connection is properly released)
+        await conn.ExecuteAsync(
             "UPDATE tenant_api_keys SET last_used_at = NOW() WHERE id = @KeyId",
             new { KeyId = key.id });
 

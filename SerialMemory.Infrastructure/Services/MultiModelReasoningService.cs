@@ -276,10 +276,14 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         // Merge insights from all models
         var mergedInsights = MergeInsights(allModelResults);
 
+        // Compute disagreement scores between model pairs
+        var disagreements = ComputeDisagreements(allModelResults);
+        var overallConfidence = ComputeOverallConfidence(allModelResults, disagreements);
+
         sw.Stop();
 
-        _logger.LogInformation("Multi-model reasoning completed in {Duration}ms. Models: {Total}, Successful: {Success}, Insights: {Insights}",
-            sw.ElapsedMilliseconds, traces.Count, traces.Count(t => t.Success), mergedInsights.Count);
+        _logger.LogInformation("Multi-model reasoning completed in {Duration}ms. Models: {Total}, Successful: {Success}, Insights: {Insights}, Disagreements: {Disagreements}, Confidence: {Confidence:P0}",
+            sw.ElapsedMilliseconds, traces.Count, traces.Count(t => t.Success), mergedInsights.Count, disagreements.Count, overallConfidence);
 
         return new MultiModelReasoningResult
         {
@@ -288,7 +292,9 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
             TotalDurationMs = (int)sw.ElapsedMilliseconds,
             ModelsUsed = traces.Count,
             SuccessfulModels = traces.Count(t => t.Success),
-            InputHash = inputHash
+            InputHash = inputHash,
+            Disagreements = disagreements,
+            OverallConfidence = overallConfidence
         };
     }
 
@@ -414,5 +420,109 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
 
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(json));
         return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
+    }
+
+    private List<ModelDisagreement> ComputeDisagreements(List<ModelResult> results)
+    {
+        var disagreements = new List<ModelDisagreement>();
+        var successfulResults = results.Where(r => r.Success).ToList();
+
+        // Compare each pair of models
+        for (int i = 0; i < successfulResults.Count; i++)
+        {
+            for (int j = i + 1; j < successfulResults.Count; j++)
+            {
+                var primary = successfulResults[i];
+                var secondary = successfulResults[j];
+
+                var disagreement = ComputePairDisagreement(primary, secondary);
+                if (disagreement.DisagreementScore > 0.1f) // Only track significant disagreements
+                {
+                    disagreements.Add(disagreement);
+                }
+            }
+        }
+
+        return disagreements.OrderByDescending(d => d.DisagreementScore).ToList();
+    }
+
+    private ModelDisagreement ComputePairDisagreement(ModelResult primary, ModelResult secondary)
+    {
+        var primaryInsights = primary.Insights
+            .Select(i => (Key: NormalizeMessage(i.Message), Insight: i))
+            .ToDictionary(x => x.Key, x => x.Insight);
+
+        var secondaryInsights = secondary.Insights
+            .Select(i => (Key: NormalizeMessage(i.Message), Insight: i))
+            .ToDictionary(x => x.Key, x => x.Insight);
+
+        var primaryOnly = primaryInsights.Keys.Except(secondaryInsights.Keys).ToList();
+        var secondaryOnly = secondaryInsights.Keys.Except(primaryInsights.Keys).ToList();
+        var shared = primaryInsights.Keys.Intersect(secondaryInsights.Keys).ToList();
+
+        // Compute confidence divergences for shared insights
+        var divergences = new List<ConfidenceDivergence>();
+        foreach (var key in shared)
+        {
+            var pConf = primaryInsights[key].Confidence;
+            var sConf = secondaryInsights[key].Confidence;
+            var delta = Math.Abs(pConf - sConf);
+
+            if (delta > 0.2f) // Only track significant confidence differences
+            {
+                divergences.Add(new ConfidenceDivergence
+                {
+                    InsightMessage = primaryInsights[key].Message,
+                    PrimaryConfidence = pConf,
+                    SecondaryConfidence = sConf
+                });
+            }
+        }
+
+        // Calculate disagreement score
+        var totalInsights = primaryOnly.Count + secondaryOnly.Count + shared.Count;
+        float disagreementScore = 0f;
+
+        if (totalInsights > 0)
+        {
+            // Weight: unique insights contribute more to disagreement
+            var uniqueWeight = (primaryOnly.Count + secondaryOnly.Count) / (float)totalInsights;
+
+            // Confidence divergence also contributes
+            var avgDivergence = divergences.Count > 0
+                ? divergences.Average(d => d.Delta)
+                : 0f;
+
+            disagreementScore = (uniqueWeight * 0.7f) + (avgDivergence * 0.3f);
+        }
+
+        return new ModelDisagreement
+        {
+            PrimaryModel = primary.ModelName,
+            SecondaryModel = secondary.ModelName,
+            DisagreementScore = Math.Min(disagreementScore, 1.0f),
+            PrimaryOnlyInsights = primaryOnly.Take(5).Select(k => primaryInsights[k].Message).ToList(),
+            SecondaryOnlyInsights = secondaryOnly.Take(5).Select(k => secondaryInsights[k].Message).ToList(),
+            ConfidenceDivergences = divergences.OrderByDescending(d => d.Delta).Take(5).ToList()
+        };
+    }
+
+    private float ComputeOverallConfidence(List<ModelResult> results, List<ModelDisagreement> disagreements)
+    {
+        var successfulCount = results.Count(r => r.Success);
+        if (successfulCount == 0) return 0f;
+
+        // Base confidence from model success rate
+        var baseConfidence = successfulCount / (float)results.Count;
+
+        // Penalize for disagreements
+        var avgDisagreement = disagreements.Count > 0
+            ? disagreements.Average(d => d.DisagreementScore)
+            : 0f;
+
+        // Final confidence = base - disagreement penalty
+        var confidence = baseConfidence * (1f - (avgDisagreement * 0.5f));
+
+        return Math.Max(0f, Math.Min(1f, confidence));
     }
 }
