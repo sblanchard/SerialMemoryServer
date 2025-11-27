@@ -1,0 +1,168 @@
+@page "/onboarding/apikey"
+@model SerialMemory.Web.Pages.Onboarding.ApiKeyModel
+@{
+    ViewData["Title"] = "Generate API Key";
+}
+
+<div class="min-h-screen gradient-bg py-12">
+    <div class="max-w-2xl mx-auto px-4">
+        <div class="text-center mb-8">
+            <a href="/onboarding" class="text-electric hover:underline text-sm">&larr; Back to Onboarding</a>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.GeneratedApiKey))
+        {
+            <!-- API Key Generated - Show Config -->
+            <div class="card glow">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h1 class="text-2xl font-bold text-soft-white">API Key Generated!</h1>
+                </div>
+
+                <div class="bg-yellow-900/30 border border-yellow-500 text-yellow-200 px-4 py-3 rounded-lg mb-6">
+                    <strong>Important:</strong> Copy your API key now. You won't be able to see it again!
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-graphite mb-2">Your API Key</label>
+                    <div class="flex gap-2">
+                        <input type="text" readonly value="@Model.GeneratedApiKey" id="apiKeyInput"
+                               class="flex-1 bg-slate border border-slate rounded-md px-4 py-3 text-soft-white font-mono text-sm">
+                        <button onclick="copyApiKey()" class="bg-electric hover:bg-blue-600 text-white px-4 py-3 rounded-md font-medium transition">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-soft-white mb-2">MCP Configuration</label>
+                    <p class="text-graphite text-sm mb-3">Add this to your <code class="bg-slate px-1 rounded">claude_desktop_config.json</code>:</p>
+                    <div class="bg-slate/50 rounded-lg p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs text-graphite">claude_desktop_config.json</span>
+                            <button onclick="copyConfig()" class="text-xs text-electric hover:underline">Copy</button>
+                        </div>
+                        <pre id="mcpConfig" class="text-sm text-soft-white overflow-x-auto">@Model.McpConfig</pre>
+                    </div>
+                </div>
+
+                <div class="bg-slate/30 rounded-lg p-4 mb-6">
+                    <h3 class="text-sm font-medium text-soft-white mb-2">Next Steps:</h3>
+                    <ol class="text-sm text-graphite space-y-2 list-decimal list-inside">
+                        <li>Copy the MCP configuration above</li>
+                        <li>Open Claude Desktop settings</li>
+                        <li>Paste the configuration into <code class="bg-slate px-1 rounded">claude_desktop_config.json</code></li>
+                        <li>Restart Claude Desktop</li>
+                        <li>Start using memory tools!</li>
+                    </ol>
+                </div>
+
+                <div class="flex gap-4">
+                    <a href="/dashboard" class="btn-primary px-6 py-3 rounded-md font-medium inline-block">
+                        Go to Dashboard
+                    </a>
+                    <a href="/onboarding" class="btn-outline px-6 py-3 rounded-md font-medium inline-block">
+                        Back to Overview
+                    </a>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Generate API Key Form -->
+            <div class="card glow">
+                <h1 class="text-2xl font-bold text-soft-white mb-2">Generate API Key</h1>
+                <p class="text-graphite mb-6">Create an API key to authenticate your MCP client with SerialMemory.</p>
+
+                @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                {
+                    <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+                        @Model.ErrorMessage
+                    </div>
+                }
+
+                @if (Model.TenantId.HasValue)
+                {
+                    <div class="bg-slate/30 rounded-lg p-4 mb-6">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span class="text-soft-white">Workspace: <strong>@Model.TenantName</strong></span>
+                        </div>
+                    </div>
+
+                    <form method="post">
+                        @Html.AntiForgeryToken()
+
+                        <div class="mb-6">
+                            <label for="KeyName" class="block text-sm font-medium text-soft-white mb-2">
+                                Key Name <span class="text-red-400">*</span>
+                            </label>
+                            <input type="text" id="KeyName" name="KeyName" value="@Model.KeyName" required
+                                   placeholder="e.g., Development Key"
+                                   class="w-full bg-slate border border-slate rounded-md px-4 py-3 text-soft-white focus:outline-none focus:border-electric">
+                            <p class="text-xs text-graphite mt-1">Give your key a descriptive name for easy identification.</p>
+                        </div>
+
+                        <div class="bg-slate/30 rounded-lg p-4 mb-6">
+                            <h3 class="text-sm font-medium text-soft-white mb-2">Key Permissions:</h3>
+                            <ul class="text-sm text-graphite space-y-1">
+                                <li class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    Full read/write access to memories
+                                </li>
+                                <li class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    Entity and relationship management
+                                </li>
+                                <li class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    Semantic search access
+                                </li>
+                            </ul>
+                        </div>
+
+                        <button type="submit" class="w-full btn-primary px-6 py-3 rounded-md font-medium">
+                            Generate API Key
+                        </button>
+                    </form>
+                }
+                else
+                {
+                    <div class="bg-yellow-900/30 border border-yellow-500 text-yellow-200 px-4 py-3 rounded-lg">
+                        <strong>No workspace found.</strong> Please create a workspace first.
+                    </div>
+                    <a href="/onboarding/create" class="mt-4 btn-primary px-6 py-3 rounded-md font-medium inline-block">
+                        Create Workspace
+                    </a>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    function copyApiKey() {
+        const input = document.getElementById('apiKeyInput');
+        input.select();
+        document.execCommand('copy');
+        alert('API key copied to clipboard!');
+    }
+
+    function copyConfig() {
+        const config = document.getElementById('mcpConfig').textContent;
+        navigator.clipboard.writeText(config);
+        alert('Configuration copied to clipboard!');
+    }
+</script>
+}
