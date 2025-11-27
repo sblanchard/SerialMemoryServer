@@ -18,17 +18,11 @@ public class GraphModel : PageModel
 
     public void OnGet()
     {
-        // Get API base URL from config
-        ApiBaseUrl = _configuration["API_BASE_URL"] ?? "http://localhost:5000";
+        // Use same-origin proxy - all API calls go through /api/* on this server
+        // which proxies to internal Docker API, keeping traffic inside the network
+        ApiBaseUrl = "";
 
-        // Get auth token from claims
-        var tokenClaim = User.FindFirst("access_token");
-        AuthToken = tokenClaim?.Value ?? "";
-
-        // If no token in claims, check session/cookie
-        if (string.IsNullOrEmpty(AuthToken))
-        {
-            AuthToken = Request.Cookies["auth_token"] ?? "";
-        }
+        // Auth token is read from cookie by the proxy, not needed in JS
+        AuthToken = "";
     }
 }

@@ -233,10 +233,7 @@
                 }
 
                 const response = await fetch(url, {
-                    headers: {
-                        'Authorization': `Bearer ${AUTH_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
+                    credentials: 'same-origin'
                 });
 
                 if (!response.ok) throw new Error('Failed to fetch memories');
@@ -276,10 +273,7 @@
         async function fetchStats() {
             try {
                 const response = await fetch(`${API_BASE}/api/stats`, {
-                    headers: {
-                        'Authorization': `Bearer ${AUTH_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
+                    credentials: 'same-origin'
                 });
 
                 if (!response.ok) return;

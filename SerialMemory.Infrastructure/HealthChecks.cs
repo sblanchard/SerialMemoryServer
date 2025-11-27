@@ -227,7 +227,7 @@ public sealed class RedisHealthCheck : IHealthCheck
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds));
 
-            var redis = await ConnectionMultiplexer.ConnectAsync(
+            await using var redis = await ConnectionMultiplexer.ConnectAsync(
                 _connectionString,
                 options => options.AbortOnConnectFail = true);
 
