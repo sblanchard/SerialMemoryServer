@@ -16,7 +16,6 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
     private readonly JsonWebTokenHandler _tokenHandler;
     private readonly TokenValidationParameters _validationParameters;
     private readonly NpgsqlDataSource _dataSource;
-    private readonly bool _selfHostedMode;
 
     // JWT claim names
     private const string TenantIdClaim = "tenant_id";
@@ -35,7 +34,6 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
         ArgumentNullException.ThrowIfNull(options);
 
         _tokenHandler = new JsonWebTokenHandler();
-        _selfHostedMode = options.SelfHostedMode;
 
         // Build data source for API key lookups
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
@@ -65,17 +63,6 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
     {
         if (string.IsNullOrWhiteSpace(token))
             return AuthenticationResult.MissingToken();
-
-        // Self-hosted mode bypass
-        if (_selfHostedMode && token == "self-hosted")
-        {
-            return AuthenticationResult.Success(
-                tenantId: Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                userId: "self-hosted",
-                role: Roles.Owner,
-                scopes: Scopes.All,
-                workspaceId: "default");
-        }
 
         try
         {
@@ -162,24 +149,15 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
         if (string.IsNullOrWhiteSpace(apiKey))
             return AuthenticationResult.MissingToken();
 
-        // Self-hosted mode bypass
-        if (_selfHostedMode && apiKey == "self-hosted")
-        {
-            return AuthenticationResult.Success(
-                tenantId: Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                userId: "self-hosted",
-                role: Roles.Owner,
-                scopes: Scopes.All,
-                workspaceId: "default");
-        }
-
         try
         {
             // Hash the API key for lookup
             var keyHash = HashApiKey(apiKey);
             var keyPrefix = apiKey.Length >= 8 ? apiKey[..8] : apiKey;
 
-            // Look up the API key
+            SerialMemory.Core.Services.DebugFileLogger.Log("Auth", $"ValidateApiKeyAsync: keyPrefix={keyPrefix}, keyHash={keyHash[..16]}...");
+
+            // Look up the API key (use FirstOrDefault to handle duplicates)
             await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
             const string sql = """
 
@@ -187,9 +165,13 @@ public sealed class JwtAuthenticationService : IJwtAuthenticationService, IDispo
                                                FROM tenant_api_keys ak
                                                JOIN tenants t ON ak.tenant_id = t.id
                                                WHERE ak.key_hash = @KeyHash AND ak.key_prefix = @KeyPrefix
+                                               AND ak.revoked_at IS NULL
+                                               LIMIT 1
                                """;
 
             var result = await conn.QuerySingleOrDefaultAsync<ApiKeyRecord>(sql, new { KeyHash = keyHash, KeyPrefix = keyPrefix });
+
+            SerialMemory.Core.Services.DebugFileLogger.Log("Auth", $"Query result: {(result == null ? "null" : $"tenant_id={result.tenant_id}, status={result.status}")}");
 
             if (result == null)
             {
@@ -355,11 +337,6 @@ public sealed class JwtAuthenticationOptions
     public string? EcdsaPublicKey { get; set; }
 
     /// <summary>
-    /// If true, allows self-hosted mode bypass with special token.
-    /// </summary>
-    public bool SelfHostedMode { get; set; }
-
-    /// <summary>
     /// Creates options from environment variables.
     /// </summary>
     public static JwtAuthenticationOptions FromEnvironment()
@@ -370,8 +347,7 @@ public sealed class JwtAuthenticationOptions
             Audience = Environment.GetEnvironmentVariable("JWT_AUDIENCE"),
             SymmetricKey = Environment.GetEnvironmentVariable("JWT_SYMMETRIC_KEY"),
             RsaPublicKey = Environment.GetEnvironmentVariable("JWT_RSA_PUBLIC_KEY"),
-            EcdsaPublicKey = Environment.GetEnvironmentVariable("JWT_ECDSA_PUBLIC_KEY"),
-            SelfHostedMode = Environment.GetEnvironmentVariable("SERIALMEMORY_MODE")?.ToLowerInvariant() == "self-hosted"
+            EcdsaPublicKey = Environment.GetEnvironmentVariable("JWT_ECDSA_PUBLIC_KEY")
         };
     }
 }

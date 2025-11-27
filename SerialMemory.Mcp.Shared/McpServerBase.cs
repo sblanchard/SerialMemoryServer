@@ -33,7 +33,6 @@ public abstract class McpServerBase
     protected readonly IUsageLimitService UsageLimitService;
     protected readonly IAdminAuditService AdminAuditService;
     protected readonly TenantContext TenantContext;
-    protected readonly bool SelfHostedMode;
 
     protected readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -71,9 +70,7 @@ public abstract class McpServerBase
         var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];
 
         // Authentication configuration
-        SelfHostedMode = configuration["SERIALMEMORY_MODE"]?.ToLowerInvariant() == "self-hosted";
         var jwtOptions = JwtAuthenticationOptions.FromEnvironment();
-        jwtOptions.SelfHostedMode = SelfHostedMode;
 
         ConnectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
@@ -113,7 +110,6 @@ public abstract class McpServerBase
 
         Logger.LogInformation("Initialized {ServerName} v{Version}", serverName, serverVersion);
         Logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
-        Logger.LogInformation("Mode: {Mode}", SelfHostedMode ? "self-hosted" : "saas");
     }
 
     /// <summary>
@@ -235,10 +231,6 @@ public abstract class McpServerBase
     /// <returns>Error response if blocked, null if allowed.</returns>
     protected async Task<object?> EnforceUsageLimitsAsync(string? toolName, CancellationToken cancellationToken = default)
     {
-        // Skip usage enforcement in self-hosted mode
-        if (SelfHostedMode)
-            return null;
-
         var eventType = GetUsageEventType(toolName);
         if (eventType == null)
             return null; // Unknown tool, allow by default

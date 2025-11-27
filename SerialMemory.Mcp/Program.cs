@@ -23,7 +23,10 @@ using SerialMemory.EventSourcing.Store;
 
 #region Configuration
 
+// Try multiple config sources - env vars may not be passed by MCP client
 var configuration = new ConfigurationBuilder()
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+    .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true, reloadOnChange: false)
     .AddEnvironmentVariables()
     .Build();
 
@@ -46,11 +49,8 @@ var ollamaEntityUrl = configuration["OLLAMA_ENTITY_URL"] ?? ollamaUrl;  // Share
 var ollamaEntityModel = configuration["OLLAMA_ENTITY_MODEL"] ?? "phi3"; // phi3 is good for extraction
 var extractionServiceUrl = configuration["EXTRACTION_SERVICE_URL"];     // Legacy HTTP service
 
-// API key for SaaS authentication
+// API key for SaaS authentication (required)
 var apiKey = configuration["SERIALMEMORY_API_KEY"];
-
-// Self-hosted mode bypasses API key authentication
-var selfHostedMode = configuration["SERIALMEMORY_MODE"]?.ToLowerInvariant() == "self-hosted";
 
 var connectionString = $"Host={postgresHost};Port={postgresPort};Database={postgresDb};Username={postgresUser};Password={postgresPassword}";
 
@@ -59,13 +59,27 @@ var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
 dataSourceBuilder.UseVector();
 var vectorDataSource = dataSourceBuilder.Build();
 
-// Configure logging to stderr (MCP uses stdout for protocol)
+// Configure logging
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
-    builder.SetMinimumLevel(LogLevel.Information);
+    builder.SetMinimumLevel(LogLevel.Debug);
 });
 var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
+
+// Use file logger for debugging MCP
+DebugFileLogger.Clear();
+DebugFileLogger.Log("MCP", $"=== MCP Server Starting ===");
+DebugFileLogger.Log("MCP", $"Log file: {DebugFileLogger.GetLogFilePath()}");
+
+// Log all environment variables to debug
+DebugFileLogger.Log("MCP", "--- Environment Variables ---");
+foreach (var key in new[] { "SERIALMEMORY_API_KEY", "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_DB", "OLLAMA_BASE_URL" })
+{
+    var value = Environment.GetEnvironmentVariable(key);
+    DebugFileLogger.Log("MCP", $"  {key}={value ?? "(null)"}");
+}
+DebugFileLogger.Log("MCP", "--- End Environment Variables ---");
 
 #endregion
 
@@ -73,51 +87,45 @@ var logger = loggerFactory.CreateLogger("SerialMemory.Mcp");
 
 logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
 logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
-logger.LogInformation("Mode: {Mode}", selfHostedMode ? "self-hosted" : "saas");
 
 // Authenticate with API key to get tenant ID
+DebugFileLogger.Log("MCP", $"Checking API key environment variable...");
+if (string.IsNullOrEmpty(apiKey))
+{
+    DebugFileLogger.Log("MCP", "ERROR: SERIALMEMORY_API_KEY is not set");
+    logger.LogError("SERIALMEMORY_API_KEY environment variable is required");
+    await Console.Error.WriteLineAsync("[MCP Error] SERIALMEMORY_API_KEY environment variable is required");
+    Environment.Exit(1);
+    return;
+}
+DebugFileLogger.Log("MCP", $"API key found: {apiKey[..8]}***");
+
 var jwtOptions = JwtAuthenticationOptions.FromEnvironment();
-jwtOptions.SelfHostedMode = selfHostedMode;
 var authService = new JwtAuthenticationService(connectionString, jwtOptions);
 
-string tenantId;
-string? userId = null;
+DebugFileLogger.Log("MCP", "Calling ValidateApiKeyAsync...");
+logger.LogInformation("Authenticating with API key...");
+var authResult = await authService.ValidateApiKeyAsync(apiKey);
+DebugFileLogger.Log("MCP", $"Auth result: IsValid={authResult.IsValid}, TenantId={authResult.TenantId}, Error={authResult.ErrorMessage}");
 
-if (selfHostedMode)
+if (!authResult.IsValid)
 {
-    // Self-hosted mode: use the Self-Hosted tenant (00000000-0000-0000-0000-000000000000)
-    tenantId = "00000000-0000-0000-0000-000000000000";
-    logger.LogInformation("Self-hosted mode: using default tenant {TenantId}", tenantId);
-}
-else if (!string.IsNullOrEmpty(apiKey))
-{
-    // SaaS mode: authenticate API key to get tenant ID
-    logger.LogInformation("Authenticating with API key...");
-    var authResult = await authService.ValidateApiKeyAsync(apiKey);
-
-    if (!authResult.IsValid)
-    {
-        logger.LogError("API key authentication failed: {Error}", authResult.ErrorMessage);
-        await Console.Error.WriteLineAsync($"[MCP Error] API key authentication failed: {authResult.ErrorMessage}");
-        Environment.Exit(1);
-        return;
-    }
-
-    tenantId = authResult.TenantId!.Value.ToString();
-    userId = authResult.UserId;
-    logger.LogInformation("Authenticated as tenant {TenantId} (user: {UserId})", tenantId, userId);
-}
-else
-{
-    logger.LogError("SERIALMEMORY_API_KEY required for SaaS mode. Set SERIALMEMORY_MODE=self-hosted for local use.");
-    await Console.Error.WriteLineAsync("[MCP Error] SERIALMEMORY_API_KEY required. Set SERIALMEMORY_MODE=self-hosted for local use.");
+    logger.LogError("API key authentication failed: {Error}", authResult.ErrorMessage);
+    await Console.Error.WriteLineAsync($"[MCP Error] API key authentication failed: {authResult.ErrorMessage}");
     Environment.Exit(1);
     return;
 }
 
+var tenantId = authResult.TenantId!.Value.ToString();
+var userId = authResult.UserId;
+logger.LogInformation("Authenticated as tenant {TenantId} (user: {UserId})", tenantId, userId);
+DebugFileLogger.Log("MCP", $"Authenticated tenantId={tenantId}, userId={userId}");
+
 // Initialize services with authenticated tenant context
 var tenantContext = new FixedTenantContext(tenantId, "default", userId);
+DebugFileLogger.Log("MCP", $"Created FixedTenantContext: TenantId={tenantContext.TenantId}, WorkspaceId={tenantContext.WorkspaceId}");
 IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, tenantContext);
+DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
 // Create embedding service - Ollama

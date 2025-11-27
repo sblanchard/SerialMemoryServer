@@ -3,6 +3,8 @@ using Npgsql;
 using Pgvector;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
+using SerialMemory.Core.Services;
+using static SerialMemory.Core.Services.DebugFileLogger;
 
 namespace SerialMemory.Infrastructure;
 
@@ -80,9 +82,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         // Capture tenant ID and validate before SQL
         var tenantId = TenantId;
-        await Console.Error.WriteLineAsync($"[DEBUG CreateMemoryAsync] TenantContext.TenantId={_tenantContext.TenantId}, Parsed TenantId={tenantId}");
+        Log("CreateMemory", $"TenantContext.TenantId={_tenantContext.TenantId}, Parsed TenantId={tenantId}");
+
         if (tenantId == Guid.Empty)
         {
+            Log("CreateMemory", $"ERROR: TenantId is Guid.Empty!");
             throw new InvalidOperationException($"TenantId is Guid.Empty. TenantContext.TenantId was: '{_tenantContext.TenantId}'");
         }
 
@@ -93,18 +97,28 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                            """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
+        Log("CreateMemory", $"Connection opened, about to INSERT with tenantId={tenantId}");
 
         // Use NpgsqlCommand directly to properly handle Vector type
         await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.Add(new NpgsqlParameter("Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
-        cmd.Parameters.Add(new NpgsqlParameter("TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = tenantId });
-        cmd.Parameters.Add(new NpgsqlParameter("Content", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Content });
-        cmd.Parameters.AddWithValue("Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
-        cmd.Parameters.Add(new NpgsqlParameter("Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
-        cmd.Parameters.Add(new NpgsqlParameter("SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
-        cmd.Parameters.Add(new NpgsqlParameter("Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
+        cmd.Parameters.Add(new NpgsqlParameter("@TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = tenantId });
+        cmd.Parameters.Add(new NpgsqlParameter("@Content", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Content });
+        cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
+        cmd.Parameters.Add(new NpgsqlParameter("@Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        try
+        {
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            Log("CreateMemory", $"INSERT succeeded for memory id={id}");
+        }
+        catch (Exception ex)
+        {
+            Log("CreateMemory", $"ERROR: INSERT failed: {ex.Message}");
+            throw;
+        }
 
         return id;
     }
@@ -832,15 +846,4 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     }
 
     #endregion
-}
-
-/// <summary>
-/// Fixed tenant context for self-hosted/single-tenant scenarios.
-/// </summary>
-internal sealed class FixedTenantContext(string tenantId, string workspaceId) : ITenantContext
-{
-    public string TenantId { get; } = tenantId;
-    public string WorkspaceId { get; } = workspaceId;
-    public string? UserId => null;
-    public Guid? SessionId => null;
 }
