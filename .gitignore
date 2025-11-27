@@ -6,9 +6,18 @@ riderModule.iml
 .idea/
 .vs/
 nul
+
 # Build artifacts
 exports/
 publish/
 logs/
 
-\'
+# Test files with credentials
+test_mcp.bat
+test_mcp_env.bat
+test_auth.csx
+appsettings.local.json
+*.local.json
+
+# Debug logs
+serialmemory_debug.log
