@@ -1,0 +1,82 @@
+@page "/onboarding/create"
+@model SerialMemory.Web.Pages.Onboarding.CreateModel
+@{
+    ViewData["Title"] = "Create Workspace";
+}
+
+<div class="min-h-screen gradient-bg py-12">
+    <div class="max-w-lg mx-auto px-4">
+        <div class="text-center mb-8">
+            <a href="/onboarding" class="text-electric hover:underline text-sm">&larr; Back to Onboarding</a>
+        </div>
+
+        <div class="card glow">
+            <h1 class="text-2xl font-bold text-soft-white mb-2">Create Your Workspace</h1>
+            <p class="text-graphite mb-6">A workspace provides isolated storage for your knowledge graph.</p>
+
+            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+            {
+                <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+                    @Model.ErrorMessage
+                </div>
+            }
+
+            <form method="post">
+                @Html.AntiForgeryToken()
+
+                <div class="mb-6">
+                    <label for="WorkspaceName" class="block text-sm font-medium text-soft-white mb-2">
+                        Workspace Name <span class="text-red-400">*</span>
+                    </label>
+                    <input type="text" id="WorkspaceName" name="WorkspaceName" value="@Model.WorkspaceName" required
+                           placeholder="e.g., My Project"
+                           class="w-full bg-slate border border-slate rounded-md px-4 py-3 text-soft-white focus:outline-none focus:border-electric">
+                    <p class="text-xs text-graphite mt-1">Choose a memorable name for your workspace.</p>
+                </div>
+
+                <div class="mb-6">
+                    <label for="Description" class="block text-sm font-medium text-soft-white mb-2">
+                        Description (optional)
+                    </label>
+                    <textarea id="Description" name="Description" rows="3"
+                              placeholder="What will you use this workspace for?"
+                              class="w-full bg-slate border border-slate rounded-md px-4 py-3 text-soft-white focus:outline-none focus:border-electric">@Model.Description</textarea>
+                </div>
+
+                <div class="bg-slate/30 rounded-lg p-4 mb-6">
+                    <h3 class="text-sm font-medium text-soft-white mb-2">What you'll get:</h3>
+                    <ul class="text-sm text-graphite space-y-2">
+                        <li class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Isolated knowledge graph storage
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Semantic search with 768-dim embeddings
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Entity extraction and relationship tracking
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            MCP protocol integration
+                        </li>
+                    </ul>
+                </div>
+
+                <button type="submit" class="w-full btn-primary px-6 py-3 rounded-md font-medium">
+                    Create Workspace
+                </button>
+            </form>
+        </div>
+    </div>
+</div>

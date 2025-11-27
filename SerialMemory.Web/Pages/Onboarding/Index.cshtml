@@ -1,0 +1,155 @@
+@page "/onboarding"
+@model SerialMemory.Web.Pages.Onboarding.IndexModel
+@{
+    ViewData["Title"] = "Get Started";
+}
+
+<div class="min-h-screen gradient-bg py-12">
+    <div class="max-w-3xl mx-auto px-4">
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold gradient-text mb-4">Welcome to SerialMemory</h1>
+            <p class="text-graphite text-lg">Let's get you set up with your temporal knowledge graph.</p>
+        </div>
+
+        <!-- Progress Steps -->
+        <div class="flex items-center justify-center mb-12">
+            <div class="flex items-center">
+                <div class="flex items-center justify-center w-10 h-10 rounded-full @(Model.CurrentTenant != null ? "bg-green-500" : "bg-electric") text-white font-semibold">
+                    @if (Model.CurrentTenant != null)
+                    {
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                    }
+                    else
+                    {
+                        <text>1</text>
+                    }
+                </div>
+                <span class="ml-2 text-soft-white font-medium">Create Workspace</span>
+            </div>
+            <div class="w-16 h-0.5 mx-4 @(Model.CurrentTenant != null ? "bg-green-500" : "bg-slate")"></div>
+            <div class="flex items-center">
+                <div class="flex items-center justify-center w-10 h-10 rounded-full @(Model.ApiKeys.Count > 0 ? "bg-green-500" : Model.CurrentTenant != null ? "bg-electric" : "bg-slate") text-white font-semibold">
+                    @if (Model.ApiKeys.Count > 0)
+                    {
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                    }
+                    else
+                    {
+                        <text>2</text>
+                    }
+                </div>
+                <span class="ml-2 @(Model.CurrentTenant != null ? "text-soft-white" : "text-graphite") font-medium">Generate API Key</span>
+            </div>
+            <div class="w-16 h-0.5 mx-4 @(Model.ApiKeys.Count > 0 ? "bg-green-500" : "bg-slate")"></div>
+            <div class="flex items-center">
+                <div class="flex items-center justify-center w-10 h-10 rounded-full @(Model.HasCompletedOnboarding ? "bg-green-500" : "bg-slate") text-white font-semibold">
+                    @if (Model.HasCompletedOnboarding)
+                    {
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                    }
+                    else
+                    {
+                        <text>3</text>
+                    }
+                </div>
+                <span class="ml-2 @(Model.ApiKeys.Count > 0 ? "text-soft-white" : "text-graphite") font-medium">Configure MCP</span>
+            </div>
+        </div>
+
+        @if (Model.CurrentTenant == null)
+        {
+            <!-- Step 1: Create Workspace -->
+            <div class="card glow">
+                <h2 class="text-xl font-semibold text-soft-white mb-4">Step 1: Create Your Workspace</h2>
+                <p class="text-graphite mb-6">A workspace isolates your knowledge graph and provides secure multi-tenancy.</p>
+                <a href="/onboarding/create" class="btn-primary px-6 py-3 rounded-md font-medium inline-block">
+                    Create Workspace
+                </a>
+            </div>
+        }
+        else if (Model.ApiKeys.Count == 0)
+        {
+            <!-- Step 2: Generate API Key -->
+            <div class="card glow">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span class="text-green-400">Workspace "@Model.CurrentTenant.Name" created</span>
+                </div>
+                <h2 class="text-xl font-semibold text-soft-white mb-4">Step 2: Generate Your API Key</h2>
+                <p class="text-graphite mb-6">You'll need an API key to authenticate with the MCP server.</p>
+                <a href="/onboarding/apikey" class="btn-primary px-6 py-3 rounded-md font-medium inline-block">
+                    Generate API Key
+                </a>
+            </div>
+        }
+        else
+        {
+            <!-- Step 3: Configure MCP -->
+            <div class="card glow">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span class="text-green-400">All set! Your workspace is ready.</span>
+                </div>
+                <h2 class="text-xl font-semibold text-soft-white mb-4">Step 3: Configure Your MCP Client</h2>
+                <p class="text-graphite mb-6">Add this configuration to your Claude Desktop or MCP client:</p>
+
+                <div class="bg-slate/50 rounded-lg p-4 mb-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-graphite">claude_desktop_config.json</span>
+                        <button onclick="copyConfig()" class="text-xs text-electric hover:underline">Copy</button>
+                    </div>
+                    <pre id="mcpConfig" class="text-sm text-soft-white overflow-x-auto">{
+  "mcpServers": {
+    "serialmemory-memory": {
+      "command": "npx",
+      "args": ["-y", "@@anthropic/mcp-remote", "https://api.serialmemory.com/mcp"],
+      "env": {
+        "API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</pre>
+                </div>
+
+                <div class="flex gap-4">
+                    <a href="/dashboard" class="btn-primary px-6 py-3 rounded-md font-medium inline-block">
+                        Go to Dashboard
+                    </a>
+                    <a href="/dashboard/api-keys" class="btn-outline px-6 py-3 rounded-md font-medium inline-block">
+                        Manage API Keys
+                    </a>
+                </div>
+            </div>
+        }
+
+        <!-- Quick Links -->
+        <div class="mt-12 text-center">
+            <p class="text-graphite mb-4">Need help?</p>
+            <div class="flex justify-center gap-6">
+                <a href="https://docs.serialmemory.com" target="_blank" class="text-electric hover:underline">Documentation</a>
+                <a href="https://github.com/serialcoder/serialmemory" target="_blank" class="text-electric hover:underline">GitHub</a>
+                <a href="/support" class="text-electric hover:underline">Support</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    function copyConfig() {
+        const config = document.getElementById('mcpConfig').textContent;
+        navigator.clipboard.writeText(config);
+        alert('Configuration copied to clipboard!');
+    }
+</script>
+}
