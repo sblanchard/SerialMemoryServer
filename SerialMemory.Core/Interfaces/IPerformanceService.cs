@@ -8,6 +8,11 @@ namespace SerialMemory.Core.Interfaces;
 public interface IPerformanceService
 {
     /// <summary>
+    /// Record a latency measurement for an operation.
+    /// </summary>
+    void RecordLatency(string operationName, TimeSpan duration, bool success = true, int? statusCode = null);
+
+    /// <summary>
     /// Get current performance snapshot.
     /// </summary>
     Task<PerformanceSnapshot> GetSnapshotAsync(CancellationToken ct = default);

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using SerialMemory.Core.Deployment;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -6,6 +7,12 @@ var builder = WebApplication.CreateBuilder(args);
 var apiBaseUrl = builder.Configuration["API_BASE_URL"] ?? "http://localhost:5000";
 var dashboardApiUrl = builder.Configuration["DASHBOARD_API_URL"] ?? "http://localhost:5001";
 var stripePublishableKey = builder.Configuration["STRIPE_PUBLISHABLE_KEY"] ?? "";
+var serviceApiKey = builder.Configuration["SERVICE_API_KEY"]
+    ?? Environment.GetEnvironmentVariable("SERVICE_API_KEY")
+    ?? "";
+
+// Add deployment context
+builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
 
 // Add services
 builder.Services.AddRazorPages();
@@ -14,6 +21,11 @@ builder.Services.AddRazorPages();
 builder.Services.AddHttpClient("Api", client =>
 {
     client.BaseAddress = new Uri(apiBaseUrl);
+    // Service API key for server-to-server communication
+    if (!string.IsNullOrEmpty(serviceApiKey))
+    {
+        client.DefaultRequestHeaders.Add("X-Api-Key", serviceApiKey);
+    }
 });
 
 // Dashboard API client (for auth, user management)
@@ -35,11 +47,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 
 builder.Services.AddAuthorization();
 
+// Get deployment context for config
+var deploymentContext = new DeploymentContext();
+
 // Store configuration for views
 builder.Services.AddSingleton(new AppConfig
 {
     ApiBaseUrl = apiBaseUrl,
-    StripePublishableKey = stripePublishableKey
+    StripePublishableKey = stripePublishableKey,
+    IsSelfHosted = deploymentContext.IsSelfHosted,
+    DeploymentMode = deploymentContext.Mode.ToString(),
+    PowerModeEnabled = !deploymentContext.PowerModeGloballyDisabled,
+    QuotasEnabled = deploymentContext.QuotasEnabled
 });
 
 var app = builder.Build();
@@ -63,8 +82,9 @@ app.MapRazorPages();
 app.Map("/api/{**path}", async (HttpContext context, IHttpClientFactory httpClientFactory, string path) =>
 {
     var client = httpClientFactory.CreateClient("Api");
+    // Note: X-Api-Key is already set on the client from AddHttpClient configuration
 
-    // Forward authorization header from cookie
+    // Forward authorization header from cookie (for user context)
     var authToken = context.Request.Cookies["auth_token"];
     if (!string.IsNullOrEmpty(authToken))
     {
@@ -112,4 +132,8 @@ public sealed class AppConfig
 {
     public string ApiBaseUrl { get; init; } = "";
     public string StripePublishableKey { get; init; } = "";
+    public bool IsSelfHosted { get; init; }
+    public string DeploymentMode { get; init; } = "";
+    public bool PowerModeEnabled { get; init; }
+    public bool QuotasEnabled { get; init; }
 }

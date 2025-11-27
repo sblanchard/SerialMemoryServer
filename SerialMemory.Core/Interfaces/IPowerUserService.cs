@@ -56,6 +56,18 @@ public interface IPowerUserService
         float? minSeverity = null,
         CancellationToken ct = default);
 
+    /// <summary>Get list of conflicts.</summary>
+    Task<List<MemoryConflict>> GetConflictsAsync(
+        int limit = 100,
+        CancellationToken ct = default);
+
+    /// <summary>Resolve a conflict with given resolution strategy.</summary>
+    Task ResolveConflictAsync(
+        Guid conflictId,
+        string resolution,
+        Guid? winnerId = null,
+        CancellationToken ct = default);
+
     /// <summary>Get conflicts for specific memory.</summary>
     Task<List<MemoryConflict>> GetMemoryConflictsAsync(
         Guid memoryId,
@@ -210,6 +222,9 @@ public sealed class MemoryConflict
     public bool IsResolved { get; init; }
     public Guid? ResolvedBy { get; init; }
     public string? Resolution { get; init; }
+
+    /// <summary>Status string for API compatibility.</summary>
+    public string Status => IsResolved ? "resolved" : "unresolved";
 }
 
 public sealed class ConflictCluster

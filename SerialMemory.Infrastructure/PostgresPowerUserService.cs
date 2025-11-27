@@ -375,6 +375,75 @@ public sealed class PostgresPowerUserService : IPowerUserService
         };
     }
 
+    public async Task<List<MemoryConflict>> GetConflictsAsync(
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+
+        var conflicts = await conn.QueryAsync<ConflictRow>("""
+            SELECT
+                c.id AS conflict_id,
+                c.memory_a_id,
+                c.memory_b_id,
+                ma.content AS content_a,
+                mb.content AS content_b,
+                c.severity,
+                c.conflict_type,
+                c.reason,
+                c.semantic_similarity,
+                c.detected_at,
+                c.is_resolved,
+                c.resolved_by,
+                c.resolution
+            FROM memory_conflicts c
+            LEFT JOIN memories ma ON c.memory_a_id = ma.id
+            LEFT JOIN memories mb ON c.memory_b_id = mb.id
+            ORDER BY c.severity DESC, c.detected_at DESC
+            LIMIT @Limit
+            """, new { Limit = limit });
+
+        return conflicts.Select(c => new MemoryConflict
+        {
+            ConflictId = c.conflict_id,
+            MemoryA = c.memory_a_id,
+            MemoryB = c.memory_b_id,
+            ContentA = c.content_a,
+            ContentB = c.content_b,
+            Severity = c.severity,
+            ConflictType = c.conflict_type ?? "contradiction",
+            Reason = c.reason,
+            SemanticSimilarity = c.semantic_similarity,
+            DetectedAt = c.detected_at,
+            IsResolved = c.is_resolved,
+            ResolvedBy = c.resolved_by,
+            Resolution = c.resolution
+        }).ToList();
+    }
+
+    public async Task ResolveConflictAsync(
+        Guid conflictId,
+        string resolution,
+        Guid? winnerId = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+
+        await conn.ExecuteAsync("""
+            UPDATE memory_conflicts
+            SET is_resolved = TRUE,
+                resolved_by = @WinnerId,
+                resolution = @Resolution,
+                resolved_at = NOW()
+            WHERE id = @Id
+            """, new { Id = conflictId, WinnerId = winnerId, Resolution = resolution });
+
+        _logger.LogWarning("[POWER-USER] Resolved conflict {ConflictId}: resolution={Resolution}, winner={Winner}",
+            conflictId, resolution, winnerId);
+    }
+
     private async Task<List<ConflictCluster>> GetConflictClustersAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         // Find memories that appear in multiple conflicts

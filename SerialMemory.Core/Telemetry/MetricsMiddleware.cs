@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Core.Telemetry;
 
@@ -31,13 +33,16 @@ public sealed class MetricsMiddleware
 
         var stopwatch = Stopwatch.StartNew();
         Metrics.ActiveHttpConnections.Add(1);
+        var success = true;
 
         try
         {
             await _next(context);
+            success = context.Response.StatusCode < 400;
         }
         catch (Exception ex)
         {
+            success = false;
             // Record unhandled exception
             Metrics.UnhandledExceptionsTotal.Add(1, new TagList { { "exception_type", ex.GetType().Name } });
             throw;
@@ -53,6 +58,14 @@ public sealed class MetricsMiddleware
                 pathPattern,
                 context.Response.StatusCode,
                 stopwatch.Elapsed.TotalMilliseconds);
+
+            // Record to IPerformanceService if available
+            var perfService = context.RequestServices.GetService<IPerformanceService>();
+            if (perfService != null)
+            {
+                var operationName = $"{context.Request.Method}:{pathPattern}";
+                perfService.RecordLatency(operationName, stopwatch.Elapsed, success, context.Response.StatusCode);
+            }
 
             // Log slow requests
             if (stopwatch.ElapsedMilliseconds > 1000)
