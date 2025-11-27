@@ -20,12 +20,32 @@ public sealed class TenantContext : IMutableTenantContext
 
     public Guid? SessionId => _current.Value?.SessionId;
 
-    public void SetContext(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
+    public bool IsLabMode => _current.Value?.IsLabMode ?? false;
+
+    public bool AllowPowerMode => _current.Value?.AllowPowerMode ?? false;
+
+    public IReadOnlyList<string> Scopes => _current.Value?.Scopes ?? Array.Empty<string>();
+
+    public void SetContext(
+        string tenantId,
+        string workspaceId,
+        string? userId = null,
+        Guid? sessionId = null,
+        bool isLabMode = false,
+        bool allowPowerMode = false,
+        IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
 
-        _current.Value = new TenantContextData(tenantId, workspaceId, userId, sessionId);
+        _current.Value = new TenantContextData(
+            tenantId,
+            workspaceId,
+            userId,
+            sessionId,
+            isLabMode,
+            allowPowerMode,
+            scopes ?? Array.Empty<string>());
     }
 
     public void Clear()
@@ -36,10 +56,17 @@ public sealed class TenantContext : IMutableTenantContext
     /// <summary>
     /// Creates a scope that automatically clears context on disposal.
     /// </summary>
-    public static IDisposable CreateScope(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
+    public static IDisposable CreateScope(
+        string tenantId,
+        string workspaceId,
+        string? userId = null,
+        Guid? sessionId = null,
+        bool isLabMode = false,
+        bool allowPowerMode = false,
+        IReadOnlyList<string>? scopes = null)
     {
         var context = new TenantContext();
-        context.SetContext(tenantId, workspaceId, userId, sessionId);
+        context.SetContext(tenantId, workspaceId, userId, sessionId, isLabMode, allowPowerMode, scopes);
         return new TenantContextScope(context);
     }
 
@@ -67,7 +94,10 @@ public sealed class TenantContext : IMutableTenantContext
         string TenantId,
         string WorkspaceId,
         string? UserId,
-        Guid? SessionId);
+        Guid? SessionId,
+        bool IsLabMode,
+        bool AllowPowerMode,
+        IReadOnlyList<string> Scopes);
 
     private sealed class TenantContextScope : IDisposable
     {
@@ -90,7 +120,14 @@ public sealed class TenantContext : IMutableTenantContext
 /// </summary>
 public sealed class FixedTenantContext : ITenantContext
 {
-    public FixedTenantContext(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
+    public FixedTenantContext(
+        string tenantId,
+        string workspaceId,
+        string? userId = null,
+        Guid? sessionId = null,
+        bool isLabMode = false,
+        bool allowPowerMode = false,
+        IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
@@ -99,15 +136,26 @@ public sealed class FixedTenantContext : ITenantContext
         WorkspaceId = workspaceId;
         UserId = userId;
         SessionId = sessionId;
+        IsLabMode = isLabMode;
+        AllowPowerMode = allowPowerMode;
+        Scopes = scopes ?? Array.Empty<string>();
     }
 
     public string TenantId { get; }
     public string WorkspaceId { get; }
     public string? UserId { get; }
     public Guid? SessionId { get; }
+    public bool IsLabMode { get; }
+    public bool AllowPowerMode { get; }
+    public IReadOnlyList<string> Scopes { get; }
 
     /// <summary>
-    /// Creates a default self-hosted tenant context.
+    /// Creates a default self-hosted tenant context with full power mode access.
     /// </summary>
-    public static FixedTenantContext SelfHosted => new("self", "default");
+    public static FixedTenantContext SelfHosted => new(
+        "00000000-0000-0000-0000-000000000000",
+        "default",
+        isLabMode: true,
+        allowPowerMode: true,
+        scopes: new[] { "serialmemory.core", "serialmemory.admin", "serialmemory.export", "serialmemory.delete", "serialmemory.power" });
 }

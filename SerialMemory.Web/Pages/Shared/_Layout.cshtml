@@ -1,3 +1,4 @@
+@inject AppConfig AppConfig
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -60,24 +61,35 @@
                             <a href="/dashboard/traces" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Traces</a>
                             <a href="/dashboard/mutations" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Mutations</a>
                             <a href="/dashboard/mind" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Mind</a>
-                            <div class="relative group">
-                                <button class="nav-link px-2 py-2 rounded-md text-sm font-medium flex items-center">
+                            <div class="relative group" id="more-menu">
+                                <button class="nav-link px-2 py-2 rounded-md text-sm font-medium flex items-center" onclick="toggleMoreMenu(event)">
                                     More
                                     <svg class="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                     </svg>
                                 </button>
-                                <div class="absolute left-0 mt-2 w-48 bg-navy border border-slate rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                                    <a href="/dashboard/power" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Power Mode</a>
+                                <div id="more-dropdown" class="absolute left-0 top-full w-48 bg-navy border border-slate rounded-md shadow-lg hidden z-50">
+                                    @if (AppConfig.IsSelfHosted || AppConfig.PowerModeEnabled)
+                                    {
+                                        <a href="/dashboard/power" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Power Mode</a>
+                                    }
                                     <a href="/dashboard/privacy" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Privacy</a>
                                     <a href="/dashboard/timeline" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Timeline</a>
                                     <a href="/dashboard/shadow" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Shadow</a>
                                     <a href="/dashboard/reasoning" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Reasoning</a>
                                     <a href="/dashboard/visualize" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Visualize</a>
                                     <a href="/dashboard/api-keys" class="block px-4 py-2 text-sm nav-link hover:bg-slate">API Keys</a>
-                                    <a href="/dashboard/usage" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Usage</a>
-                                    <a href="/dashboard/billing" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Billing</a>
+                                    @if (!AppConfig.IsSelfHosted)
+                                    {
+                                        <a href="/dashboard/usage" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Usage</a>
+                                        <a href="/dashboard/billing" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Billing</a>
+                                    }
                                     <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
+                                    @if (AppConfig.IsSelfHosted)
+                                    {
+                                        <div class="border-t border-slate my-1"></div>
+                                        <a href="/dashboard/selfhost" class="block px-4 py-2 text-sm text-cyan hover:bg-slate">Self-Host Admin</a>
+                                    }
                                 </div>
                             </div>
                         </div>
@@ -99,6 +111,20 @@
         </div>
     </nav>
 
+    @if (AppConfig.IsSelfHosted)
+    {
+        <div class="bg-gradient-to-r from-cyan-600 to-blue-600 text-white px-4 py-2">
+            <div class="max-w-7xl mx-auto flex items-center justify-center text-sm">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                </svg>
+                <span class="font-medium">Self-Hosted Mode</span>
+                <span class="mx-2">-</span>
+                <span>You control the data, you control the risks. All features unlocked.</span>
+            </div>
+        </div>
+    }
+
     <main>
         @RenderBody()
     </main>
@@ -109,6 +135,22 @@
         </div>
     </footer>
 
+    <script>
+        function toggleMoreMenu(event) {
+            event.stopPropagation();
+            const dropdown = document.getElementById('more-dropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('more-menu');
+            const dropdown = document.getElementById('more-dropdown');
+            if (menu && dropdown && !menu.contains(event.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    </script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

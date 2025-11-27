@@ -40,6 +40,7 @@ services:
       - ./ops/rls_policies.sql:/docker-entrypoint-initdb.d/04-rls.sql:ro
       - ./ops/usage_metering_schema.sql:/docker-entrypoint-initdb.d/05-usage-metering.sql:ro
       - ./ops/admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin-actions.sql:ro
+      - ./ops/job_supervision_schema.sql:/docker-entrypoint-initdb.d/07-job-supervision.sql:ro
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d contextdb"]
@@ -69,6 +70,8 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       - ConnectionStrings__Redis=redis:6379
@@ -76,6 +79,11 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
+      # Deployment Mode: PublicSaaS (default) or SelfHosted
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
+      - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+      - SERIALMEMORY_LICENSE_KEY=${SERIALMEMORY_LICENSE_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,6 +114,8 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=contextdb
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
@@ -114,6 +124,9 @@ services:
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_pro_monthly}
       - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_enterprise_monthly}
+      # Deployment Mode
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,6 +147,11 @@ services:
       - DASHBOARD_API_URL=http://dashboard-api:8080
       - PUBLIC_API_URL=http://localhost:5000
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
+      - SERVICE_API_KEY=sm_live_svc_serialmemory_admin_key_2024
+      # Deployment Mode
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
+      - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
     depends_on:
       - api
       - dashboard-api

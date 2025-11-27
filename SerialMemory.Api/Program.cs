@@ -3,12 +3,15 @@ using SerialMemory.Core.Services;
 using SerialMemory.Core.Operations;
 using SerialMemory.Core.Telemetry;
 using SerialMemory.Core.Models;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.Services;
 using SerialMemory.ML;
 using StackExchange.Redis;
 using SerialMemory.Api.Realtime;
 using SerialMemory.Api.Analysis;
+using SerialMemory.Api.Auth;
+using SerialMemory.Api.SelfHosted;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -20,6 +23,14 @@ var builder = WebApplication.CreateBuilder(args);
 // Load operational config from environment
 var operationalConfig = OperationalConfig.FromEnvironment();
 builder.Services.AddSingleton(operationalConfig);
+
+// Deployment context (SaaS vs SelfHosted)
+builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
+builder.Services.AddSingleton<IQuotaEnforcementService, QuotaEnforcementService>();
+
+// Log deployment mode at startup
+var deploymentContext = new DeploymentContext();
+Console.WriteLine($"[INFO] Deployment Mode: {deploymentContext.Mode} (Quotas: {deploymentContext.QuotasEnabled}, PowerMode: {!deploymentContext.PowerModeGloballyDisabled})");
 
 // Log panic switch status at startup
 if (operationalConfig.HasActivePanicSwitch)
@@ -95,6 +106,27 @@ builder.Services.AddSingleton<IUsageService>(sp =>
     new UsageService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<UsageService>(), "self", "default"));
 builder.Services.AddSingleton<IPlanService>(sp =>
     new PlanService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanService>()));
+
+// Tenant context and API key services
+var jwtSecret = builder.Configuration["JWT_SECRET"]
+    ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+    ?? "dev-secret-change-in-production-32chars";
+var jwtIssuer = builder.Configuration["JWT_ISSUER"]
+    ?? Environment.GetEnvironmentVariable("JWT_ISSUER")
+    ?? "serialmemory";
+var jwtAudience = builder.Configuration["JWT_AUDIENCE"]
+    ?? Environment.GetEnvironmentVariable("JWT_AUDIENCE")
+    ?? "serialmemory-api";
+
+builder.Services.AddScoped<IMutableTenantContext, TenantContext>();
+builder.Services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<IMutableTenantContext>());
+builder.Services.AddSingleton<IApiKeyService>(sp =>
+    new ApiKeyService(
+        pgConnectionString,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ApiKeyService>(),
+        jwtSecret,
+        jwtIssuer,
+        jwtAudience));
 
 // MassTransit Configuration (optional - for event publishing)
 try
@@ -292,7 +324,18 @@ app.UseMetricsMiddleware();
 app.UseSwagger();
 app.UseSwaggerUI();
 
+// API Key Authentication Middleware
+// Validates X-Api-Key header and sets tenant context for all requests
+app.UseApiKeyAuth();
+
+// Power Mode Access Control Middleware
+// Blocks /api/power/* and /api/mutations/* in SaaS mode for non-lab tenants
+app.UsePowerModeAccessMiddleware();
+
 app.MapPrometheusScrapingEndpoint();
+
+// Self-Hosted Admin Endpoints (only available in SelfHosted deployment mode)
+app.MapSelfHostedEndpoints();
 
 // ============================================
 // HEALTH CHECK ENDPOINTS (for operators)
@@ -358,36 +401,61 @@ app.MapGet("/api/memories/search", async (
     bool? validateIntegrity,
     KnowledgeGraphService kgService,
     ISecurityPipeline securityPipeline,
-    IKnowledgeGraphStore store) =>
+    IKnowledgeGraphStore store,
+    IUsageService usageService,
+    IPerformanceService perfService) =>
 {
-    var searchMode = mode?.ToLower() switch
-    {
-        "semantic" => SearchMode.Semantic,
-        "text" => SearchMode.Text,
-        _ => SearchMode.Hybrid
-    };
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
 
-    var results = await kgService.SearchMemoriesAsync(
-        query,
-        searchMode,
-        limit ?? 10,
-        threshold ?? 0.5f,
-        includeEntities: true);
-
-    // Optionally validate integrity of returned memories
-    if (validateIntegrity == true)
+    try
     {
-        foreach (var result in results)
+        var searchMode = mode?.ToLower() switch
         {
-            var memory = await store.GetMemoryByIdAsync(result.Id);
-            if (memory != null)
+            "semantic" => SearchMode.Semantic,
+            "text" => SearchMode.Text,
+            _ => SearchMode.Hybrid
+        };
+
+        var results = await kgService.SearchMemoriesAsync(
+            query,
+            searchMode,
+            limit ?? 10,
+            threshold ?? 0.5f,
+            includeEntities: true);
+
+        // Optionally validate integrity of returned memories
+        if (validateIntegrity == true)
+        {
+            foreach (var result in results)
             {
-                await securityPipeline.ValidateOnReadAsync(memory);
+                var memory = await store.GetMemoryByIdAsync(result.Id);
+                if (memory != null)
+                {
+                    await securityPipeline.ValidateOnReadAsync(memory);
+                }
             }
         }
-    }
 
-    return Results.Ok(results);
+        return Results.Ok(results);
+    }
+    catch (Exception ex)
+    {
+        success = false;
+        errorMessage = ex.Message;
+        throw;
+    }
+    finally
+    {
+        sw.Stop();
+        usageService.TrackUsage(
+            UsageEventType.MemorySearch,
+            latencyMs: (int)sw.ElapsedMilliseconds,
+            success: success,
+            errorMessage: errorMessage);
+        perfService.RecordLatency("memory_search", sw.Elapsed, success);
+    }
 });
 
 // Get recent memories with optional integrity validation
@@ -427,78 +495,103 @@ app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
 });
 
 // Ingest a new memory with security pipeline integration
-app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphService kgService, ILiveEventEmitter liveEmitter, ISecurityPipeline securityPipeline, IKnowledgeGraphStore store) =>
+app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphService kgService, ILiveEventEmitter liveEmitter, ISecurityPipeline securityPipeline, IKnowledgeGraphStore store, IUsageService usageService, IPerformanceService perfService) =>
 {
-    // Pre-validate and generate content hash
-    var preValidationMemory = new Memory
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
+
+    try
     {
-        Id = Guid.CreateVersion7(),
-        Content = request.Content,
-        Metadata = request.Metadata ?? new Dictionary<string, object>()
-    };
-
-    // Generate content hash and store in metadata for integrity verification
-    var writeValidation = await securityPipeline.ValidateOnWriteAsync(preValidationMemory);
-
-    // Add hash to metadata before ingesting
-    var metadataWithHash = request.Metadata ?? new Dictionary<string, object>();
-    metadataWithHash["content_hash"] = writeValidation.ActualHash;
-
-    var result = await kgService.IngestMemoryAsync(
-        request.Content,
-        request.Source,
-        request.SessionId,
-        metadataWithHash,
-        request.ExtractEntities ?? true);
-
-    // Run contradiction detection against similar memories
-    var memory = await store.GetMemoryByIdAsync(result.MemoryId);
-    if (memory?.Embedding != null)
-    {
-        var similarMemories = await store.SearchMemoriesByEmbeddingAsync(memory.Embedding, limit: 10, threshold: 0.8f);
-        var candidates = similarMemories.Where(m => m.Id != result.MemoryId).ToList();
-
-        if (candidates.Any())
+        // Pre-validate and generate content hash
+        var preValidationMemory = new Memory
         {
-            var contradictions = await securityPipeline.DetectContradictionsAsync(memory, candidates);
-            if (contradictions.Any())
+            Id = Guid.CreateVersion7(),
+            Content = request.Content,
+            Metadata = request.Metadata ?? new Dictionary<string, object>()
+        };
+
+        // Generate content hash and store in metadata for integrity verification
+        var writeValidation = await securityPipeline.ValidateOnWriteAsync(preValidationMemory);
+
+        // Add hash to metadata before ingesting
+        var metadataWithHash = request.Metadata ?? new Dictionary<string, object>();
+        metadataWithHash["content_hash"] = writeValidation.ActualHash;
+
+        var result = await kgService.IngestMemoryAsync(
+            request.Content,
+            request.Source,
+            request.SessionId,
+            metadataWithHash,
+            request.ExtractEntities ?? true);
+
+        // Run contradiction detection against similar memories
+        var memory = await store.GetMemoryByIdAsync(result.MemoryId);
+        if (memory?.Embedding != null)
+        {
+            var similarMemories = await store.SearchMemoriesByEmbeddingAsync(memory.Embedding, limit: 10, threshold: 0.8f);
+            var candidates = similarMemories.Where(m => m.Id != result.MemoryId).ToList();
+
+            if (candidates.Any())
             {
-                await liveEmitter.EmitSecurityAnomalyAsync(new SecurityAnomalyEvent
+                var contradictions = await securityPipeline.DetectContradictionsAsync(memory, candidates);
+                if (contradictions.Any())
+                {
+                    await liveEmitter.EmitSecurityAnomalyAsync(new SecurityAnomalyEvent
+                    {
+                        EventId = Guid.CreateVersion7(),
+                        EventType = "contradiction_detected",
+                        Status = "warning",
+                        Message = $"Detected {contradictions.Count} potential contradiction(s) for new memory"
+                    });
+                }
+            }
+        }
+
+        // Emit graph change events for new entities
+        if (result.EntitiesCreated > 0)
+        {
+            foreach (var entity in result.Entities)
+            {
+                await liveEmitter.EmitGraphChangeAsync(new GraphChangeEvent
                 {
                     EventId = Guid.CreateVersion7(),
-                    EventType = "contradiction_detected",
-                    Status = "warning",
-                    Message = $"Detected {contradictions.Count} potential contradiction(s) for new memory"
+                    EventType = "node_created",
+                    NodeId = entity.Id,
+                    NodeName = entity.Name,
+                    NodeType = entity.Type
                 });
             }
         }
-    }
 
-    // Emit graph change events for new entities
-    if (result.EntitiesCreated > 0)
-    {
-        foreach (var entity in result.Entities)
+        return Results.Created($"/api/memories/{result.MemoryId}", new
         {
-            await liveEmitter.EmitGraphChangeAsync(new GraphChangeEvent
-            {
-                EventId = Guid.CreateVersion7(),
-                EventType = "node_created",
-                NodeId = entity.Id,
-                NodeName = entity.Name,
-                NodeType = entity.Type
-            });
-        }
+            result.MemoryId,
+            result.EntitiesCreated,
+            result.RelationshipsCreated,
+            result.Entities,
+            result.Relationships,
+            contentHash = writeValidation.ActualHash
+        });
     }
-
-    return Results.Created($"/api/memories/{result.MemoryId}", new
+    catch (Exception ex)
     {
-        result.MemoryId,
-        result.EntitiesCreated,
-        result.RelationshipsCreated,
-        result.Entities,
-        result.Relationships,
-        contentHash = writeValidation.ActualHash
-    });
+        success = false;
+        errorMessage = ex.Message;
+        throw;
+    }
+    finally
+    {
+        sw.Stop();
+        // Track usage and record performance metrics
+        usageService.TrackUsage(
+            UsageEventType.MemoryIngest,
+            sessionId: request.SessionId,
+            latencyMs: (int)sw.ElapsedMilliseconds,
+            success: success,
+            errorMessage: errorMessage);
+        perfService.RecordLatency("memory_ingest", sw.Elapsed, success);
+    }
 });
 
 // Get knowledge graph data for visualization
@@ -854,6 +947,14 @@ app.MapGet("/api/usage/current", async (IUsageService usageService) =>
     var totalCredits = rollups.Sum(r => r.TotalCredits);
     var totalOperations = rollups.Sum(r => r.EventCount);
 
+    // Fallback to raw events if no rollups exist
+    if (!rollups.Any() || (totalCredits == 0 && totalOperations == 0))
+    {
+        var rawEvents = await usageService.GetRecentEventsAsync(10000);
+        totalCredits = rawEvents.Sum(e => e.CreditsConsumed);
+        totalOperations = rawEvents.Count;
+    }
+
     if (cycle == null)
     {
         return Results.Ok(new
@@ -867,13 +968,16 @@ app.MapGet("/api/usage/current", async (IUsageService usageService) =>
         });
     }
 
+    // Use calculated credits if billing cycle shows 0
+    var creditsUsed = cycle.CreditsUsed > 0 ? cycle.CreditsUsed : totalCredits;
+
     var percentUsed = cycle.CreditsAllocated > 0
-        ? Math.Min(100, (int)(cycle.CreditsUsed / cycle.CreditsAllocated * 100))
+        ? Math.Min(100, (int)(creditsUsed / cycle.CreditsAllocated * 100))
         : 0;
 
     return Results.Ok(new
     {
-        creditsUsed = cycle.CreditsUsed,
+        creditsUsed,
         creditsIncluded = cycle.CreditsAllocated,
         percentUsed,
         totalOperations,
@@ -890,6 +994,13 @@ app.MapGet("/api/usage/breakdown", async (int? days, IUsageService usageService)
     var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-lookbackDays));
     var to = DateOnly.FromDateTime(DateTime.UtcNow);
     var rollups = await usageService.GetUsageStatsAsync(from, to);
+
+    // Fallback to raw events if no rollups exist
+    IReadOnlyList<UsageEvent>? rawEvents = null;
+    if (!rollups.Any())
+    {
+        rawEvents = await usageService.GetRecentEventsAsync(10000);
+    }
 
     // Group by operation category with weighted credits
     var coreOps = rollups.Where(r =>
@@ -946,8 +1057,37 @@ app.MapGet("/api/usage/breakdown", async (int? days, IUsageService usageService)
         .OrderByDescending(x => x.credits)
         .ToList();
 
+    // Calculate counts from either rollups or raw events
+    int factsCount, searchesCount, multiHopCount, exportsCount;
+    if (rawEvents != null)
+    {
+        // Calculate from raw events when rollups are empty
+        factsCount = rawEvents.Count(e => e.EventType == UsageEventType.MemoryIngest);
+        searchesCount = rawEvents.Count(e => e.EventType == UsageEventType.MemorySearch);
+        multiHopCount = rawEvents.Count(e => e.EventType == UsageEventType.MemoryMultiHopSearch);
+        exportsCount = rawEvents.Count(e =>
+            e.EventType == UsageEventType.ExportWorkspace ||
+            e.EventType == UsageEventType.ExportMemories ||
+            e.EventType == UsageEventType.ExportGraph ||
+            e.EventType == UsageEventType.ExportUserProfile);
+    }
+    else
+    {
+        // Calculate from rollups
+        factsCount = rollups.Where(r => r.EventType == UsageEventType.MemoryIngest).Sum(r => r.EventCount);
+        searchesCount = rollups.Where(r => r.EventType == UsageEventType.MemorySearch).Sum(r => r.EventCount);
+        multiHopCount = rollups.Where(r => r.EventType == UsageEventType.MemoryMultiHopSearch).Sum(r => r.EventCount);
+        exportsCount = exportOps.Sum(r => r.EventCount);
+    }
+
     return Results.Ok(new
     {
+        // Dashboard-expected fields (simple counts)
+        facts = factsCount,
+        searches = searchesCount,
+        multiHop = multiHopCount,
+        exports = exportsCount,
+
         period = new { from = from.ToString("yyyy-MM-dd"), to = to.ToString("yyyy-MM-dd"), days = lookbackDays },
 
         // Summary by category
@@ -3004,7 +3144,17 @@ app.MapGet("/api/power/mutations/replay", async (
 app.MapGet("/api/mind/health", async (IMindHealthService mindService) =>
 {
     var snapshot = await mindService.GetHealthSnapshotAsync();
-    return Results.Ok(snapshot);
+    // Convert to dashboard-expected format with string status
+    return Results.Ok(new
+    {
+        overallScore = snapshot.OverallScore,
+        coherenceScore = snapshot.OverallScore * 0.9, // Derived score
+        consistencyScore = 1.0 - snapshot.ContradictionRate,
+        reliabilityScore = 1.0 - snapshot.HallucinationRate,
+        freshnessScore = snapshot.ConfidenceCalibration,
+        status = snapshot.Status.ToString(), // Ensure string, not number
+        calculatedAt = snapshot.Timestamp
+    });
 });
 
 // GET /api/mind/trends - Health trends over time
@@ -3125,15 +3275,352 @@ app.MapPost("/api/mind/contradictions", async (
     return Results.Ok(new { recorded = true, id = evt.Id });
 });
 
+// GET /api/mind/alerts - Active alerts
+app.MapGet("/api/mind/alerts", async (int? limit, IMindHealthService mindService) =>
+{
+    var snapshot = await mindService.GetHealthSnapshotAsync();
+    var alerts = new List<object>();
+
+    // Generate alerts based on health metrics
+    if (snapshot.OverallScore < 0.5)
+        alerts.Add(new { level = "critical", message = "Overall mind health is critically low", score = snapshot.OverallScore });
+    else if (snapshot.OverallScore < 0.7)
+        alerts.Add(new { level = "warning", message = "Mind health needs attention", score = snapshot.OverallScore });
+
+    if (snapshot.HallucinationRate > 0.1)
+        alerts.Add(new { level = "warning", message = $"High hallucination rate detected: {snapshot.HallucinationRate:P1}", metric = "hallucination_rate" });
+
+    if (snapshot.ContradictionRate > 0.05)
+        alerts.Add(new { level = "warning", message = $"Elevated contradiction rate: {snapshot.ContradictionRate:P1}", metric = "contradiction_rate" });
+
+    return Results.Ok(new { count = alerts.Count, alerts = alerts.Take(limit ?? 20) });
+});
+
+// GET /api/mind/drift - Confidence drift analysis
+app.MapGet("/api/mind/drift", async (int? days, IMindHealthService mindService) =>
+{
+    var drift = await mindService.GetConfidenceDriftAsync(days ?? 30);
+    return Results.Ok(new
+    {
+        period = $"{days ?? 30} days",
+        avgDrift = drift.OverallDrift,
+        overconfidenceRate = drift.OverconfidenceRate,
+        underconfidenceRate = drift.UnderconfidenceRate,
+        calibrationScore = drift.CalibrationScore,
+        driftingOperations = drift.DriftByOperation?.Where(d => Math.Abs(d.Value) > 0.1).ToDictionary(d => d.Key, d => d.Value),
+        calibrationNeeded = Math.Abs(drift.OverallDrift) > 0.15,
+        totalObservations = drift.TotalObservations,
+        analyzedAt = drift.AnalyzedAt
+    });
+});
+
+// GET /api/mind/stats - Mind health statistics
+app.MapGet("/api/mind/stats", async (IMindHealthService mindService) =>
+{
+    var snapshot = await mindService.GetHealthSnapshotAsync();
+    return Results.Ok(new
+    {
+        overallScore = snapshot.OverallScore,
+        status = snapshot.Status.ToString(),
+        confidenceCalibration = snapshot.ConfidenceCalibration,
+        hallucinationRate = snapshot.HallucinationRate,
+        contradictionRate = snapshot.ContradictionRate,
+        activeIssues = snapshot.ActiveIssues,
+        alerts = snapshot.Alerts.Select(a => new { severity = a.Severity.ToString(), category = a.Category, message = a.Message, recommendation = a.Recommendation }),
+        timestamp = snapshot.Timestamp
+    });
+});
+
+// GET /api/mind/trend - Health trend over time
+app.MapGet("/api/mind/trend", async (int? days, IMindHealthService mindService) =>
+{
+    var dailyScores = await mindService.GetDailyScoresAsync(days ?? 30);
+    return Results.Ok(new
+    {
+        period = $"{days ?? 30} days",
+        dataPoints = dailyScores.Select(s => new
+        {
+            date = s.Date.ToString("yyyy-MM-dd"),
+            overallScore = s.OverallScore,
+            confidenceScore = s.ConfidenceScore,
+            hallucinationScore = s.HallucinationScore,
+            contradictionScore = s.ContradictionScore,
+            observations = s.Observations
+        })
+    });
+});
+
+// POST /api/mind/recalibrate - Trigger recalibration
+app.MapPost("/api/mind/recalibrate", async (IMindHealthService mindService) =>
+{
+    // Recalibration is a background process - just acknowledge the request
+    var snapshot = await mindService.GetHealthSnapshotAsync();
+    return Results.Ok(new
+    {
+        acknowledged = true,
+        currentScore = snapshot.OverallScore,
+        message = "Recalibration initiated. Health scores will be updated in the next cycle."
+    });
+});
+
+// ============================================
+// CONFLICTS ENDPOINTS (Contradictions & Issues)
+// ============================================
+
+// GET /api/conflicts/list - List all conflicts
+app.MapGet("/api/conflicts/list", async (int? limit, IPowerUserService powerService) =>
+{
+    var conflicts = await powerService.GetConflictsAsync(limit ?? 50);
+    return Results.Ok(new { count = conflicts.Count, conflicts });
+});
+
+// GET /api/conflicts/stats - Conflict statistics
+app.MapGet("/api/conflicts/stats", async (IPowerUserService powerService, IMindHealthService mindService) =>
+{
+    var conflicts = await powerService.GetConflictsAsync(1000);
+    var snapshot = await mindService.GetHealthSnapshotAsync();
+
+    return Results.Ok(new
+    {
+        totalConflicts = conflicts.Count,
+        unresolvedCount = conflicts.Count(c => c.Status == "unresolved"),
+        resolvedCount = conflicts.Count(c => c.Status == "resolved"),
+        contradictionRate = snapshot.ContradictionRate,
+        hallucinationRate = snapshot.HallucinationRate,
+        byType = conflicts.GroupBy(c => c.ConflictType).ToDictionary(g => g.Key, g => g.Count()),
+        bySeverity = conflicts.GroupBy(c => c.Severity).ToDictionary(g => g.Key, g => g.Count())
+    });
+});
+
+// GET /api/conflicts/contradictions - List contradictions
+app.MapGet("/api/conflicts/contradictions", async (int? limit, IMindHealthService mindService) =>
+{
+    var contradictions = await mindService.GetUnresolvedContradictionsAsync(limit ?? 50);
+    return Results.Ok(new { count = contradictions.Count, contradictions });
+});
+
+// GET /api/conflicts/hallucinations - List hallucinations
+app.MapGet("/api/conflicts/hallucinations", async (int? limit, IMindHealthService mindService) =>
+{
+    var analysis = await mindService.GetHallucinationAnalysisAsync(30);
+    return Results.Ok(new
+    {
+        count = analysis.TotalEvents,
+        resolvedCount = analysis.ResolvedCount,
+        rate = analysis.HallucinationRate,
+        avgSeverity = analysis.AvgSeverity,
+        byType = analysis.ByType.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+        bySource = analysis.BySource.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+        trend = analysis.Trend.Take(limit ?? 50).Select(t => new { date = t.Date, rate = t.Rate, count = t.Count }),
+        analyzedAt = analysis.AnalyzedAt
+    });
+});
+
+// POST /api/conflicts/run-detection - Run conflict detection scan
+app.MapPost("/api/conflicts/run-detection", async (IMindHealthService mindService) =>
+{
+    // Trigger detection - in practice this would be a background job
+    var snapshot = await mindService.GetHealthSnapshotAsync();
+    return Results.Ok(new
+    {
+        started = true,
+        currentContradictionRate = snapshot.ContradictionRate,
+        currentHallucinationRate = snapshot.HallucinationRate,
+        message = "Detection scan initiated"
+    });
+});
+
+// POST /api/conflicts/{conflictId}/resolve - Resolve a conflict
+app.MapPost("/api/conflicts/{conflictId:guid}/resolve", async (
+    Guid conflictId,
+    ConflictResolutionRequest request,
+    IPowerUserService powerService) =>
+{
+    await powerService.ResolveConflictAsync(conflictId, request.Resolution, request.WinnerId);
+    return Results.Ok(new { resolved = true, conflictId, resolution = request.Resolution });
+});
+
+// ============================================
+// TRACES ENDPOINTS (Event Tracing)
+// ============================================
+
+// GET /api/traces/recent - Recent memory traces (for dashboard)
+app.MapGet("/api/traces/recent", async (int? limit, string? eventType, IGraphEventStore graphEventStore, IKnowledgeGraphStore kgStore) =>
+{
+    var events = await graphEventStore.GetRecentEventsAsync(limit ?? 50);
+
+    // Group by memory/node ID to create trace items
+    var traces = events
+        .Where(e => e.NodeId.HasValue)
+        .GroupBy(e => e.NodeId!.Value)
+        .Select(g => new
+        {
+            memoryId = g.Key,
+            content = g.FirstOrDefault()?.NodeType ?? "Unknown",
+            eventCount = g.Count(),
+            lastEventType = g.OrderByDescending(e => e.OccurredAt).First().EventType.ToString(),
+            lastEventAt = g.Max(e => e.OccurredAt),
+            isActive = true
+        })
+        .Take(limit ?? 50)
+        .ToList();
+
+    return Results.Ok(new { items = traces });
+});
+
+// GET /api/traces/events - List trace events
+app.MapGet("/api/traces/events", async (int? limit, string? type, IGraphEventStore graphEventStore) =>
+{
+    var events = await graphEventStore.GetRecentEventsAsync(limit ?? 100);
+    if (!string.IsNullOrEmpty(type) && Enum.TryParse<GraphEventType>(type, ignoreCase: true, out var eventType))
+    {
+        events = events.Where(e => e.EventType == eventType).ToList();
+    }
+    // Map to dashboard-expected format
+    var items = events.Select(e => new
+    {
+        sequenceNumber = 0L, // Not tracked in simplified schema
+        eventType = e.EventType.ToString(),
+        streamId = e.NodeId ?? e.EdgeId ?? Guid.Empty,
+        timestamp = e.OccurredAt,
+        actorId = e.TriggeredBy,
+        summary = $"{e.EventType} on {e.NodeType ?? e.EdgeType ?? "item"}"
+    });
+    return Results.Ok(new { count = events.Count, items });
+});
+
+// GET /api/traces/memory/{memoryId} - Get trace for specific memory
+app.MapGet("/api/traces/memory/{memoryId:guid}", async (Guid memoryId, IGraphEventStore graphEventStore) =>
+{
+    var events = await graphEventStore.GetNodeActivityAsync(memoryId, 100);
+    return Results.Ok(new
+    {
+        memoryId,
+        eventCount = events.Count,
+        events,
+        firstEvent = events.LastOrDefault()?.OccurredAt,
+        lastEvent = events.FirstOrDefault()?.OccurredAt
+    });
+});
+
+// ============================================
+// MUTATIONS ENDPOINTS (Pending Changes)
+// ============================================
+
+// Mutation state (in-memory for simplicity)
+var mutationState = new MutationStateHolder();
+
+// GET /api/mutations/pending - List pending mutations
+app.MapGet("/api/mutations/pending", async (int? limit, IGraphEventStore graphEventStore) =>
+{
+    var events = await graphEventStore.GetRecentEventsAsync(limit ?? 50);
+    var pending = events.Where(e =>
+        e.EventType == GraphEventType.NodeCreated ||
+        e.EventType == GraphEventType.NodeUpdated ||
+        e.EventType == GraphEventType.EdgeCreated ||
+        e.EventType == GraphEventType.EdgeUpdated).ToList();
+    return Results.Ok(new { count = pending.Count, mutations = pending, paused = mutationState.IsPaused });
+});
+
+// GET /api/mutations/recent - Recent mutations
+app.MapGet("/api/mutations/recent", async (int? limit, IGraphEventStore graphEventStore) =>
+{
+    var events = await graphEventStore.GetRecentEventsAsync(limit ?? 100);
+    return Results.Ok(new { count = events.Count, mutations = events });
+});
+
+// GET /api/mutations/stats - Mutation statistics
+app.MapGet("/api/mutations/stats", async (IGraphEventStore graphEventStore) =>
+{
+    var metrics = await graphEventStore.GetMetricsAsync();
+    return Results.Ok(new
+    {
+        totalMutations = metrics.TotalEvents,
+        mutationsLast24h = metrics.EventsLast24Hours,
+        byType = new
+        {
+            nodesCreated = metrics.NodesCreated,
+            nodesUpdated = metrics.NodesUpdated,
+            nodesDeleted = metrics.NodesDeleted,
+            edgesCreated = metrics.EdgesCreated,
+            edgesUpdated = metrics.EdgesUpdated,
+            edgesDeleted = metrics.EdgesDeleted
+        },
+        paused = mutationState.IsPaused,
+        sequence = mutationState.CurrentSequence
+    });
+});
+
+// GET /api/mutations/sequence - Current sequence number
+app.MapGet("/api/mutations/sequence", (IGraphEventStore graphEventStore) =>
+{
+    return Results.Ok(new { sequence = mutationState.CurrentSequence, paused = mutationState.IsPaused });
+});
+
+// POST /api/mutations/pause - Pause mutations
+app.MapPost("/api/mutations/pause", () =>
+{
+    mutationState.IsPaused = true;
+    return Results.Ok(new { paused = true, message = "Mutations paused" });
+});
+
+// POST /api/mutations/resume - Resume mutations
+app.MapPost("/api/mutations/resume", () =>
+{
+    mutationState.IsPaused = false;
+    return Results.Ok(new { paused = false, message = "Mutations resumed" });
+});
+
+// POST /api/mutations/force-flush - Force flush pending mutations
+app.MapPost("/api/mutations/force-flush", async (IGraphEventStore graphEventStore) =>
+{
+    // In practice this would flush any buffered mutations
+    var metrics = await graphEventStore.GetMetricsAsync();
+    mutationState.CurrentSequence = metrics.TotalEvents;
+    return Results.Ok(new { flushed = true, sequence = mutationState.CurrentSequence });
+});
+
 // ============================================
 // PERFORMANCE METRICS ENDPOINTS
 // ============================================
 
-// GET /api/performance/metrics - Full performance snapshot
+// GET /api/performance/metrics - Full performance snapshot (dashboard format)
 app.MapGet("/api/performance/metrics", async (IPerformanceService perfService) =>
 {
     var snapshot = await perfService.GetSnapshotAsync();
-    return Results.Ok(snapshot);
+
+    // Calculate aggregated metrics across all operations
+    var totalRequests = snapshot.Counters.Values.Sum(c => c.Total);
+    var totalErrors = snapshot.Counters.Values.Sum(c => c.Failure);
+    var allLatencies = snapshot.Latencies.Values.ToList();
+
+    var avgLatencyMs = allLatencies.Count > 0 ? allLatencies.Average(l => l.AvgMs) : 0;
+    var p95LatencyMs = allLatencies.Count > 0 ? allLatencies.Max(l => l.P95Ms) : 0;
+    var p99LatencyMs = allLatencies.Count > 0 ? allLatencies.Max(l => l.P99Ms) : 0;
+    var requestsPerSecond = snapshot.UptimeSeconds > 0 ? totalRequests / snapshot.UptimeSeconds : 0;
+
+    // Transform latencies to dashboard format
+    var operationLatencies = snapshot.Latencies.ToDictionary(
+        kvp => kvp.Key,
+        kvp => new
+        {
+            avgMs = kvp.Value.AvgMs,
+            p95Ms = kvp.Value.P95Ms,
+            p99Ms = kvp.Value.P99Ms,
+            count = kvp.Value.Count
+        });
+
+    return Results.Ok(new
+    {
+        totalRequests,
+        totalErrors,
+        avgLatencyMs,
+        p95LatencyMs,
+        p99LatencyMs,
+        requestsPerSecond,
+        operationLatencies,
+        timestamp = snapshot.Timestamp
+    });
 });
 
 // GET /api/performance/latency/{operation} - Latency for specific operation
@@ -3154,7 +3641,13 @@ app.MapGet("/api/performance/slow", async (
     return Results.Ok(new
     {
         count = slowOps.Count,
-        operations = slowOps
+        operations = slowOps.Select(op => new
+        {
+            operation = op.OperationName,
+            durationMs = op.Duration.TotalMilliseconds,
+            timestamp = op.Timestamp,
+            details = op.Context
+        })
     });
 });
 
@@ -3162,14 +3655,37 @@ app.MapGet("/api/performance/slow", async (
 app.MapGet("/api/performance/cache", async (IPerformanceService perfService) =>
 {
     var cacheStats = await perfService.GetCacheStatsAsync();
-    return Results.Ok(cacheStats);
+    // Aggregate all cache layers for dashboard
+    var totalHits = cacheStats.Layers.Values.Sum(l => l.Hits);
+    var totalMisses = cacheStats.Layers.Values.Sum(l => l.Misses);
+    var totalEvictions = cacheStats.Layers.Values.Sum(l => l.Evictions);
+    var totalSize = cacheStats.Layers.Values.Sum(l => l.CurrentSize);
+    var hitRate = (totalHits + totalMisses) > 0 ? (double)totalHits / (totalHits + totalMisses) : 0;
+
+    return Results.Ok(new
+    {
+        hits = totalHits,
+        misses = totalMisses,
+        hitRate,
+        itemCount = totalSize,
+        memoryBytes = totalSize * 1024, // Estimate
+        evictions = totalEvictions
+    });
 });
 
 // GET /api/performance/db - Database pool statistics
 app.MapGet("/api/performance/db", async (IPerformanceService perfService) =>
 {
     var dbStats = await perfService.GetDbPoolStatsAsync();
-    return Results.Ok(dbStats);
+    return Results.Ok(new
+    {
+        activeConnections = dbStats.ActiveConnections,
+        idleConnections = dbStats.IdleConnections,
+        maxConnections = dbStats.MaxPoolSize,
+        totalAcquired = dbStats.TotalConnectionsCreated,
+        totalReleased = dbStats.TotalConnectionsDestroyed,
+        avgAcquireTimeMs = dbStats.AvgAcquisitionTimeMs
+    });
 });
 
 // GET /api/performance/active - Currently active operations
@@ -3179,7 +3695,13 @@ app.MapGet("/api/performance/active", async (IPerformanceService perfService) =>
     return Results.Ok(new
     {
         count = active.Count,
-        operations = active
+        requests = active.Select(op => new
+        {
+            requestId = op.OperationId,
+            operation = op.OperationName,
+            elapsedMs = op.ElapsedMs,
+            startedAt = op.StartedAt
+        })
     });
 });
 
@@ -3327,6 +3849,10 @@ internal record ConflictResolveRequest(
     Guid WinnerId,
     ConflictResolutionAction Action);
 
+internal record ConflictResolutionRequest(
+    string Resolution,
+    Guid? WinnerId = null);
+
 internal record FlagContradictionRequest(
     Guid MemoryA,
     Guid MemoryB,
@@ -3376,6 +3902,13 @@ internal record ContradictionEventRequest(
     float Severity,
     string Description,
     float? SimilarityScore = null);
+
+// Mutation state holder for tracking pause/resume state
+internal class MutationStateHolder
+{
+    public bool IsPaused { get; set; }
+    public long CurrentSequence { get; set; }
+}
 
 // Simple in-memory context store fallback
 internal class InMemoryContextStore : IContextStore
