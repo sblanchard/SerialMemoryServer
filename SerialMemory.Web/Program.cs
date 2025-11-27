@@ -4,13 +4,22 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Configuration
 var apiBaseUrl = builder.Configuration["API_BASE_URL"] ?? "http://localhost:5000";
+var dashboardApiUrl = builder.Configuration["DASHBOARD_API_URL"] ?? "http://localhost:5001";
 var stripePublishableKey = builder.Configuration["STRIPE_PUBLISHABLE_KEY"] ?? "";
 
 // Add services
 builder.Services.AddRazorPages();
+
+// Main API client (for graph, memories, etc.)
 builder.Services.AddHttpClient("Api", client =>
 {
     client.BaseAddress = new Uri(apiBaseUrl);
+});
+
+// Dashboard API client (for auth, user management)
+builder.Services.AddHttpClient("DashboardApi", client =>
+{
+    client.BaseAddress = new Uri(dashboardApiUrl);
 });
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

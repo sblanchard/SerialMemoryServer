@@ -1,7 +1,7 @@
 import { useCallback, useRef, useMemo, useEffect } from 'react';
 import ForceGraph3DLib from 'react-force-graph-3d';
 import type { ForceGraphNode, ForceGraphLink } from '../../types/graph';
-import { ENTITY_COLORS } from '../../types/graph';
+import { ENTITY_COLORS, NODE_TYPE_COLORS, LINK_TYPE_COLORS } from '../../types/graph';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -216,11 +216,14 @@ export function ForceGraph3D({
     </div>`;
   }, []);
 
-  // Link color with neural feel
-  const linkColor = useCallback((link: ForceGraphLink) => {
+  // Link color based on type with SerialMemory theme
+  const getLinkColor = useCallback((link: ForceGraphLink) => {
     if (typeof link.color === 'string') return link.color;
-    // Default subtle cyan for neural look
-    return 'rgba(34, 211, 238, 0.35)';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const linkType = (link as any).type as string;
+    if (linkType === 'direct') return LINK_TYPE_COLORS.direct;
+    if (linkType === 'weak') return LINK_TYPE_COLORS.weak;
+    return LINK_TYPE_COLORS.default;
   }, []);
 
   // Link width based on weight
@@ -236,8 +239,8 @@ export function ForceGraph3D({
       nodeLabel={nodeLabel}
       nodeColor={(node: ForceGraphNode) => node.color || ENTITY_COLORS.default}
       nodeThreeObject={nodeThreeObject}
-      nodeThreeObjectExtend={false}
-      linkColor={linkColor}
+      nodeThreeObjectExtend={true}
+      linkColor={getLinkColor}
       linkWidth={linkWidth}
       linkOpacity={0.35}
       linkDirectionalParticles={2}
