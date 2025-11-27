@@ -61,6 +61,18 @@
             height: 12px;
             border-radius: 50%;
         }
+        .loading-spinner {
+            border: 3px solid var(--slate);
+            border-top: 3px solid var(--cyan);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @@keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 }
 
@@ -123,8 +135,15 @@
     </div>
 
     <!-- Graph Container -->
-    <div class="card p-0 overflow-hidden">
+    <div class="card p-0 overflow-hidden relative">
         <div id="graph-container"></div>
+        <!-- Loading Overlay -->
+        <div id="graph-loading" class="absolute inset-0 flex items-center justify-center bg-midnight/80 z-10">
+            <div class="text-center">
+                <div class="loading-spinner mx-auto mb-4"></div>
+                <p class="text-graphite">Loading knowledge graph...</p>
+            </div>
+        </div>
     </div>
 
     <!-- Selected Node Info Panel -->
@@ -137,10 +156,9 @@
 </div>
 
 @section Scripts {
-    <!-- Three.js and dependencies -->
-    <script src="https://unpkg.com/three@0.181.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three-spritetext@1.9.5/dist/three-spritetext.min.js"></script>
-    <script src="https://unpkg.com/3d-force-graph@1.74.6/dist/3d-force-graph.min.js"></script>
+    <!-- Three.js and Force Graph -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
 
     <script>
         const API_BASE = '@Model.ApiBaseUrl';
@@ -166,23 +184,8 @@
             graph = ForceGraph3D()(container)
                 .backgroundColor('#0B0F1A')
                 .nodeColor(node => NODE_COLORS[node.type] || NODE_COLORS.default)
-                .nodeLabel(node => `<div style="background: rgba(11,15,26,0.95); padding: 8px 12px; border-radius: 6px; border: 1px solid ${NODE_COLORS[node.type] || NODE_COLORS.default}; max-width: 200px;">
-                    <div style="color: ${NODE_COLORS[node.type] || NODE_COLORS.default}; font-weight: bold; margin-bottom: 4px;">${node.type}</div>
-                    <div style="color: #eaeaea;">${node.label}</div>
-                </div>`)
-                .nodeThreeObject(node => {
-                    const color = NODE_COLORS[node.type] || NODE_COLORS.default;
-                    const geometry = new THREE.SphereGeometry(3.2, 16, 16);
-                    const material = new THREE.MeshStandardMaterial({
-                        color: color,
-                        emissive: color,
-                        emissiveIntensity: 0.6,
-                        roughness: 0.2,
-                        metalness: 0.1
-                    });
-                    return new THREE.Mesh(geometry, material);
-                })
-                .nodeThreeObjectExtend(true)
+                .nodeLabel(node => `${node.type}: ${node.label}`)
+                .nodeVal(node => 5)
                 .linkColor(() => 'rgba(34, 211, 238, 0.35)')
                 .linkWidth(1.2)
                 .linkOpacity(0.35)
@@ -192,38 +195,22 @@
                 .onNodeClick(handleNodeClick)
                 .onNodeHover(handleNodeHover);
 
-            // Add bloom effect
-            const bloomPass = new THREE.UnrealBloomPass(
-                new THREE.Vector2(window.innerWidth, window.innerHeight),
-                1.2, 0.6, 0.2
-            );
+            // Camera setup - zoomed out for better overview
+            graph.cameraPosition({ x: 0, y: 0, z: 800 });
 
-            // Camera setup
-            graph.cameraPosition({ x: 0, y: 0, z: 280 });
-
-            // Slow rotation
-            let angle = 0;
-            setInterval(() => {
-                angle += 0.00025;
-                const distance = 280;
-                graph.cameraPosition({
-                    x: distance * Math.sin(angle),
-                    z: distance * Math.cos(angle)
-                });
-            }, 16);
-
-            // Add fog
-            graph.scene().fog = new THREE.Fog(0x0B0F1A, 50, 600);
+            // Add fog for depth effect
+            setTimeout(() => {
+                if (graph.scene()) {
+                    graph.scene().fog = new THREE.Fog(0x0B0F1A, 100, 800);
+                }
+            }, 100);
         }
 
         // Fetch graph data
         async function fetchGraphData() {
             try {
-                const response = await fetch(`${API_BASE}/api/graph?limit=200`, {
-                    headers: {
-                        'Authorization': `Bearer ${AUTH_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
+                const response = await fetch(`${API_BASE}/api/graph?limit=50`, {
+                    credentials: 'same-origin'
                 });
 
                 if (!response.ok) throw new Error('Failed to fetch graph data');
@@ -302,10 +289,7 @@
         async function fetchStats() {
             try {
                 const response = await fetch(`${API_BASE}/api/stats`, {
-                    headers: {
-                        'Authorization': `Bearer ${AUTH_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
+                    credentials: 'same-origin'
                 });
 
                 if (!response.ok) return;
@@ -415,11 +399,19 @@
 
         // Reset view
         function resetView() {
-            graph.cameraPosition({ x: 0, y: 0, z: 280 }, null, 1000);
+            graph.cameraPosition({ x: 0, y: 0, z: 800 }, null, 1000);
             filterGraph('all');
             document.getElementById('search-input').value = '';
             graph.graphData(graphData);
             document.getElementById('node-info-panel').classList.add('hidden');
+        }
+
+        // Hide loading indicator
+        function hideLoading() {
+            const loadingEl = document.getElementById('graph-loading');
+            if (loadingEl) {
+                loadingEl.classList.add('hidden');
+            }
         }
 
         // Initialize
@@ -429,6 +421,9 @@
             // Fetch and display data
             graphData = await fetchGraphData();
             graph.graphData(graphData);
+
+            // Hide loading after data is loaded
+            hideLoading();
 
             await fetchStats();
 

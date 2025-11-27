@@ -128,7 +128,7 @@ function AppContent() {
 
       {/* Graph canvas background */}
       <div
-        className="absolute inset-0"
+        className="absolute inset-0 z-0"
         style={{
           background: `
             radial-gradient(circle at 50% 0%, rgba(34,211,238,0.06), transparent 40%),

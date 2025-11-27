@@ -148,6 +148,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - API_BASE_URL=http://api:8080
       - DASHBOARD_API_URL=http://dashboard-api:8080
+      - PUBLIC_API_URL=http://localhost:5000
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
     depends_on:
       - api

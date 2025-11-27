@@ -57,6 +57,54 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapRazorPages();
 
+// API Proxy - forwards /api/* requests to internal API server
+// This keeps all traffic internal to Docker network
+app.Map("/api/{**path}", async (HttpContext context, IHttpClientFactory httpClientFactory, string path) =>
+{
+    var client = httpClientFactory.CreateClient("Api");
+
+    // Forward authorization header from cookie
+    var authToken = context.Request.Cookies["auth_token"];
+    if (!string.IsNullOrEmpty(authToken))
+    {
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authToken);
+    }
+
+    // Build target URL
+    var queryString = context.Request.QueryString.Value ?? "";
+    var targetUrl = $"/api/{path}{queryString}";
+
+    try
+    {
+        HttpResponseMessage response;
+
+        if (context.Request.Method == "GET")
+        {
+            response = await client.GetAsync(targetUrl);
+        }
+        else if (context.Request.Method == "POST")
+        {
+            using var reader = new StreamReader(context.Request.Body);
+            var body = await reader.ReadToEndAsync();
+            var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            response = await client.PostAsync(targetUrl, content);
+        }
+        else
+        {
+            return Results.StatusCode(405);
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+
+        return Results.Content(responseBody, contentType, System.Text.Encoding.UTF8, (int)response.StatusCode);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"API proxy error: {ex.Message}", statusCode: 502);
+    }
+});
+
 app.Run();
 
 public sealed class AppConfig
