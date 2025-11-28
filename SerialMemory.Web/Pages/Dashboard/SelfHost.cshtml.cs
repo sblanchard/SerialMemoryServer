@@ -2,18 +2,19 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class SelfHostModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
     private readonly AppConfig _appConfig;
 
-    public SelfHostModel(IHttpClientFactory httpClientFactory, AppConfig appConfig)
+    public SelfHostModel(ApiClientService apiClient, AppConfig appConfig)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
         _appConfig = appConfig;
     }
 
@@ -52,7 +53,7 @@ public sealed class SelfHostModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/selfhost/maintenance/integrity", null);
 
             if (response.IsSuccessStatusCode)
@@ -83,7 +84,7 @@ public sealed class SelfHostModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/selfhost/maintenance/vacuum", null);
 
             if (response.IsSuccessStatusCode)
@@ -114,7 +115,7 @@ public sealed class SelfHostModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/selfhost/maintenance/reindex", null);
 
             if (response.IsSuccessStatusCode)
@@ -140,7 +141,7 @@ public sealed class SelfHostModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var statusTask = client.GetAsync("/api/selfhost/status");
             var configTask = client.GetAsync("/api/selfhost/config");

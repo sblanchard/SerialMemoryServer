@@ -31,14 +31,14 @@
                     <p class="text-graphite text-sm">Overall Confidence</p>
                     <p class="text-3xl font-bold text-soft-white">@((Model.CurrentConfidence * 100).ToString("F0"))%</p>
                 </div>
-                <div class="w-16 h-16 rounded-full flex items-center justify-center @(Model.CurrentConfidence >= 0.8 ? "bg-green-500/20" : Model.CurrentConfidence >= 0.6 ? "bg-yellow-500/20" : "bg-red-500/20")">
+                <div class="w-16 h-16 rounded-full flex items-center justify-center @(Model.CurrentConfidence >= 0.8 ? "bg-green-900/300/20" : Model.CurrentConfidence >= 0.6 ? "bg-yellow-900/300/20" : "bg-red-500/20")">
                     <svg class="w-8 h-8 @(Model.CurrentConfidence >= 0.8 ? "text-green-400" : Model.CurrentConfidence >= 0.6 ? "text-yellow-400" : "text-red-400")" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                 </div>
             </div>
             <div class="mt-2 w-full h-2 bg-midnight rounded-full overflow-hidden">
-                <div class="h-full @(Model.CurrentConfidence >= 0.8 ? "bg-green-500" : Model.CurrentConfidence >= 0.6 ? "bg-yellow-500" : "bg-red-500") rounded-full transition-all duration-500" style="width: @((Model.CurrentConfidence * 100).ToString("F0"))%"></div>
+                <div class="h-full @(Model.CurrentConfidence >= 0.8 ? "bg-green-900/300" : Model.CurrentConfidence >= 0.6 ? "bg-yellow-900/300" : "bg-red-500") rounded-full transition-all duration-500" style="width: @((Model.CurrentConfidence * 100).ToString("F0"))%"></div>
             </div>
         </div>
 
@@ -64,7 +64,7 @@
                     <p class="text-graphite text-sm">Avg Disagreement</p>
                     <p class="text-3xl font-bold text-soft-white">@((Model.AvgDisagreement * 100).ToString("F0"))%</p>
                 </div>
-                <div class="w-16 h-16 rounded-full @(Model.AvgDisagreement <= 0.2 ? "bg-green-500/20" : Model.AvgDisagreement <= 0.4 ? "bg-yellow-500/20" : "bg-red-500/20") flex items-center justify-center">
+                <div class="w-16 h-16 rounded-full @(Model.AvgDisagreement <= 0.2 ? "bg-green-900/300/20" : Model.AvgDisagreement <= 0.4 ? "bg-yellow-900/300/20" : "bg-red-500/20") flex items-center justify-center">
                     <svg class="w-8 h-8 @(Model.AvgDisagreement <= 0.2 ? "text-green-400" : Model.AvgDisagreement <= 0.4 ? "text-yellow-400" : "text-red-400")" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                     </svg>
@@ -98,9 +98,9 @@
             <div class="space-y-3">
                 @foreach (var entry in Model.History)
                 {
-                    var confClass = entry.OverallConfidence >= 0.8 ? "bg-green-500" : entry.OverallConfidence >= 0.6 ? "bg-yellow-500" : "bg-red-500";
+                    var confClass = entry.OverallConfidence >= 0.8 ? "bg-green-900/300" : entry.OverallConfidence >= 0.6 ? "bg-yellow-900/300" : "bg-red-500";
                     <div class="flex items-center gap-3 p-2 bg-midnight rounded-lg">
-                        <div class="w-12 h-12 rounded-lg @(entry.OverallConfidence >= 0.8 ? "bg-green-500/20" : entry.OverallConfidence >= 0.6 ? "bg-yellow-500/20" : "bg-red-500/20") flex items-center justify-center">
+                        <div class="w-12 h-12 rounded-lg @(entry.OverallConfidence >= 0.8 ? "bg-green-900/300/20" : entry.OverallConfidence >= 0.6 ? "bg-yellow-900/300/20" : "bg-red-500/20") flex items-center justify-center">
                             <span class="text-sm font-bold @(entry.OverallConfidence >= 0.8 ? "text-green-400" : entry.OverallConfidence >= 0.6 ? "text-yellow-400" : "text-red-400")">@((entry.OverallConfidence * 100).ToString("F0"))%</span>
                         </div>
                         <div class="flex-1">
@@ -143,7 +143,7 @@
                     @foreach (var trend in Model.Trends)
                     {
                         var avgClass = trend.AvgDisagreement <= 0.2 ? "text-green-400" : trend.AvgDisagreement <= 0.4 ? "text-yellow-400" : "text-red-400";
-                        var barClass = trend.AvgDisagreement <= 0.2 ? "bg-green-500" : trend.AvgDisagreement <= 0.4 ? "bg-yellow-500" : "bg-red-500";
+                        var barClass = trend.AvgDisagreement <= 0.2 ? "bg-green-900/300" : trend.AvgDisagreement <= 0.4 ? "bg-yellow-900/300" : "bg-red-500";
                         <div class="p-3 bg-midnight rounded-lg">
                             <div class="flex items-center justify-between mb-2">
                                 <span class="text-soft-white text-sm font-medium">@trend.ModelPair</span>

@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class ReasoningModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ReasoningModel(IHttpClientFactory httpClientFactory)
+    public ReasoningModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -61,7 +61,7 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.GetAsync("/api/reasoning/runs?limit=20");
             if (response.IsSuccessStatusCode)
             {
@@ -93,7 +93,7 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var response = await client.GetAsync("/api/memories/recent?limit=10");
             if (response.IsSuccessStatusCode)
@@ -122,7 +122,7 @@ public sealed class ReasoningModel : PageModel
         try
         {
             IsLoading = true;
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             // Get recent traces to find the latest one with findings
             var tracesResponse = await client.GetAsync("/api/reasoning/traces?limit=10");
@@ -309,11 +309,6 @@ public sealed class ReasoningModel : PageModel
         new RecentMemory { Id = Guid.NewGuid(), Content = "Database schema for user preferences", CreatedAt = DateTimeOffset.UtcNow.AddHours(-3) },
         new RecentMemory { Id = Guid.NewGuid(), Content = "API rate limiting implementation", CreatedAt = DateTimeOffset.UtcNow.AddHours(-5) }
     ];
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
-    }
 
     public sealed class ReasoningInsight
     {

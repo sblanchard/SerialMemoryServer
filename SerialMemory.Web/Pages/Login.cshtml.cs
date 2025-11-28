@@ -4,16 +4,24 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages;
 
 public sealed class LoginModel : PageModel
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly InternalTokenService _internalTokenService;
+    private readonly ILogger<LoginModel> _logger;
 
-    public LoginModel(IHttpClientFactory httpClientFactory)
+    public LoginModel(
+        IHttpClientFactory httpClientFactory,
+        InternalTokenService internalTokenService,
+        ILogger<LoginModel> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _internalTokenService = internalTokenService;
+        _logger = logger;
     }
 
     [BindProperty]
@@ -33,6 +41,11 @@ public sealed class LoginModel : PageModel
 
     public async Task<IActionResult> OnPostAsync([FromQuery] string? returnUrl)
     {
+        // SECURITY: Always clear old auth tokens before processing new login
+        // This prevents cross-tenant data leakage from stale cookies
+        Response.Cookies.Delete("auth_token");
+        HttpContext.Session.Remove("internal_token");
+
         if (string.IsNullOrWhiteSpace(ApiKey))
         {
             ErrorMessage = "API Key is required.";
@@ -64,15 +77,19 @@ public sealed class LoginModel : PageModel
                 return Page();
             }
 
-            // Sign in with claims
+            _logger.LogInformation(
+                "User {UserId} authenticated for tenant {TenantId}",
+                result.UserId, result.TenantId);
+
+            // Sign in with claims - DO NOT store api_key in claims
             var claims = new List<Claim>
             {
                 new(ClaimTypes.NameIdentifier, result.UserId),
                 new(ClaimTypes.Email, result.Email ?? result.UserId),
                 new(ClaimTypes.Name, result.TenantName ?? result.UserId),
                 new("tenant_id", result.TenantId),
-                new("api_key", ApiKey),
                 new("role", result.Role)
+                // NOTE: api_key intentionally NOT stored in cookie claims
             };
 
             var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
@@ -89,14 +106,24 @@ public sealed class LoginModel : PageModel
                 new ClaimsPrincipal(claimsIdentity),
                 authProperties);
 
-            // Store API key in a secure cookie for API calls from pages
-            Response.Cookies.Append("auth_token", ApiKey, new CookieOptions
+            // Generate short-lived internal token for API calls
+            var internalToken = _internalTokenService.GenerateToken(new InternalTokenClaims
             {
-                HttpOnly = true,
-                Secure = Request.IsHttps,
-                SameSite = SameSiteMode.Strict,
-                Expires = RememberMe ? DateTimeOffset.UtcNow.AddDays(7) : DateTimeOffset.UtcNow.AddHours(8)
+                TenantId = result.TenantId,
+                UserId = result.UserId,
+                WorkspaceId = "default",
+                Role = result.Role,
+                Email = result.Email
             });
+
+            // Store internal token in session (server-side, not in cookie)
+            HttpContext.Session.SetString("internal_token", internalToken);
+            HttpContext.Session.SetString("internal_token_tenant", result.TenantId);
+            HttpContext.Session.SetString("internal_token_user", result.UserId);
+
+            _logger.LogDebug(
+                "Internal token generated for user {UserId}, tenant {TenantId}",
+                result.UserId, result.TenantId);
 
             if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
             {

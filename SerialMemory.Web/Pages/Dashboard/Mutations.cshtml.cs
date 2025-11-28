@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class MutationsModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public MutationsModel(IHttpClientFactory httpClientFactory)
+    public MutationsModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<PendingMutation> PendingMutations { get; set; } = [];
@@ -30,7 +31,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mutations/approve", new { mutationId });
             SuccessMessage = response.IsSuccessStatusCode ? "Mutation approved" : "Failed to approve mutation";
         }
@@ -47,7 +48,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mutations/reject", new { mutationId, reason });
             SuccessMessage = response.IsSuccessStatusCode ? "Mutation rejected" : "Failed to reject mutation";
         }
@@ -64,7 +65,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/mutations/force-flush", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Mutation queue flushed" : "Failed to flush queue";
         }
@@ -81,7 +82,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/mutations/pause", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Mutation processing paused" : "Failed to pause processing";
         }
@@ -98,7 +99,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/mutations/resume", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Mutation processing resumed" : "Failed to resume processing";
         }
@@ -115,7 +116,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mutations/replay", new { fromSequence });
             SuccessMessage = response.IsSuccessStatusCode ? $"Replay started from sequence {fromSequence}" : "Failed to start replay";
         }
@@ -132,7 +133,7 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var pendingTask = client.GetFromJsonAsync<PendingMutationsResponse>("/api/mutations/pending?limit=50");
             var recentTask = client.GetFromJsonAsync<RecentMutationsResponse>("/api/mutations/recent?limit=100");

@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
     private readonly AppConfig _config;
 
-    public IndexModel(IHttpClientFactory httpClientFactory, AppConfig config)
+    public IndexModel(ApiClientService apiClient, AppConfig config)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
         _config = config;
     }
 
@@ -28,19 +28,20 @@ public sealed class IndexModel : PageModel
 
     public async Task OnGetAsync()
     {
-        var token = User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
-
-        if (string.IsNullOrEmpty(token))
+        // Try to get API key from claims (set during signup)
+        var apiKeyClaim = User.FindFirst("api_key")?.Value;
+        if (!string.IsNullOrEmpty(apiKeyClaim) && apiKeyClaim.StartsWith("sm_"))
         {
-            return;
+            ApiKey = apiKeyClaim;
         }
-
-        ApiKey = token;
+        else
+        {
+            ApiKey = "(view in API Keys page)";
+        }
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient();
 
             // Get usage info
             var usageResponse = await client.GetAsync("/api/usage/current");

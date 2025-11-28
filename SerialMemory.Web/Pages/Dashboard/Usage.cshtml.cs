@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class UsageModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public UsageModel(IHttpClientFactory httpClientFactory)
+    public UsageModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public decimal CreditsUsed { get; set; }
@@ -38,16 +38,9 @@ public sealed class UsageModel : PageModel
 
     public async Task<IActionResult> OnPostExportAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            return Unauthorized();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient();
 
             var response = await client.GetAsync("/tenant/usage/export?format=csv");
 
@@ -62,7 +55,9 @@ public sealed class UsageModel : PageModel
             // API unavailable
         }
 
-        // Fallback: generate simple CSV
+        // Fallback: load data and generate CSV
+        await LoadUsageDataAsync();
+
         var csv = "Date,Operation,Count,Credits\n";
         foreach (var op in UsageByOperation)
         {
@@ -76,7 +71,7 @@ public sealed class UsageModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             // Get current usage from /api/usage/current
             var currentTask = client.GetAsync("/api/usage/current");
@@ -196,11 +191,6 @@ public sealed class UsageModel : PageModel
             "embedding_generation" or "EmbeddingGeneration" => "Embedding Generation",
             _ => eventType.Replace("_", " ").Replace("memory", "Memory").Replace("search", "Search")
         };
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     private List<OperationUsage> GenerateSampleOperationUsage()

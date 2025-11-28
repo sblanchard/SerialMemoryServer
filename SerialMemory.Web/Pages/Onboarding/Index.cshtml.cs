@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Onboarding;
 
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public IndexModel(IHttpClientFactory httpClientFactory)
+    public IndexModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public TenantInfo? CurrentTenant { get; set; }
@@ -27,7 +28,7 @@ public sealed class IndexModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             CurrentTenant = await client.GetFromJsonAsync<TenantInfo>("/api/tenants/current");
 
             if (CurrentTenant != null)

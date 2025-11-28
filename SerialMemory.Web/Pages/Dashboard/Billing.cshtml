@@ -6,13 +6,13 @@
 
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
-        <h1 class="text-3xl font-bold text-gray-900">Billing</h1>
-        <p class="mt-2 text-gray-600">Manage your subscription and payment details.</p>
+        <h1 class="text-3xl font-bold text-soft-white">Billing</h1>
+        <p class="mt-2 text-graphite">Manage your subscription and payment details.</p>
     </div>
 
     @if (!string.IsNullOrEmpty(Model.SuccessMessage))
     {
-        <div class="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded mb-6">
+        <div class="bg-green-900/30 border border-green-500/50 text-green-700 px-4 py-3 rounded mb-6">
             @Model.SuccessMessage
         </div>
     }
@@ -26,7 +26,7 @@
 
     @if (Model.IsSampleData)
     {
-        <div class="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg">
+        <div class="mb-6 bg-blue-900/30 border border-blue-500/50 text-blue-300 px-4 py-3 rounded-lg">
             <div class="flex items-center">
                 <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
@@ -47,7 +47,7 @@
             {
                 <form method="post" asp-page-handler="Portal">
                     @Html.AntiForgeryToken()
-                    <button type="submit" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md text-sm font-medium">
+                    <button type="submit" class="bg-slate/50 hover:bg-slate text-soft-white px-4 py-2 rounded-md text-sm font-medium">
                         Manage Billing
                     </button>
                 </form>
@@ -56,7 +56,7 @@
 
         @if (Model.WillCancelAtPeriodEnd)
         {
-            <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4">
+            <div class="bg-yellow-900/30 border border-yellow-500/50 text-yellow-300 px-4 py-3 rounded mb-4">
                 Your subscription will be cancelled at the end of the current billing period (@Model.CurrentPeriodEnd?.ToString("MMM dd, yyyy")).
                 <form method="post" asp-page-handler="Resume" class="inline">
                     @Html.AntiForgeryToken()
@@ -67,14 +67,14 @@
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-                <div class="text-sm font-medium text-gray-500">Billing Period</div>
-                <div class="mt-1 text-gray-900">
+                <div class="text-sm font-medium text-graphite">Billing Period</div>
+                <div class="mt-1 text-soft-white">
                     @Model.CurrentPeriodStart?.ToString("MMM dd") - @Model.CurrentPeriodEnd?.ToString("MMM dd, yyyy")
                 </div>
             </div>
             <div>
-                <div class="text-sm font-medium text-gray-500">Payment Method</div>
-                <div class="mt-1 text-gray-900">
+                <div class="text-sm font-medium text-graphite">Payment Method</div>
+                <div class="mt-1 text-soft-white">
                     @if (!string.IsNullOrEmpty(Model.PaymentMethodLast4))
                     {
                         <span class="capitalize">@Model.PaymentMethodBrand</span>
@@ -87,8 +87,8 @@
                 </div>
             </div>
             <div>
-                <div class="text-sm font-medium text-gray-500">Credits Included</div>
-                <div class="mt-1 text-gray-900">@Model.CreditsIncluded.ToString("N0") / month</div>
+                <div class="text-sm font-medium text-graphite">Credits Included</div>
+                <div class="mt-1 text-soft-white">@Model.CreditsIncluded.ToString("N0") / month</div>
             </div>
         </div>
     </div>
@@ -103,15 +103,15 @@
                 {
                     <div class="card border-2 @(Model.CurrentPlan?.ToLowerInvariant() == "free" ? "border-indigo-600" : "border-gray-200")">
                         <h4 class="text-lg font-semibold">Free</h4>
-                        <div class="text-3xl font-bold my-4">$0<span class="text-sm font-normal text-gray-500">/mo</span></div>
-                        <ul class="text-sm text-gray-600 space-y-2 mb-6">
+                        <div class="text-3xl font-bold my-4">$0<span class="text-sm font-normal text-graphite">/mo</span></div>
+                        <ul class="text-sm text-graphite space-y-2 mb-6">
                             <li>100 credits/month</li>
                             <li>1,000 memories</li>
                             <li>10 req/min</li>
                         </ul>
                         @if (Model.CurrentPlan?.ToLowerInvariant() == "free")
                         {
-                            <span class="block text-center py-2 bg-gray-100 text-gray-600 rounded-md">Current Plan</span>
+                            <span class="block text-center py-2 bg-slate/50 text-graphite rounded-md">Current Plan</span>
                         }
                     </div>
                 }
@@ -122,8 +122,8 @@
                         <span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded mb-2">Recommended</span>
                     }
                     <h4 class="text-lg font-semibold">Pro</h4>
-                    <div class="text-3xl font-bold my-4">$29<span class="text-sm font-normal text-gray-500">/mo</span></div>
-                    <ul class="text-sm text-gray-600 space-y-2 mb-6">
+                    <div class="text-3xl font-bold my-4">$29<span class="text-sm font-normal text-graphite">/mo</span></div>
+                    <ul class="text-sm text-graphite space-y-2 mb-6">
                         <li>5,000 credits/month</li>
                         <li>50,000 memories</li>
                         <li>60 req/min</li>
@@ -131,7 +131,7 @@
                     </ul>
                     @if (Model.CurrentPlan?.ToLowerInvariant() == "pro")
                     {
-                        <span class="block text-center py-2 bg-gray-100 text-gray-600 rounded-md">Current Plan</span>
+                        <span class="block text-center py-2 bg-slate/50 text-graphite rounded-md">Current Plan</span>
                     }
                     else
                     {
@@ -148,7 +148,7 @@
                 <div class="card border-2 border-gray-200">
                     <h4 class="text-lg font-semibold">Enterprise</h4>
                     <div class="text-3xl font-bold my-4">Custom</div>
-                    <ul class="text-sm text-gray-600 space-y-2 mb-6">
+                    <ul class="text-sm text-graphite space-y-2 mb-6">
                         <li>Unlimited credits</li>
                         <li>Unlimited memories</li>
                         <li>No rate limits</li>
@@ -169,18 +169,18 @@
         <table class="min-w-full divide-y divide-gray-200">
             <thead>
                 <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-graphite uppercase">Date</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-graphite uppercase">Description</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-graphite uppercase">Amount</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-graphite uppercase">Status</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-graphite uppercase">Invoice</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200">
                 @if (Model.PaymentHistory.Count == 0)
                 {
                     <tr>
-                        <td colspan="5" class="px-4 py-8 text-center text-gray-500">
+                        <td colspan="5" class="px-4 py-8 text-center text-graphite">
                             No payment history yet.
                         </td>
                     </tr>
@@ -188,23 +188,23 @@
                 @foreach (var payment in Model.PaymentHistory)
                 {
                     <tr>
-                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-soft-white">
                             @payment.CreatedAt.ToString("MMM dd, yyyy")
                         </td>
-                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-graphite">
                             @payment.PlanName subscription
                         </td>
-                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-soft-white">
                             $@((payment.AmountCents / 100.0).ToString("N2"))
                         </td>
                         <td class="px-4 py-4 whitespace-nowrap">
                             @{
                                 var statusClass = payment.Status switch
                                 {
-                                    "paid" => "bg-green-100 text-green-800",
+                                    "paid" => "bg-green-100 text-green-300",
                                     "failed" => "bg-red-100 text-red-800",
-                                    "pending" => "bg-yellow-100 text-yellow-800",
-                                    _ => "bg-gray-100 text-gray-800"
+                                    "pending" => "bg-yellow-100 text-yellow-300",
+                                    _ => "bg-slate/50 text-soft-white"
                                 };
                             }
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full @statusClass capitalize">
@@ -230,7 +230,7 @@
     {
         <div class="card border-red-200">
             <h3 class="text-lg font-semibold text-red-600 mb-2">Cancel Subscription</h3>
-            <p class="text-gray-600 mb-4">
+            <p class="text-graphite mb-4">
                 Your subscription will remain active until the end of your current billing period.
                 You'll be downgraded to the Free plan after that.
             </p>

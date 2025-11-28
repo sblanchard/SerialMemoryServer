@@ -1,7 +1,19 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using SerialMemory.Core.Deployment;
+using SerialMemory.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure Data Protection with persistent keys
+// This prevents session cookies from becoming invalid after container restarts
+var dataProtectionPath = builder.Configuration["DATA_PROTECTION_PATH"]
+    ?? Environment.GetEnvironmentVariable("DATA_PROTECTION_PATH")
+    ?? "/app/keys";
+
+builder.Services.AddDataProtection()
+    .SetApplicationName("SerialMemory.Web")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath));
 
 // Configuration
 var apiBaseUrl = builder.Configuration["API_BASE_URL"] ?? "http://localhost:5000";
@@ -47,6 +59,26 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 
 builder.Services.AddAuthorization();
 
+// Add session for storing internal tokens (server-side, not in cookies)
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromHours(8);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+});
+
+// Internal token service for dashboard-to-API communication
+builder.Services.AddSingleton<InternalTokenService>();
+
+// HttpContext accessor for services that need request context
+builder.Services.AddHttpContextAccessor();
+
+// API client service that adds tenant context to all API calls
+builder.Services.AddScoped<ApiClientService>();
+
 // Get deployment context for config
 var deploymentContext = new DeploymentContext();
 
@@ -73,23 +105,109 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
+app.UseSession();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapRazorPages();
 
 // API Proxy - forwards /api/* requests to internal API server
-// This keeps all traffic internal to Docker network
-app.Map("/api/{**path}", async (HttpContext context, IHttpClientFactory httpClientFactory, string path) =>
+// Uses internal short-lived tokens, NOT external API keys
+app.Map("/api/{**path}", async (
+    HttpContext context,
+    IHttpClientFactory httpClientFactory,
+    InternalTokenService internalTokenService,
+    ILogger<Program> logger,
+    string path) =>
 {
     var client = httpClientFactory.CreateClient("Api");
-    // Note: X-Api-Key is already set on the client from AddHttpClient configuration
+    // Note: X-Api-Key (service key) is already set on the client from AddHttpClient configuration
 
-    // Forward authorization header from cookie (for user context)
-    var authToken = context.Request.Cookies["auth_token"];
-    if (!string.IsNullOrEmpty(authToken))
+    // SECURITY: Get tenant context from cookie claims (primary authority)
+    var cookieTenantId = context.User.FindFirst("tenant_id")?.Value;
+    var cookieUserId = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+    if (string.IsNullOrEmpty(cookieTenantId) || string.IsNullOrEmpty(cookieUserId))
     {
-        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authToken);
+        logger.LogWarning("API proxy request rejected: missing cookie claims");
+        return Results.Unauthorized();
     }
+
+    // SECURITY: Get internal token from session (NOT from cookie)
+    var internalToken = context.Session.GetString("internal_token");
+    var sessionTenantId = context.Session.GetString("internal_token_tenant");
+    var sessionUserId = context.Session.GetString("internal_token_user");
+
+    // SECURITY: Validate tenant matches between cookie and session
+    if (sessionTenantId != cookieTenantId || sessionUserId != cookieUserId)
+    {
+        logger.LogError(
+            "SECURITY: Cross-tenant attack detected! Cookie tenant={CookieTenant}/{CookieUser}, Session tenant={SessionTenant}/{SessionUser}",
+            cookieTenantId, cookieUserId, sessionTenantId, sessionUserId);
+
+        // Clear compromised session
+        context.Session.Clear();
+        return Results.Problem(
+            "Session integrity check failed. Please log in again.",
+            statusCode: 403);
+    }
+
+    // Validate internal token if present
+    if (!string.IsNullOrEmpty(internalToken))
+    {
+        var tokenClaims = internalTokenService.ValidateToken(internalToken);
+
+        if (tokenClaims == null)
+        {
+            // Token expired or invalid - regenerate
+            logger.LogDebug("Internal token expired for user {UserId}, regenerating", cookieUserId);
+            internalToken = internalTokenService.GenerateToken(new InternalTokenClaims
+            {
+                TenantId = cookieTenantId,
+                UserId = cookieUserId,
+                WorkspaceId = "default",
+                Role = context.User.FindFirst("role")?.Value ?? "user",
+                Email = context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+            });
+            context.Session.SetString("internal_token", internalToken);
+        }
+        else if (!internalTokenService.ValidateTenantMatch(context.User, tokenClaims))
+        {
+            logger.LogError(
+                "SECURITY: Token tenant mismatch! Clearing session for user {UserId}",
+                cookieUserId);
+            context.Session.Clear();
+            return Results.Problem(
+                "Security validation failed. Please log in again.",
+                statusCode: 403);
+        }
+
+        // Forward internal token to API
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", internalToken);
+    }
+    else
+    {
+        // No internal token - generate new one
+        logger.LogDebug("No internal token found for user {UserId}, generating", cookieUserId);
+        internalToken = internalTokenService.GenerateToken(new InternalTokenClaims
+        {
+            TenantId = cookieTenantId,
+            UserId = cookieUserId,
+            WorkspaceId = "default",
+            Role = context.User.FindFirst("role")?.Value ?? "user",
+            Email = context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+        });
+        context.Session.SetString("internal_token", internalToken);
+        context.Session.SetString("internal_token_tenant", cookieTenantId);
+        context.Session.SetString("internal_token_user", cookieUserId);
+
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", internalToken);
+    }
+
+    // Add tenant context headers for API (trusted because of service API key)
+    client.DefaultRequestHeaders.Add("X-Tenant-Id", cookieTenantId);
+    client.DefaultRequestHeaders.Add("X-User-Id", cookieUserId);
 
     // Build target URL
     var queryString = context.Request.QueryString.Value ?? "";
@@ -122,6 +240,7 @@ app.Map("/api/{**path}", async (HttpContext context, IHttpClientFactory httpClie
     }
     catch (Exception ex)
     {
+        logger.LogError(ex, "API proxy error for path {Path}", path);
         return Results.Problem($"API proxy error: {ex.Message}", statusCode: 502);
     }
 });

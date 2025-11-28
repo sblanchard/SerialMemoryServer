@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class ApiKeysModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ApiKeysModel(IHttpClientFactory httpClientFactory)
+    public ApiKeysModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<ApiKeyInfo> ApiKeys { get; set; } = [];
@@ -27,18 +27,9 @@ public sealed class ApiKeysModel : PageModel
 
     public async Task<IActionResult> OnPostCreateAsync(string name, string? description, int? expiresIn)
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("DashboardApi");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("DashboardApi");
             var request = new
             {
                 Name = name,
@@ -86,18 +77,9 @@ public sealed class ApiKeysModel : PageModel
 
     public async Task<IActionResult> OnPostRevokeAsync(Guid keyId)
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("DashboardApi");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("DashboardApi");
             var response = await client.DeleteAsync($"/api-keys/{keyId}");
 
             if (response.IsSuccessStatusCode)
@@ -136,17 +118,9 @@ public sealed class ApiKeysModel : PageModel
 
     private async Task LoadApiKeysAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            return;
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("DashboardApi");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("DashboardApi");
             var response = await client.GetAsync("/api-keys?includeRevoked=true");
 
             if (response.IsSuccessStatusCode)
@@ -159,11 +133,6 @@ public sealed class ApiKeysModel : PageModel
         {
             // API unavailable
         }
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     public sealed class ApiKeyInfo
