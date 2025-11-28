@@ -1,0 +1,252 @@
+@page
+@model DevelopersModel
+@{
+    ViewData["Title"] = "Developers";
+    ViewData["Description"] = "Build AI agents with real memory, reasoning, and graph intelligence.";
+}
+
+<!-- Hero Section -->
+<section class="gradient-bg py-28">
+    <div class="max-w-6xl mx-auto px-6 text-center">
+        <div class="h-1 w-24 bg-cyan rounded-full mx-auto mb-8" style="box-shadow: 0 0 15px #22D3EE;"></div>
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-soft-white">
+            SerialMemory for <span class="gradient-text">Developers</span>
+        </h1>
+        <p class="text-graphite mt-6 text-lg md:text-xl max-w-3xl mx-auto">
+            Persistent, queryable memory for AI agents. Built for engineers who want real long-term context.
+        </p>
+
+        <div class="flex flex-col sm:flex-row justify-center gap-4 mt-10">
+            <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold text-lg">
+                Get API Key
+            </a>
+            <a href="/docs" class="btn-outline px-8 py-3 rounded-xl font-semibold text-lg">
+                Read Docs
+            </a>
+        </div>
+
+        <div class="mt-12 flex flex-col sm:flex-row justify-center gap-6 text-sm text-graphite">
+            <span class="flex items-center justify-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                MCP Protocol Native
+            </span>
+            <span class="flex items-center justify-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Zero Config Docker
+            </span>
+            <span class="flex items-center justify-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Full Tenant Isolation
+            </span>
+        </div>
+    </div>
+</section>
+
+<!-- Features Grid Section -->
+<section class="bg-midnight py-24">
+    <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-16">
+            <span class="inline-block px-3 py-1 rounded-full text-xs font-medium border mb-4" style="background: rgba(34, 211, 238, 0.1); color: #22D3EE; border-color: rgba(34, 211, 238, 0.2);">
+                Core Capabilities
+            </span>
+            <h2 class="text-3xl md:text-4xl font-bold text-soft-white">What You Get</h2>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="card">
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center mb-4" style="background: rgba(34, 211, 238, 0.1);">
+                    <svg class="w-6 h-6 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-semibold text-soft-white mb-3">Long-term AI Memory</h3>
+                <p class="text-graphite">
+                    Store memories with semantic embeddings and full-text search. Memories persist across sessions, decay naturally over time, and can be reinforced when validated.
+                </p>
+            </div>
+            <div class="card">
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center mb-4" style="background: rgba(34, 211, 238, 0.1);">
+                    <svg class="w-6 h-6 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-semibold text-soft-white mb-3">Graph Intelligence</h3>
+                <p class="text-graphite">
+                    Automatic entity extraction builds a knowledge graph from your memories. Multi-hop traversal lets you find connections your agent would otherwise miss.
+                </p>
+            </div>
+            <div class="card">
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center mb-4" style="background: rgba(34, 211, 238, 0.1);">
+                    <svg class="w-6 h-6 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-semibold text-soft-white mb-3">Deterministic Reasoning</h3>
+                <p class="text-graphite">
+                    Not probabilistic guessing. Real constraint propagation, contradiction detection, and engineering validation over your system's actual structure.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works Section -->
+<section class="bg-navy py-24">
+    <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-16">
+            <span class="inline-block px-3 py-1 rounded-full text-xs font-medium border mb-4" style="background: rgba(34, 211, 238, 0.1); color: #22D3EE; border-color: rgba(34, 211, 238, 0.2);">
+                Getting Started
+            </span>
+            <h2 class="text-3xl md:text-4xl font-bold text-soft-white">How It Works</h2>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div class="card text-center relative">
+                <div class="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center text-xl font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">1</div>
+                <h3 class="text-lg font-semibold text-soft-white mb-2">Create Account</h3>
+                <p class="text-graphite text-sm">Sign up at serialcoder.io. Free tier includes 10k memories.</p>
+                <div class="hidden lg:block absolute top-1/2 -right-3 transform -translate-y-1/2 text-slate">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+                </div>
+            </div>
+            <div class="card text-center relative">
+                <div class="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center text-xl font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">2</div>
+                <h3 class="text-lg font-semibold text-soft-white mb-2">Get API Key</h3>
+                <p class="text-graphite text-sm">Generate a key from your dashboard. One key per workspace.</p>
+                <div class="hidden lg:block absolute top-1/2 -right-3 transform -translate-y-1/2 text-slate">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+                </div>
+            </div>
+            <div class="card text-center relative">
+                <div class="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center text-xl font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">3</div>
+                <h3 class="text-lg font-semibold text-soft-white mb-2">Run Docker MCP</h3>
+                <p class="text-graphite text-sm">Pull and run. First launch prompts for your API key interactively.</p>
+                <div class="hidden lg:block absolute top-1/2 -right-3 transform -translate-y-1/2 text-slate">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+                </div>
+            </div>
+            <div class="card text-center">
+                <div class="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center text-xl font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">4</div>
+                <h3 class="text-lg font-semibold text-soft-white mb-2">Query Memory</h3>
+                <p class="text-graphite text-sm">Your AI agent now has persistent memory via MCP tools.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Docker Section -->
+<section class="bg-midnight py-24">
+    <div class="max-w-4xl mx-auto px-6">
+        <div class="text-center mb-12">
+            <span class="inline-block px-3 py-1 rounded-full text-xs font-medium border mb-4" style="background: rgba(34, 211, 238, 0.1); color: #22D3EE; border-color: rgba(34, 211, 238, 0.2);">
+                Zero Config
+            </span>
+            <h2 class="text-3xl md:text-4xl font-bold text-soft-white">Docker MCP Server</h2>
+            <p class="text-graphite mt-4 text-lg">One command to persistent AI memory.</p>
+        </div>
+
+        <div class="card overflow-hidden">
+            <div class="flex items-center gap-2 px-4 py-3 border-b" style="background: #0B0F1A; border-color: #374151;">
+                <div class="w-3 h-3 rounded-full" style="background: #EF4444;"></div>
+                <div class="w-3 h-3 rounded-full" style="background: #FACC15;"></div>
+                <div class="w-3 h-3 rounded-full" style="background: #22C55E;"></div>
+                <span class="ml-2 text-graphite text-sm font-mono">terminal</span>
+            </div>
+            <div class="p-6" style="background: #0B0F1A;">
+                <code class="text-cyan font-mono text-lg block">docker run -it serialcoder/serialmemory-mcp</code>
+            </div>
+        </div>
+
+        <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-cyan mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <div>
+                    <p class="text-soft-white font-medium">Interactive Setup</p>
+                    <p class="text-graphite text-sm">First run prompts for your API key</p>
+                </div>
+            </div>
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-cyan mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <div>
+                    <p class="text-soft-white font-medium">Config Stored</p>
+                    <p class="text-graphite text-sm">Credentials saved automatically in volume</p>
+                </div>
+            </div>
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-cyan mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <div>
+                    <p class="text-soft-white font-medium">No Env Vars</p>
+                    <p class="text-graphite text-sm">No manual configuration required</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Core API Tools Section -->
+<section class="bg-navy py-24">
+    <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-16">
+            <span class="inline-block px-3 py-1 rounded-full text-xs font-medium border mb-4" style="background: rgba(34, 211, 238, 0.1); color: #22D3EE; border-color: rgba(34, 211, 238, 0.2);">
+                MCP Tools
+            </span>
+            <h2 class="text-3xl md:text-4xl font-bold text-soft-white">Core API</h2>
+            <p class="text-graphite mt-4 text-lg">Every tool your AI agent needs for persistent memory.</p>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">memory_ingest</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">memory_search</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">memory_multi_hop_search</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">memory_about_user</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">crawl_relationships</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">export_memories</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">get_graph_statistics</code>
+            </div>
+            <div class="card py-4 px-5 text-center">
+                <code class="text-cyan font-mono text-sm">reembed_memories</code>
+            </div>
+        </div>
+
+        <div class="text-center mt-10">
+            <a href="/docs" class="text-cyan hover:text-electric transition-colors font-medium inline-flex items-center gap-2">
+                View full API reference
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section class="bg-midnight py-24">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-soft-white mb-4">Build agents that remember.</h2>
+        <p class="text-graphite text-lg mb-10 max-w-2xl mx-auto">
+            Give your AI a real memory layer. Semantic search, graph traversal, and deterministic reasoning&mdash;all through a single MCP server.
+        </p>
+
+        <div class="flex flex-col sm:flex-row justify-center gap-4">
+            <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold text-lg">
+                Get API Key
+            </a>
+            <a href="/docs" class="btn-outline px-8 py-3 rounded-xl font-semibold text-lg">
+                Read Docs
+            </a>
+        </div>
+
+        <div class="h-1 w-24 bg-cyan rounded-full mx-auto mt-16" style="box-shadow: 0 0 15px #22D3EE;"></div>
+    </div>
+</section>
