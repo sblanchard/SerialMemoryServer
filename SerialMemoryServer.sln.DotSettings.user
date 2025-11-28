@@ -4,4 +4,4 @@
 	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=ac80e6a4_002Db8cf_002D446c_002Db15e_002D53c2c17204d3/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="All tests from &amp;lt;SerialMemory.Tests&amp;gt;" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
   &lt;Project Location="D:\DEV\SerialMemoryServer\SerialMemory.Tests" Presentation="&amp;lt;SerialMemory.Tests&amp;gt;" /&gt;&#xD;
 &lt;/SessionState&gt;</s:String>
-	<s:Boolean x:Key="/Default/UnloadedProject/UnloadedProjects/=40d729e9_002D098f_002D4ce4_002D8f4a_002De6e0f9a071ee_0023SerialMemory_002ECoreExport/@EntryIndexedValue">True</s:Boolean></wpf:ResourceDictionary>
+	</wpf:ResourceDictionary>

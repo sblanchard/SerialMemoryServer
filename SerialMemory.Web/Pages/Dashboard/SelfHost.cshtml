@@ -526,6 +526,14 @@
     let topologyMap = null;
     const liveLog = document.getElementById('liveLog');
 
+    // In production (HTTPS), use same origin. In local dev, API is on port 5000.
+    function getApiBaseUrl() {
+        const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        return isLocalDev
+            ? window.location.protocol + '//' + window.location.hostname + ':5000'
+            : window.location.origin;
+    }
+
     function appendLog(message, level = 'info') {
         const entry = document.createElement('div');
         entry.className = `log-entry log-${level}`;
@@ -593,8 +601,7 @@
         const indicator = document.getElementById('signalrIndicator');
         const statusText = document.getElementById('signalrStatus');
 
-        // API is on port 5000, web-admin on 5002
-        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://' + window.location.hostname + ':5000';
+        const apiBaseUrl = getApiBaseUrl();
         connection = new signalR.HubConnectionBuilder()
             .withUrl(apiBaseUrl + "/hubs/live")
             .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
@@ -712,7 +719,7 @@
 
     async function loadScalePrediction() {
         const horizonMinutes = parseInt(document.getElementById('scaleHorizon').value);
-        const apiBaseUrl = window.location.protocol + '//' + window.location.hostname + ':5000';
+        const apiBaseUrl = getApiBaseUrl();
 
         try {
             const response = await fetch(`${apiBaseUrl}/api/scale/predict`, {
@@ -826,7 +833,7 @@
     }
 
     async function fetchCurrentLoadMetrics() {
-        const apiBaseUrl = window.location.protocol + '//' + window.location.hostname + ':5000';
+        const apiBaseUrl = getApiBaseUrl();
         try {
             const response = await fetch(`${apiBaseUrl}/api/scale/current`);
             if (response.ok) {

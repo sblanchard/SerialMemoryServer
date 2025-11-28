@@ -20,18 +20,24 @@ public sealed class AcsEmailService : IEmailService
     {
         _logger = logger;
 
-        // Load from config or environment variables
+        // Load from config or environment variables (check multiple config key patterns)
         var connectionString = configuration["Email:AcsConnectionString"]
+            ?? configuration["AzureCommunicationServices:ConnectionString"]
+            ?? configuration["AzureCommunicationServices__ConnectionString"]
             ?? Environment.GetEnvironmentVariable("SERIALMEMORY_ACS_CONNECTION")
             ?? throw new InvalidOperationException(
                 "Azure Communication Services connection string not configured. " +
-                "Set Email:AcsConnectionString in appsettings.json or SERIALMEMORY_ACS_CONNECTION environment variable.");
+                "Set Email:AcsConnectionString or AzureCommunicationServices:ConnectionString in appsettings.json " +
+                "or SERIALMEMORY_ACS_CONNECTION environment variable.");
 
         _senderAddress = configuration["Email:SenderAddress"]
+            ?? configuration["AzureCommunicationServices:SenderAddress"]
+            ?? configuration["AzureCommunicationServices__SenderAddress"]
             ?? Environment.GetEnvironmentVariable("SERIALMEMORY_EMAIL_SENDER")
             ?? throw new InvalidOperationException(
                 "Email sender address not configured. " +
-                "Set Email:SenderAddress in appsettings.json or SERIALMEMORY_EMAIL_SENDER environment variable.");
+                "Set Email:SenderAddress or AzureCommunicationServices:SenderAddress in appsettings.json " +
+                "or SERIALMEMORY_EMAIL_SENDER environment variable.");
 
         _senderDisplayName = configuration["Email:SenderDisplayName"]
             ?? Environment.GetEnvironmentVariable("SERIALMEMORY_EMAIL_NAME")
