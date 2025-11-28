@@ -502,22 +502,13 @@ public static class UsageTrackingExtensions
 /// <summary>
 /// Factory for creating tenant-scoped usage services.
 /// </summary>
-public sealed class UsageServiceFactory : IUsageServiceFactory
+public sealed class UsageServiceFactory(string connectionString, ILoggerFactory loggerFactory) : IUsageServiceFactory
 {
-    private readonly string _connectionString;
-    private readonly ILoggerFactory _loggerFactory;
-
-    public UsageServiceFactory(string connectionString, ILoggerFactory loggerFactory)
-    {
-        _connectionString = connectionString;
-        _loggerFactory = loggerFactory;
-    }
-
     public IUsageService CreateForTenant(string tenantId, string workspaceId)
     {
         return new UsageService(
-            _connectionString,
-            _loggerFactory.CreateLogger<UsageService>(),
+            connectionString,
+            loggerFactory.CreateLogger<UsageService>(),
             tenantId,
             workspaceId);
     }

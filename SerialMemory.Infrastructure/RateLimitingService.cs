@@ -291,16 +291,10 @@ public sealed class RateLimitingService : IRateLimitingService
     /// <summary>
     /// Sliding window counter using circular buffer.
     /// </summary>
-    private sealed class SlidingWindowCounter
+    private sealed class SlidingWindowCounter(TimeSpan windowSize)
     {
-        private readonly TimeSpan _windowSize;
         private readonly ConcurrentQueue<(DateTimeOffset time, int count)> _entries = new();
         private int _totalCount;
-
-        public SlidingWindowCounter(TimeSpan windowSize)
-        {
-            _windowSize = windowSize;
-        }
 
         public int GetCount()
         {
@@ -321,7 +315,7 @@ public sealed class RateLimitingService : IRateLimitingService
 
             if (_entries.TryPeek(out var oldest))
             {
-                var availableAt = oldest.time.Add(_windowSize);
+                var availableAt = oldest.time.Add(windowSize);
                 var remaining = availableAt - DateTimeOffset.UtcNow;
                 return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
             }
@@ -331,7 +325,7 @@ public sealed class RateLimitingService : IRateLimitingService
 
         private void CleanOldEntries()
         {
-            var cutoff = DateTimeOffset.UtcNow - _windowSize;
+            var cutoff = DateTimeOffset.UtcNow - windowSize;
 
             while (_entries.TryPeek(out var oldest) && oldest.time < cutoff)
             {

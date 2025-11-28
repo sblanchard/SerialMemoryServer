@@ -11,17 +11,9 @@ namespace SerialMemory.Infrastructure;
 /// Privacy-safe audit service. NEVER stores user content.
 /// Only stores: hashes, timestamps, counts, tenant IDs.
 /// </summary>
-public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
+public sealed class PostgresPrivacyAuditService(string connectionString, ILogger<PostgresPrivacyAuditService> logger)
+    : IPrivacyAuditService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<PostgresPrivacyAuditService> _logger;
-
-    public PostgresPrivacyAuditService(string connectionString, ILogger<PostgresPrivacyAuditService> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
-
     public async Task<PrivacyAuditEntry> LogMemoryOperationAsync(
         string tenantId,
         PrivacyAuditOperation operation,
@@ -30,7 +22,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         int? contentLength = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var row = await conn.QueryFirstAsync<AuditRow>("""
@@ -55,7 +47,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
                 ContentLength = contentLength
             });
 
-        _logger.LogDebug("Privacy audit: {Operation} on memory {MemoryId} for tenant {TenantId}",
+        logger.LogDebug("Privacy audit: {Operation} on memory {MemoryId} for tenant {TenantId}",
             operation, memoryId, tenantId);
 
         return MapToEntry(row);
@@ -68,7 +60,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         string? queryHash = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var row = await conn.QueryFirstAsync<AuditRow>("""
@@ -92,7 +84,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
                 ItemCount = itemCount
             });
 
-        _logger.LogDebug("Privacy audit: {Operation} accessed {Count} items for tenant {TenantId}",
+        logger.LogDebug("Privacy audit: {Operation} accessed {Count} items for tenant {TenantId}",
             operation, itemCount, tenantId);
 
         return MapToEntry(row);
@@ -106,7 +98,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         int failCount,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var row = await conn.QueryFirstAsync<AuditRow>("""
@@ -131,7 +123,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
                 FailCount = failCount
             });
 
-        _logger.LogDebug("Privacy audit: {Operation} batch {Total} items ({Success} success, {Fail} fail) for tenant {TenantId}",
+        logger.LogDebug("Privacy audit: {Operation} batch {Total} items ({Success} success, {Fail} fail) for tenant {TenantId}",
             operation, itemCount, successCount, failCount, tenantId);
 
         return MapToEntry(row);
@@ -144,7 +136,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var rows = await conn.QueryAsync<AuditRow>("""
@@ -173,7 +165,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         DateTimeOffset? to = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var fromDate = from ?? DateTimeOffset.UtcNow.AddDays(-30);
@@ -246,7 +238,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         DateTimeOffset? to = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var fromDate = from ?? DateTimeOffset.MinValue;
@@ -298,7 +290,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
             hashes.first_hash ?? "", hashes.last_hash ?? "",
             merkleRoot ?? "");
 
-        _logger.LogInformation("Privacy audit verification for tenant {TenantId}: {Valid}, {Total} entries",
+        logger.LogInformation("Privacy audit verification for tenant {TenantId}: {Valid}, {Total} entries",
             tenantId, result.is_valid, result.total_entries);
 
         return new PrivacyAuditProof
@@ -326,7 +318,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
         var proof = await VerifyIntegrityAsync(tenantId, from, to, ct);
 
         // Store proof for external verification
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         await conn.ExecuteAsync("""
@@ -357,7 +349,7 @@ public sealed class PostgresPrivacyAuditService : IPrivacyAuditService
                 proof.ProofSignature
             });
 
-        _logger.LogInformation("Generated privacy audit proof {ProofId} for tenant {TenantId}: {From} to {To}",
+        logger.LogInformation("Generated privacy audit proof {ProofId} for tenant {TenantId}: {From} to {To}",
             proof.ProofId, tenantId, from, to);
 
         return proof;

@@ -41,6 +41,9 @@ services:
       - ./ops/usage_metering_schema.sql:/docker-entrypoint-initdb.d/05-usage-metering.sql:ro
       - ./ops/admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin-actions.sql:ro
       - ./ops/job_supervision_schema.sql:/docker-entrypoint-initdb.d/07-job-supervision.sql:ro
+      - ./ops/telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
+      - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
+      - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d contextdb"]
@@ -210,6 +213,25 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
+
+  # ---------------------------------------------------------------------------
+  # MCP Client (Docker-first STDIO proxy for Claude Desktop)
+  # ---------------------------------------------------------------------------
+  mcp-client:
+    build:
+      context: SerialMemory.McpClient
+      dockerfile: Dockerfile
+    container_name: serialmemory-mcp-client
+    image: serialcoder/serialmemory-mcp:latest
+    environment:
+      - MCP_SERVER_URL=http://api:8080
+      - MCP_API_KEY=${MCP_API_KEY:-}
+      - MCP_MODE=developer
+    stdin_open: true
+    tty: true
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:

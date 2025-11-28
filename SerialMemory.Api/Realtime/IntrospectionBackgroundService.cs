@@ -402,7 +402,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
             SELECT
                 COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 minute') AS mutations_last_min,
                 COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 hour') AS mutations_last_hour,
-                MAX(id) AS last_id
+                (SELECT id FROM graph_events ORDER BY created_utc DESC LIMIT 1) AS last_id
             FROM graph_events
             WHERE created_utc > NOW() - INTERVAL '1 hour';
 

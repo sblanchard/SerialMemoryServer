@@ -31,25 +31,9 @@ VALUES
     ('11111111-1111-1111-1111-111111111111', 'demo-member', 'member')
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
 
--- Insert tenant plans for usage metering
-INSERT INTO tenant_plans (id, name, credits_per_cycle, rate_limit_rpm, features)
-VALUES
-    ('plan-free', 'Free', 1000, 60, '{"search": true, "ingest": true, "export": false}'::jsonb),
-    ('plan-pro', 'Pro', 50000, 300, '{"search": true, "ingest": true, "export": true, "admin": true}'::jsonb),
-    ('plan-enterprise', 'Enterprise', 1000000, 1000, '{"search": true, "ingest": true, "export": true, "admin": true, "sso": true}'::jsonb),
-    ('plan-self-hosted', 'Self-Hosted', 999999999, 9999, '{"search": true, "ingest": true, "export": true, "admin": true}'::jsonb)
-ON CONFLICT (id) DO NOTHING;
+-- Note: tenant_plans are already seeded in 05-usage-metering.sql
 
--- Insert tenant subscriptions
-INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_cycle_start, current_cycle_end)
-VALUES
-    ('00000000-0000-0000-0000-000000000000', 'plan-self-hosted', 'active',
-     DATE_TRUNC('month', NOW()), DATE_TRUNC('month', NOW()) + INTERVAL '1 month'),
-    ('11111111-1111-1111-1111-111111111111', 'plan-pro', 'active',
-     DATE_TRUNC('month', NOW()), DATE_TRUNC('month', NOW()) + INTERVAL '1 month')
-ON CONFLICT (tenant_id) DO UPDATE SET
-    plan_id = EXCLUDED.plan_id,
-    status = EXCLUDED.status;
+-- Note: tenant_subscriptions table is in v2 schema, not initialized here
 
 -- Insert some demo memories for testing (self-hosted tenant)
 -- Note: These won't have embeddings - they need to be re-embedded via the API

@@ -433,32 +433,19 @@ public sealed class LocalEncryptionService(
 /// <summary>
 /// Secure memory manager that integrates encryption with the memory store.
 /// </summary>
-public sealed class SecureMemoryManager
+public sealed class SecureMemoryManager(
+    ILocalEncryption encryption,
+    IKnowledgeGraphStore store,
+    ILogger<SecureMemoryManager> logger,
+    string defaultKeyName = "memory-encryption-key")
 {
-    private readonly ILocalEncryption _encryption;
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<SecureMemoryManager> _logger;
-    private readonly string _defaultKeyName;
-
-    public SecureMemoryManager(
-        ILocalEncryption encryption,
-        IKnowledgeGraphStore store,
-        ILogger<SecureMemoryManager> logger,
-        string defaultKeyName = "memory-encryption-key")
-    {
-        _encryption = encryption;
-        _store = store;
-        _logger = logger;
-        _defaultKeyName = defaultKeyName;
-    }
-
     public async Task<Guid> IngestSecureMemoryAsync(
         string content,
         string? source = null,
         CancellationToken cancellationToken = default)
     {
         // Ensure encryption key exists
-        var key = await _encryption.GetActiveKeyAsync(_defaultKeyName, cancellationToken) ?? await _encryption.CreateKeyAsync(_defaultKeyName, cancellationToken);
+        var key = await encryption.GetActiveKeyAsync(defaultKeyName, cancellationToken) ?? await encryption.CreateKeyAsync(defaultKeyName, cancellationToken);
 
         // Create the memory first
         var memory = new Core.Models.Memory
@@ -470,12 +457,12 @@ public sealed class SecureMemoryManager
             UpdatedAt = DateTime.UtcNow
         };
 
-        var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
+        var memoryId = await store.CreateMemoryAsync(memory, cancellationToken);
 
         // Store encrypted version
-        await _encryption.StoreEncryptedMemoryAsync(memoryId, content, key.KeyId, cancellationToken);
+        await encryption.StoreEncryptedMemoryAsync(memoryId, content, key.KeyId, cancellationToken);
 
-        _logger.LogDebug("Ingested secure memory {MemoryId} with encryption key {KeyId}", memoryId, key.KeyId);
+        logger.LogDebug("Ingested secure memory {MemoryId} with encryption key {KeyId}", memoryId, key.KeyId);
 
         return memoryId;
     }
@@ -487,12 +474,12 @@ public sealed class SecureMemoryManager
         // Try encrypted store first
         try
         {
-            return await _encryption.RetrieveDecryptedMemoryAsync(memoryId, cancellationToken);
+            return await encryption.RetrieveDecryptedMemoryAsync(memoryId, cancellationToken);
         }
         catch (InvalidOperationException)
         {
             // Fall back to unencrypted store
-            var memory = await _store.GetMemoryByIdAsync(memoryId, cancellationToken);
+            var memory = await store.GetMemoryByIdAsync(memoryId, cancellationToken);
             return memory == null ? throw new InvalidOperationException($"Memory {memoryId} not found") : memory.Content;
         }
     }

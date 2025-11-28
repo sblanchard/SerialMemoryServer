@@ -44,6 +44,11 @@ public interface IMindHealthService
     /// </summary>
     Task FlagAsHallucinationAsync(Guid memoryId, string reason, float severity, CancellationToken ct = default);
 
+    /// <summary>
+    /// Get recent unresolved hallucination events for display.
+    /// </summary>
+    Task<IReadOnlyList<HallucinationEvent>> GetRecentHallucinationEventsAsync(int limit = 20, CancellationToken ct = default);
+
     // ==========================================
     // CONTRADICTION TRACKING
     // ==========================================

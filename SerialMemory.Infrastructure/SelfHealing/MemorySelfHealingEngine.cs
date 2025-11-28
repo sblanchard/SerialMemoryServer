@@ -14,7 +14,7 @@ public sealed class MemorySelfHealingEngine(
     ILogger<MemorySelfHealingEngine> logger)
     : IMemorySelfHealing
 {
-    private readonly string _workerId = $"healer-{Environment.MachineName}-{Process.GetCurrentProcess().Id}";
+    private readonly string _workerId = $"healer-{Environment.MachineName}-{Environment.ProcessId}";
 
     public async Task<SelfHealingResult> RunCycleAsync(
         SelfHealingOptions options,
@@ -23,10 +23,10 @@ public sealed class MemorySelfHealingEngine(
         var stopwatch = Stopwatch.StartNew();
         var operations = new List<SelfHealingOperation>();
 
-        int contradictionsDetected = 0;
-        int memoriesMerged = 0;
-        int memoriesDecayed = 0;
-        int memoriesReinforced = 0;
+        var contradictionsDetected = 0;
+        var memoriesMerged = 0;
+        var memoriesDecayed = 0;
+        var memoriesReinforced = 0;
 
         try
         {
@@ -236,7 +236,7 @@ public sealed class MemorySelfHealingEngine(
         return contradictions;
     }
 
-    private string? DetectContradictionType(string contentA, string contentB)
+    private static string? DetectContradictionType(string contentA, string contentB)
     {
         var lowerA = contentA.ToLowerInvariant();
         var lowerB = contentB.ToLowerInvariant();
@@ -557,7 +557,7 @@ public sealed class MemorySelfHealingEngine(
             try
             {
                 var result = await MergeSimilarMemoriesAsync(
-                    new[] { idA, idB },
+                    [idA, idB],
                     similarityThreshold,
                     cancellationToken);
 
@@ -723,9 +723,9 @@ public sealed class MemorySelfHealingEngine(
         var totalSimilarity = 0f;
         var count = 0;
 
-        for (int i = 0; i < embeddings.Count; i++)
+        for (var i = 0; i < embeddings.Count; i++)
         {
-            for (int j = i + 1; j < embeddings.Count; j++)
+            for (var j = i + 1; j < embeddings.Count; j++)
             {
                 totalSimilarity += CosineSimilarity(embeddings[i], embeddings[j]);
                 count++;
@@ -741,7 +741,7 @@ public sealed class MemorySelfHealingEngine(
         var normA = 0f;
         var normB = 0f;
 
-        for (int i = 0; i < a.Length; i++)
+        for (var i = 0; i < a.Length; i++)
         {
             dot += a[i] * b[i];
             normA += a[i] * a[i];

@@ -118,8 +118,8 @@ public sealed class MindModel : PageModel
             var alertsTask = client.GetFromJsonAsync<AlertsResponse>("/api/mind/alerts?limit=20");
             var trendTask = client.GetFromJsonAsync<TrendResponse>("/api/mind/trend?days=30");
             var driftTask = client.GetFromJsonAsync<DriftResponse>("/api/mind/drift");
-            var hallucinationsTask = client.GetFromJsonAsync<HallucinationsResponse>("/api/mind/hallucinations?limit=20");
-            var contradictionsTask = client.GetFromJsonAsync<ContradictionsResponse>("/api/mind/contradictions?limit=20");
+            var hallucinationsTask = client.GetFromJsonAsync<HallucinationsListResponse>("/api/mind/hallucinations/list?limit=20");
+            var contradictionsTask = client.GetFromJsonAsync<ContradictionsListResponse>("/api/mind/contradictions/unresolved?limit=20");
             var statsTask = client.GetFromJsonAsync<MindStats>("/api/mind/stats");
 
             await Task.WhenAll(healthTask, alertsTask, trendTask, driftTask, hallucinationsTask, contradictionsTask, statsTask);
@@ -128,8 +128,35 @@ public sealed class MindModel : PageModel
             ActiveAlerts = (await alertsTask)?.Items ?? [];
             DailyTrend = (await trendTask)?.Points ?? [];
             DriftCalibration = (await driftTask)?.Points ?? [];
-            Hallucinations = (await hallucinationsTask)?.Items ?? [];
-            Contradictions = (await contradictionsTask)?.Items ?? [];
+
+            // Map hallucination events to display format
+            var hallucinationEvents = (await hallucinationsTask)?.Items ?? [];
+            Hallucinations = hallucinationEvents.Select(h => new HallucinationFlag
+            {
+                MemoryId = h.MemoryId ?? Guid.Empty,
+                Content = h.Description,
+                HallucinationScore = h.Severity,
+                Reason = h.Evidence,
+                FlaggedAt = h.DetectedAt,
+                IsConfirmed = false,
+                IsDismissed = h.Resolved
+            }).ToList();
+
+            // Map contradiction events to display format
+            var contradictionEvents = await contradictionsTask ?? [];
+            Contradictions = contradictionEvents.Select(c => new ContradictionFlag
+            {
+                Id = c.Id,
+                MemoryAId = c.MemoryA,
+                MemoryBId = c.MemoryB,
+                MemoryAContent = c.Description,
+                MemoryBContent = "",
+                SimilarityScore = c.SimilarityScore,
+                Explanation = c.Description,
+                DetectedAt = c.DetectedAt,
+                IsResolved = c.Status == "Resolved"
+            }).ToList();
+
             Stats = await statsTask;
         }
         catch (HttpRequestException ex)
@@ -141,8 +168,38 @@ public sealed class MindModel : PageModel
     public sealed class AlertsResponse { public IReadOnlyList<AlertItem>? Items { get; init; } }
     public sealed class TrendResponse { public IReadOnlyList<DailyTrendPoint>? Points { get; init; } }
     public sealed class DriftResponse { public IReadOnlyList<DriftCalibrationPoint>? Points { get; init; } }
-    public sealed class HallucinationsResponse { public IReadOnlyList<HallucinationFlag>? Items { get; init; } }
-    public sealed class ContradictionsResponse { public IReadOnlyList<ContradictionFlag>? Items { get; init; } }
+
+    // API response types that match the actual API structure
+    public sealed class HallucinationsListResponse { public IReadOnlyList<HallucinationEventDto>? Items { get; init; } }
+    public sealed class ContradictionsListResponse : List<ContradictionEventDto> { }
+
+    public sealed class HallucinationEventDto
+    {
+        public Guid Id { get; init; }
+        public Guid? MemoryId { get; init; }
+        public string Type { get; init; } = "";
+        public float Severity { get; init; }
+        public string Description { get; init; } = "";
+        public string? Evidence { get; init; }
+        public string? GroundTruth { get; init; }
+        public DateTimeOffset DetectedAt { get; init; }
+        public string Source { get; init; } = "";
+        public bool Resolved { get; init; }
+        public string? Resolution { get; init; }
+    }
+
+    public sealed class ContradictionEventDto
+    {
+        public Guid Id { get; init; }
+        public Guid MemoryA { get; init; }
+        public Guid MemoryB { get; init; }
+        public string Type { get; init; } = "";
+        public float Severity { get; init; }
+        public string Description { get; init; } = "";
+        public float SimilarityScore { get; init; }
+        public DateTimeOffset DetectedAt { get; init; }
+        public string Status { get; init; } = "";
+    }
 
     public sealed class MindHealthScore
     {

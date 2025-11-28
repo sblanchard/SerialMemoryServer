@@ -44,6 +44,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Examples.DotNe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.Web", "SerialMemory.Web\SerialMemory.Web.csproj", "{7F86F841-7E0D-494C-9A73-0199FDAAB2F8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SerialMemory.McpClient", "SerialMemory.McpClient\SerialMemory.McpClient.csproj", "{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -258,6 +260,18 @@ Global
 		{7F86F841-7E0D-494C-9A73-0199FDAAB2F8}.Release|x64.Build.0 = Release|Any CPU
 		{7F86F841-7E0D-494C-9A73-0199FDAAB2F8}.Release|x86.ActiveCfg = Release|Any CPU
 		{7F86F841-7E0D-494C-9A73-0199FDAAB2F8}.Release|x86.Build.0 = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|x64.Build.0 = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Debug|x86.Build.0 = Debug|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|x64.ActiveCfg = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|x64.Build.0 = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|x86.ActiveCfg = Release|Any CPU
+		{1C271FD5-8D13-4047-91B0-0560AFFAFBFF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

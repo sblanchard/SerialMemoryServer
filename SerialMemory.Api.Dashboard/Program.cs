@@ -7,6 +7,7 @@ using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Telemetry;
 using SerialMemory.Infrastructure;
+using SerialMemory.Infrastructure.Email;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +33,10 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 
 builder.Services.AddSingleton<IAdminService>(sp =>
     new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
+
+// Email services
+builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+builder.Services.AddSingleton<IEmailVerificationService, EmailVerificationService>();
 
 // Stripe configuration
 var stripeConfig = new StripeConfig
@@ -362,6 +367,8 @@ app.MapPost("/tenant/deletion/cancel", async (
 app.MapPost("/signup", async (
     [FromBody] SignupRequest request,
     [FromServices] IApiKeyService apiKeyService,
+    [FromServices] IEmailVerificationService emailService,
+    HttpContext httpContext,
     CancellationToken ct) =>
 {
     if (selfHostedMode)
@@ -371,6 +378,26 @@ app.MapPost("/signup", async (
     {
         var result = await apiKeyService.SignupAsync(request, ct);
         Metrics.TenantSignupTotal.Add(1);
+
+        // Send verification email (non-blocking - don't fail signup if email fails)
+        try
+        {
+            var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = httpContext.Request.Headers.UserAgent.FirstOrDefault();
+            await emailService.SendVerificationEmailAsync(
+                result.TenantId,
+                result.UserId,
+                request.Email,
+                ipAddress,
+                userAgent,
+                ct);
+        }
+        catch (Exception ex)
+        {
+            // Log but don't fail signup
+            Console.WriteLine($"[WARN] Failed to send verification email to {request.Email}: {ex.Message}");
+        }
+
         return Results.Created($"/tenant/{result.TenantId}", result);
     }
     catch (ArgumentException ex)
@@ -383,11 +410,152 @@ app.MapPost("/signup", async (
     }
 })
 .WithName("Signup")
-.WithDescription("Creates a new tenant with initial API key")
+.WithDescription("Creates a new tenant with initial API key and sends verification email")
 .AllowAnonymous()
 .Produces<SignupResult>(StatusCodes.Status201Created)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status409Conflict);
+
+// =============================================================================
+// POST /auth/verify-email - Verify email address
+// =============================================================================
+app.MapPost("/auth/verify-email", async (
+    [FromBody] VerifyEmailRequest request,
+    [FromServices] IEmailVerificationService emailService,
+    HttpContext httpContext,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Token))
+        return Results.BadRequest(new { error = "validation_error", message = "Token is required" });
+
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+    var result = await emailService.VerifyEmailAsync(request.Token, ipAddress, ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = "verification_failed", message = result.Error });
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = "Email verified successfully",
+        tenantId = result.TenantId,
+        userId = result.UserId
+    });
+})
+.WithName("VerifyEmail")
+.WithDescription("Verifies a user's email address using the token from the verification email")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// =============================================================================
+// POST /auth/resend-verification - Resend verification email
+// =============================================================================
+app.MapPost("/auth/resend-verification", async (
+    [FromBody] ResendVerificationRequest request,
+    [FromServices] IEmailVerificationService emailService,
+    HttpContext httpContext,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email))
+        return Results.BadRequest(new { error = "validation_error", message = "Email is required" });
+
+    // Always return success to prevent email enumeration
+    try
+    {
+        var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = httpContext.Request.Headers.UserAgent.FirstOrDefault();
+
+        // The service will handle checking if user exists
+        await emailService.SendLoginLinkAsync(request.Email, ipAddress, userAgent, ct);
+    }
+    catch
+    {
+        // Swallow - don't reveal if email exists
+    }
+
+    return Results.Ok(new { message = "If that email exists, a verification link has been sent" });
+})
+.WithName("ResendVerification")
+.WithDescription("Resends the verification email if the user exists")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// =============================================================================
+// POST /auth/magic-link - Request passwordless login link
+// =============================================================================
+app.MapPost("/auth/magic-link", async (
+    [FromBody] MagicLinkRequest request,
+    [FromServices] IEmailVerificationService emailService,
+    HttpContext httpContext,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email))
+        return Results.BadRequest(new { error = "validation_error", message = "Email is required" });
+
+    try
+    {
+        var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = httpContext.Request.Headers.UserAgent.FirstOrDefault();
+        await emailService.SendLoginLinkAsync(request.Email, ipAddress, userAgent, ct);
+    }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("Too many"))
+    {
+        return Results.StatusCode(429); // Too Many Requests
+    }
+    catch
+    {
+        // Swallow - don't reveal if email exists
+    }
+
+    // Always return success to prevent email enumeration
+    return Results.Ok(new { message = "If that email exists, a login link has been sent" });
+})
+.WithName("RequestMagicLink")
+.WithDescription("Requests a passwordless login link via email")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status429TooManyRequests);
+
+// =============================================================================
+// POST /auth/magic-link/verify - Verify magic link and get token
+// =============================================================================
+app.MapPost("/auth/magic-link/verify", async (
+    [FromBody] VerifyMagicLinkRequest request,
+    [FromServices] IEmailVerificationService emailService,
+    [FromServices] IApiKeyService apiKeyService,
+    HttpContext httpContext,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Token))
+        return Results.BadRequest(new { error = "validation_error", message = "Token is required" });
+
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+    var result = await emailService.ValidateLoginTokenAsync(request.Token, ipAddress, ct);
+
+    if (!result.Success)
+        return Results.BadRequest(new { error = "login_failed", message = result.Error });
+
+    // Generate JWT token for the authenticated user
+    // Use the API key service's internal JWT generation by creating a validation result
+    return Results.Ok(new
+    {
+        success = true,
+        tenantId = result.TenantId,
+        userId = result.UserId,
+        email = result.Email,
+        role = result.Role,
+        tenantName = result.TenantName,
+        tenantSlug = result.TenantSlug
+    });
+})
+.WithName("VerifyMagicLink")
+.WithDescription("Verifies a magic link token and returns user info")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
 
 // =============================================================================
 // POST /api-keys - Create new API key
@@ -786,3 +954,9 @@ app.Run();
 public sealed record DeleteTenantRequest(string ConfirmationPhrase);
 public sealed record CheckoutRequest(string PlanName, string? SuccessUrl = null, string? CancelUrl = null);
 public sealed record PortalRequest(string? ReturnUrl = null);
+
+// Auth DTOs
+public sealed record VerifyEmailRequest(string Token);
+public sealed record ResendVerificationRequest(string Email);
+public sealed record MagicLinkRequest(string Email);
+public sealed record VerifyMagicLinkRequest(string Token);

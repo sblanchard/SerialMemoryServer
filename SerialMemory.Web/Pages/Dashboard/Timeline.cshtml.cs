@@ -127,18 +127,55 @@ public sealed class TimelineModel : PageModel
         {
             var client = _httpClientFactory.CreateClient("Api");
 
-            var timelineTask = client.GetFromJsonAsync<TimelineResponse>("/api/timeline/global?limit=100");
-            var statsTask = client.GetFromJsonAsync<TimelineStats>("/api/timeline/stats");
+            // Use the correct API endpoints
+            var timelineResponse = await client.GetFromJsonAsync<GlobalTimelineResponse>("/api/memory/timeline?limit=100");
 
-            await Task.WhenAll(timelineTask, statsTask);
+            if (timelineResponse != null)
+            {
+                TimelineEntries = timelineResponse.Events?.Select(e => new TimelineEntry
+                {
+                    SequenceNumber = e.SequenceNumber,
+                    MemoryId = e.MemoryId,
+                    EventType = e.EventType ?? "Unknown",
+                    Summary = e.Summary,
+                    Timestamp = e.Timestamp,
+                    ActorId = e.ActorId,
+                    ConfidenceBefore = e.ConfidenceBefore,
+                    ConfidenceAfter = e.ConfidenceAfter
+                }).ToList() ?? [];
 
-            TimelineEntries = (await timelineTask)?.Items ?? [];
-            Stats = await statsTask;
+                Stats = new TimelineStats
+                {
+                    TotalEvents = timelineResponse.TotalEvents,
+                    EventsToday = TimelineEntries.Count(e => e.Timestamp.Date == DateTimeOffset.UtcNow.Date),
+                    UniqueMemories = TimelineEntries.Select(e => e.MemoryId).Distinct().Count(),
+                    EarliestEvent = TimelineEntries.Count > 0 ? TimelineEntries.Min(e => e.Timestamp) : null,
+                    LatestEvent = TimelineEntries.Count > 0 ? TimelineEntries.Max(e => e.Timestamp) : null
+                };
+            }
         }
         catch (HttpRequestException ex)
         {
             ErrorMessage = $"Failed to load timeline: {ex.Message}";
         }
+    }
+
+    public sealed class GlobalTimelineResponse
+    {
+        public IReadOnlyList<TimelineEvent>? Events { get; init; }
+        public long TotalEvents { get; init; }
+    }
+
+    public sealed class TimelineEvent
+    {
+        public long SequenceNumber { get; init; }
+        public Guid MemoryId { get; init; }
+        public string? EventType { get; init; }
+        public string? Summary { get; init; }
+        public DateTimeOffset Timestamp { get; init; }
+        public string? ActorId { get; init; }
+        public double? ConfidenceBefore { get; init; }
+        public double? ConfidenceAfter { get; init; }
     }
 
     private async Task LoadMemoryTimelineAsync(Guid memoryId, DateTimeOffset? at, long? seq)
@@ -147,30 +184,110 @@ public sealed class TimelineModel : PageModel
         {
             var client = _httpClientFactory.CreateClient("Api");
 
-            var timelineTask = client.GetFromJsonAsync<TimelineResponse>($"/api/timeline/memory/{memoryId}?limit=100");
-            var driftTask = client.GetFromJsonAsync<ConfidenceDriftResponse>($"/api/timeline/memory/{memoryId}/confidence-drift");
-            var currentTask = client.GetFromJsonAsync<MemorySnapshot>($"/api/timeline/memory/{memoryId}/current");
+            // Use correct API endpoints
+            var timelineTask = client.GetFromJsonAsync<MemoryTimelineResponse>($"/api/memory/{memoryId}/timeline");
+            var driftTask = client.GetFromJsonAsync<ConfidenceDriftResponse>($"/api/memory/{memoryId}/confidence-drift");
 
-            await Task.WhenAll(timelineTask, driftTask, currentTask);
+            await Task.WhenAll(timelineTask, driftTask);
 
-            TimelineEntries = (await timelineTask)?.Items ?? [];
-            ConfidenceDrift = (await driftTask)?.Points ?? [];
-            CurrentSnapshot = await currentTask;
+            var timelineResponse = await timelineTask;
+            if (timelineResponse != null)
+            {
+                TimelineEntries = timelineResponse.Events?.Select(e => new TimelineEntry
+                {
+                    SequenceNumber = e.SequenceNumber,
+                    MemoryId = memoryId,
+                    EventType = e.EventType ?? "Unknown",
+                    Summary = e.Summary,
+                    Timestamp = e.Timestamp,
+                    ActorId = e.ActorId,
+                    ConfidenceBefore = e.ConfidenceBefore,
+                    ConfidenceAfter = e.ConfidenceAfter
+                }).ToList() ?? [];
 
-            // Load historical snapshot if requested
+                // Set current snapshot from the timeline response
+                if (timelineResponse.CurrentState != null)
+                {
+                    CurrentSnapshot = new MemorySnapshot
+                    {
+                        MemoryId = memoryId,
+                        Content = timelineResponse.CurrentState.Content ?? "",
+                        Layer = timelineResponse.CurrentState.Layer ?? "L0_RAW",
+                        Confidence = timelineResponse.CurrentState.Confidence,
+                        IsActive = timelineResponse.CurrentState.IsActive,
+                        ContentHash = timelineResponse.CurrentState.ContentHash,
+                        SequenceNumber = timelineResponse.CurrentState.SequenceNumber,
+                        SnapshotAt = DateTimeOffset.UtcNow
+                    };
+                }
+            }
+
+            var driftResponse = await driftTask;
+            if (driftResponse?.Points != null)
+            {
+                ConfidenceDrift = driftResponse.Points.Select(p => new ConfidenceDriftPoint
+                {
+                    Timestamp = p.Timestamp,
+                    Confidence = p.Confidence,
+                    EventType = p.EventType
+                }).ToList();
+            }
+
+            // Historical snapshot - use replay endpoint if available
             if (seq.HasValue)
             {
-                HistoricalSnapshot = await client.GetFromJsonAsync<MemorySnapshot>($"/api/timeline/memory/{memoryId}/at-sequence/{seq}");
-            }
-            else if (at.HasValue)
-            {
-                HistoricalSnapshot = await client.GetFromJsonAsync<MemorySnapshot>($"/api/timeline/memory/{memoryId}/at-time?timestamp={at.Value:o}");
+                try
+                {
+                    var replayResponse = await client.GetFromJsonAsync<ReplayResponse>($"/api/memory/{memoryId}/replay?atSequence={seq}");
+                    if (replayResponse != null)
+                    {
+                        HistoricalSnapshot = new MemorySnapshot
+                        {
+                            MemoryId = memoryId,
+                            Content = replayResponse.Content ?? "",
+                            Layer = replayResponse.Layer ?? "L0_RAW",
+                            Confidence = replayResponse.Confidence,
+                            IsActive = replayResponse.IsActive,
+                            ContentHash = replayResponse.ContentHash,
+                            SequenceNumber = seq.Value,
+                            SnapshotAt = replayResponse.ReconstructedAt
+                        };
+                    }
+                }
+                catch { /* Historical snapshot is optional */ }
             }
         }
         catch (HttpRequestException ex)
         {
             ErrorMessage = $"Failed to load memory timeline: {ex.Message}";
         }
+    }
+
+    public sealed class MemoryTimelineResponse
+    {
+        public Guid MemoryId { get; init; }
+        public IReadOnlyList<TimelineEvent>? Events { get; init; }
+        public MemoryCurrentState? CurrentState { get; init; }
+    }
+
+    public sealed class MemoryCurrentState
+    {
+        public string? Content { get; init; }
+        public string? Layer { get; init; }
+        public double Confidence { get; init; }
+        public bool IsActive { get; init; }
+        public string? ContentHash { get; init; }
+        public long SequenceNumber { get; init; }
+    }
+
+    public sealed class ReplayResponse
+    {
+        public string? Content { get; init; }
+        public string? Layer { get; init; }
+        public double Confidence { get; init; }
+        public bool IsActive { get; init; }
+        public string? ContentHash { get; init; }
+        public DateTimeOffset ReconstructedAt { get; init; }
     }
 
     public sealed class TimelineResponse { public IReadOnlyList<TimelineEntry>? Items { get; init; } }

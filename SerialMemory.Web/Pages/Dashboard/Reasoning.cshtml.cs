@@ -33,14 +33,19 @@ public sealed class ReasoningModel : PageModel
     public IReadOnlyList<ReasoningInsight> Insights { get; set; } = [];
     public IReadOnlyList<string> Projects { get; set; } = [];
     public IReadOnlyList<RecentMemory> RecentMemories { get; set; } = [];
+    public IReadOnlyList<ReasoningRun> ReasoningRuns { get; set; } = [];
     public bool IsLoading { get; set; }
     public string? ErrorMessage { get; set; }
     public bool IsSampleData { get; set; }
+
+    [BindProperty(SupportsGet = true)]
+    public Guid? SelectedRunId { get; set; }
 
     public async Task OnGetAsync()
     {
         await LoadProjectsAsync();
         await LoadRecentMemoriesAsync();
+        await LoadReasoningRunsAsync();
 
         if (!string.IsNullOrEmpty(Project) || MemoryId.HasValue)
         {
@@ -49,6 +54,24 @@ public sealed class ReasoningModel : PageModel
         else
         {
             LoadSampleInsights();
+        }
+    }
+
+    private async Task LoadReasoningRunsAsync()
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("Api");
+            var response = await client.GetAsync("/api/reasoning/runs?limit=20");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ReasoningRunsResponse>();
+                ReasoningRuns = result?.Runs ?? [];
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Runs list not critical, just leave empty
         }
     }
 
@@ -373,5 +396,22 @@ public sealed class ReasoningModel : PageModel
         public string? CodeSnippet { get; init; }
         public float Confidence { get; init; }
         public string? Recommendation { get; init; }
+    }
+
+    // Reasoning Runs DTOs
+    public sealed class ReasoningRun
+    {
+        public Guid Id { get; init; }
+        public string Scope { get; init; } = "";
+        public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
+        public int? DurationMs { get; init; }
+        public int StepCount { get; init; }
+        public string Status { get; init; } = "";
+    }
+
+    private sealed class ReasoningRunsResponse
+    {
+        public IReadOnlyList<ReasoningRun> Runs { get; init; } = [];
     }
 }
