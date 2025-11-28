@@ -7,12 +7,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
-using SerialMemory.Core.Auth;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
-using TenantContext = SerialMemory.Core.Services.TenantContext;
 using SerialMemory.ML;
 using SerialMemory.Mcp.Tools;
 using SerialMemory.EventSourcing.Store;
@@ -88,7 +86,7 @@ DebugFileLogger.Log("MCP", "--- End Environment Variables ---");
 
 #region Service Initialization
 
-logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
+logger.LogInformation("Initializing SerialMemory MCP Server");
 logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
 
 // Authenticate with API key to get tenant ID
@@ -190,8 +188,7 @@ await using var stdout = Console.OpenStandardOutput();
 using var reader = new StreamReader(stdin);
 await using var writer = new StreamWriter(stdout) { AutoFlush = true };
 
-string? line;
-while ((line = await reader.ReadLineAsync()) != null)
+while (await reader.ReadLineAsync() is { } line)
 {
     if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -248,7 +245,7 @@ object HandleInitialize()
         protocolVersion = "2024-11-05",
         serverInfo = new
         {
-            name = "serial-memory-server",
+            name = "serialmemory-server",
             version = "2.0.0"
         },
         capabilities = new
@@ -818,16 +815,16 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
 
 async Task<object> HandleMemoryAboutUser(JsonNode? arguments)
 {
-    var userId = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
+    var user = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
 
-    var persona = await kgService.GetUserPersonaAsync(userId);
+    var persona = await kgService.GetUserPersonaAsync(user);
 
     if (persona.Count == 0)
     {
-        return CreateTextResponse($"No persona information found for user: {userId}");
+        return CreateTextResponse($"No persona information found for user: {user}");
     }
 
-    var text = $"User Persona for {userId}:\n\n";
+    var text = $"User Persona for {user}:\n\n";
     foreach (var (attrType, attributes) in persona)
     {
         text += $"**{char.ToUpper(attrType[0]) + attrType[1..]}:**\n";
@@ -850,7 +847,7 @@ async Task<object> HandleInitialiseSession(JsonNode? arguments)
     var clientType = arguments?["client_type"]?.GetValue<string>();
 
     Dictionary<string, object>? metadata = null;
-    if (arguments?["metadata"] is JsonNode metadataNode)
+    if (arguments?["metadata"] is { } metadataNode)
     {
         metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(metadataNode.ToJsonString());
     }
@@ -862,15 +859,12 @@ async Task<object> HandleInitialiseSession(JsonNode? arguments)
 
 async Task<object> HandleEndSession()
 {
-    if (currentSessionId.HasValue)
-    {
-        await kgService.EndConversationSessionAsync(currentSessionId.Value);
-        var oldSession = currentSessionId;
-        currentSessionId = null;
-        return CreateTextResponse($"Conversation session ended: {oldSession}");
-    }
+    if (!currentSessionId.HasValue) return CreateTextResponse("No active conversation session to end.");
+    await kgService.EndConversationSessionAsync(currentSessionId.Value);
+    var oldSession = currentSessionId;
+    currentSessionId = null;
+    return CreateTextResponse($"Conversation session ended: {oldSession}");
 
-    return CreateTextResponse("No active conversation session to end.");
 }
 
 async Task<object> HandleMultiHopSearch(JsonNode? arguments)
@@ -976,9 +970,9 @@ async Task<object> HandleSetUserPersona(JsonNode? arguments)
         throw new ArgumentException($"attribute_type must be one of: {string.Join(", ", validTypes)}");
 
     var confidence = Math.Clamp(arguments?["confidence"]?.GetValue<float>() ?? 1.0f, 0f, 1f);
-    var userId = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
+    var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
 
-    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
+    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, user);
 
     return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
 }
@@ -1047,9 +1041,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             // Create relationships
             foreach (var rel in relationships)
             {
-                Guid sourceId, targetId;
-
-                if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
+                if (!entityIdMap.TryGetValue(rel.SourceEntity, out var sourceId))
                 {
                     sourceId = await store.CreateEntityAsync(new Entity
                     {
@@ -1064,7 +1056,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     totalEntities++;
                 }
 
-                if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+                if (!entityIdMap.TryGetValue(rel.TargetEntity, out var targetId))
                 {
                     targetId = await store.CreateEntityAsync(new Entity
                     {

@@ -9,17 +9,11 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL implementation of graph event storage
 /// </summary>
-public class PostgresGraphEventStore : IGraphEventStore
+public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 {
-    private readonly string _connectionString;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public PostgresGraphEventStore(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
-
-    private NpgsqlConnection CreateConnection() => new(_connectionString);
+    private NpgsqlConnection CreateConnection() => new(connectionString);
 
     public async Task<Guid> LogEventAsync(GraphEvent graphEvent, CancellationToken ct = default)
     {

@@ -275,19 +275,10 @@ public sealed class ContextBudgetOptimizer(
 /// <summary>
 /// Token-aware memory packer with advanced algorithms.
 /// </summary>
-public sealed class AdvancedContextPacker
+public sealed class AdvancedContextPacker(
+    IContextBudgetOptimizer budgetOptimizer,
+    ILogger<AdvancedContextPacker> logger)
 {
-    private readonly IContextBudgetOptimizer _budgetOptimizer;
-    private readonly ILogger<AdvancedContextPacker> _logger;
-
-    public AdvancedContextPacker(
-        IContextBudgetOptimizer budgetOptimizer,
-        ILogger<AdvancedContextPacker> logger)
-    {
-        _budgetOptimizer = budgetOptimizer;
-        _logger = logger;
-    }
-
     /// <summary>
     /// Packs memories using dynamic programming for optimal coverage.
     /// </summary>
@@ -296,7 +287,7 @@ public sealed class AdvancedContextPacker
         IEnumerable<MemoryCandidate> candidates,
         CancellationToken cancellationToken = default)
     {
-        var budget = await _budgetOptimizer.GetBudgetAsync(budgetId, cancellationToken);
+        var budget = await budgetOptimizer.GetBudgetAsync(budgetId, cancellationToken);
         if (budget == null)
         {
             throw new InvalidOperationException($"Budget {budgetId} not found");
@@ -314,8 +305,8 @@ public sealed class AdvancedContextPacker
         // For large inputs, use greedy approximation
         if (n > 1000 || capacity > 100000)
         {
-            _logger.LogDebug("Using greedy approximation for large input: {Count} candidates, {Capacity} capacity", n, capacity);
-            return await _budgetOptimizer.PackContextAsync(budgetId, candidates, cancellationToken);
+            logger.LogDebug("Using greedy approximation for large input: {Count} candidates, {Capacity} capacity", n, capacity);
+            return await budgetOptimizer.PackContextAsync(budgetId, candidates, cancellationToken);
         }
 
         // Dynamic programming 0/1 knapsack
@@ -385,7 +376,7 @@ public sealed class AdvancedContextPacker
         var capturedPriority = includedMemories.Sum(m => m.PriorityScore);
         var coverage = totalPriority > 0 ? capturedPriority / totalPriority : 1f;
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Optimal packing: {Included}/{Total} memories, {Tokens} tokens, {Coverage:P2} coverage",
             includedMemories.Count, n, totalTokens, coverage);
 
@@ -406,7 +397,7 @@ public sealed class AdvancedContextPacker
         TieredCandidates tieredCandidates,
         CancellationToken cancellationToken = default)
     {
-        var budget = await _budgetOptimizer.GetBudgetAsync(budgetId, cancellationToken);
+        var budget = await budgetOptimizer.GetBudgetAsync(budgetId, cancellationToken);
         if (budget == null)
         {
             throw new InvalidOperationException($"Budget {budgetId} not found");

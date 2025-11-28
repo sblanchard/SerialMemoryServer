@@ -496,7 +496,7 @@ public class EngineeringReasoningServiceTests
         // Assert
         result.EntitiesAnalyzed.Should().Be(3);
         result.RelationshipsAnalyzed.Should().Be(2);
-        result.Insights.Should().HaveCountGreaterOrEqualTo(2); // At least voltage mismatch and thermal risk
+        result.Insights.Should().HaveCountGreaterThanOrEqualTo(2); // At least voltage mismatch and thermal risk
         result.Insights.Should().BeInDescendingOrder(i => (int)i.Severity); // Sorted by severity
     }
 

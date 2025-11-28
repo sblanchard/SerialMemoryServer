@@ -1,3 +1,4 @@
+using Dapper;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Core.Operations;
@@ -6,6 +7,7 @@ using SerialMemory.Core.Models;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.Services;
+using SerialMemory.Infrastructure.Email;
 using SerialMemory.ML;
 using StackExchange.Redis;
 using SerialMemory.Api.Realtime;
@@ -16,6 +18,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using MassTransit;
+using Npgsql;
 using Metrics = SerialMemory.Core.Telemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -41,14 +44,15 @@ if (operationalConfig.HasActivePanicSwitch)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// CORS for web frontend
+// CORS for web frontend and SignalR
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true) // Allow all origins for SignalR
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials(); // Required for SignalR
     });
 });
 
@@ -106,6 +110,9 @@ builder.Services.AddSingleton<IUsageService>(sp =>
     new UsageService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<UsageService>(), "self", "default"));
 builder.Services.AddSingleton<IPlanService>(sp =>
     new PlanService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanService>()));
+
+// Email service (Azure Communication Services)
+builder.Services.AddSingleton<IEmailService, AcsEmailService>();
 
 // Tenant context and API key services
 var jwtSecret = builder.Configuration["JWT_SECRET"]
@@ -215,6 +222,46 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SerialMemory.Infra
 // Real-time introspection service - streams job/trace/security/graph state via SignalR
 builder.Services.AddHostedService<SerialMemory.Api.Realtime.IntrospectionBackgroundService>();
 
+// Self-healing memory engine - detection only, no auto-repair
+builder.Services.AddSingleton<IMemorySelfHealing>(sp =>
+{
+    var dataSourceBuilder = new NpgsqlDataSourceBuilder(pgConnectionString);
+    dataSourceBuilder.UseVector();
+    var dataSource = dataSourceBuilder.Build();
+    return new SerialMemory.Infrastructure.SelfHealing.MemorySelfHealingEngine(
+        dataSource,
+        sp.GetRequiredService<IEmbeddingService>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.MemorySelfHealingEngine>());
+});
+
+// ML-style anomaly detection service (register before SelfHealingWorker)
+builder.Services.AddSingleton<IAnomalyDetectionService>(sp =>
+    new SerialMemory.Infrastructure.SelfHealing.AnomalyDetectionService(
+        builder.Configuration,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.AnomalyDetectionService>()));
+
+// Healing recommendation engine (register before SelfHealingWorker)
+builder.Services.AddSingleton<IHealingRecommendationService>(sp =>
+    new SerialMemory.Infrastructure.SelfHealing.HealingRecommendationService(
+        sp.GetRequiredService<IAnomalyDetectionService>(),
+        sp.GetRequiredService<IMemorySelfHealing>(),
+        sp.GetRequiredService<IKnowledgeGraphStore>(),
+        builder.Configuration,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.HealingRecommendationService>()));
+
+// Self-healing worker with optional ML services
+builder.Services.AddSingleton<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>(sp =>
+    new SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker(
+        sp.GetRequiredService<IMemorySelfHealing>(),
+        builder.Configuration,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>(),
+        sp.GetService<IAnomalyDetectionService>(),
+        sp.GetService<IHealingRecommendationService>()));
+builder.Services.AddSingleton<ISelfHealingTrigger>(sp =>
+    sp.GetRequiredService<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>());
+builder.Services.AddHostedService(sp =>
+    sp.GetRequiredService<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>());
+
 // Shadow Memory Store - isolated memory for speculative reasoning
 builder.Services.AddSingleton<IShadowMemoryStore>(sp =>
     new PostgresShadowMemoryStore(
@@ -275,13 +322,30 @@ builder.Services.AddSingleton<IMindHealthService>(sp =>
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<PostgresMindHealthService>()));
 
+// Replay Engine - READ-ONLY forensic replay
+builder.Services.AddSingleton<IReplayService>(sp =>
+    new ReplayService(
+        pgConnectionString,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ReplayService>()));
+
+// Scale Prediction - advisory capacity recommendations
+builder.Services.AddSingleton<IScalePredictionService>(sp =>
+    new ScalePredictionService(
+        pgConnectionString,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ScalePredictionService>()));
+
+// Predictive Simulation - future state analysis
+builder.Services.AddSingleton<IPredictiveSimulationService>(sp =>
+    new PredictiveSimulationService(
+        pgConnectionString,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<PredictiveSimulationService>()));
+
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("SerialMemory.Api"))
     .WithMetrics(mb =>
     {
         mb.AddMeter(Metrics.MeterName);
         mb.AddPrometheusExporter();
-        mb.AddRuntimeInstrumentation();
         mb.AddProcessInstrumentation();
         mb.AddHttpClientInstrumentation();
         mb.AddAspNetCoreInstrumentation();
@@ -1771,6 +1835,272 @@ app.MapPost("/api/reasoning/run", async (
     });
 });
 
+// GET /api/reasoning/runs - List recent reasoning runs from agent_traces
+app.MapGet("/api/reasoning/runs", async (int? limit, IConfiguration config) =>
+{
+    var connStr = config.GetConnectionString("Postgres")
+        ?? $"Host={Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost"};" +
+           $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434"};" +
+           $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
+           $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
+           $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
+
+    await using var conn = new NpgsqlConnection(connStr);
+    await conn.OpenAsync();
+    var runs = await conn.QueryAsync<dynamic>(@"
+        SELECT
+            id,
+            trace_type as scope,
+            created_utc as started_at,
+            completed_utc as completed_at,
+            duration_ms,
+            step_count,
+            status,
+            metadata
+        FROM agent_traces
+        ORDER BY created_utc DESC
+        LIMIT @Limit", new { Limit = limit ?? 20 });
+
+    return Results.Ok(new
+    {
+        runs = runs.Select(r => new
+        {
+            id = r.id,
+            scope = r.scope ?? "reasoning",
+            startedAt = r.started_at,
+            completedAt = r.completed_at,
+            durationMs = r.duration_ms,
+            stepCount = r.step_count,
+            status = r.status
+        })
+    });
+});
+
+// GET /api/reasoning/run/{id} - Get specific run with steps and edges for DAG visualization
+app.MapGet("/api/reasoning/run/{runId:guid}", async (Guid runId, IConfiguration config) =>
+{
+    var connStr = config.GetConnectionString("Postgres")
+        ?? $"Host={Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost"};" +
+           $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434"};" +
+           $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
+           $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
+           $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
+
+    await using var conn = new NpgsqlConnection(connStr);
+    await conn.OpenAsync();
+
+    // Get the run
+    var run = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+        SELECT
+            id,
+            trace_type as scope,
+            created_utc as started_at,
+            completed_utc as completed_at,
+            duration_ms,
+            step_count,
+            status,
+            metadata
+        FROM agent_traces
+        WHERE id = @RunId", new { RunId = runId });
+
+    if (run == null)
+        return Results.NotFound(new { error = "Run not found" });
+
+    // Get the steps
+    var steps = await conn.QueryAsync<dynamic>(@"
+        SELECT
+            id,
+            step_number as index,
+            step_type as type,
+            timestamp_utc as timestamp,
+            duration_ms,
+            payload
+        FROM agent_trace_steps
+        WHERE trace_id = @RunId
+        ORDER BY step_number", new { RunId = runId });
+
+    // Build edges from parent IDs in payload
+    var stepsList = steps.ToList();
+    var edges = new List<object>();
+
+    foreach (var step in stepsList)
+    {
+        if (step.payload == null) continue;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(step.payload?.ToString() ?? "{}");
+            if (doc.RootElement.TryGetProperty("parentIds", out System.Text.Json.JsonElement parentIds) &&
+                parentIds.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var parentId in parentIds.EnumerateArray())
+                {
+                    edges.Add(new { from = parentId.GetString(), to = step.id.ToString() });
+                }
+            }
+        }
+        catch { /* Ignore malformed payload */ }
+    }
+
+    return Results.Ok(new
+    {
+        run = new
+        {
+            id = run.id,
+            scope = run.scope ?? "reasoning",
+            startedAt = run.started_at,
+            completedAt = run.completed_at,
+            durationMs = run.duration_ms,
+            stepCount = run.step_count,
+            status = run.status
+        },
+        steps = stepsList.Select(s => {
+            string summary = "";
+            string raw = s.payload?.ToString() ?? "{}";
+            try
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(raw);
+                if (payload != null && payload.TryGetValue("summary", out var summaryObj))
+                    summary = summaryObj?.ToString() ?? "";
+            }
+            catch { }
+
+            return new
+            {
+                id = s.id.ToString(),
+                index = s.index,
+                type = s.type,
+                summary = summary,
+                raw = raw,
+                timestamp = s.timestamp,
+                durationMs = s.duration_ms,
+                parentIds = GetParentIds(s.payload?.ToString())
+            };
+        }),
+        edges
+    });
+});
+
+// Helper function for extracting parent IDs
+static string[] GetParentIds(string? payloadJson)
+{
+    if (string.IsNullOrEmpty(payloadJson)) return [];
+    try
+    {
+        var payload = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(payloadJson);
+        if (payload != null && payload.TryGetValue("parentIds", out var parentIdsObj) && parentIdsObj is System.Text.Json.JsonElement parentIds)
+        {
+            return parentIds.EnumerateArray().Select(p => p.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToArray();
+        }
+    }
+    catch { }
+    return [];
+}
+
+// POST /api/reasoning/start - Start a new reasoning run with real-time progress
+app.MapPost("/api/reasoning/start", async (
+    ReasoningStartRequest request,
+    IConfiguration config,
+    ILiveEventEmitter liveEmitter,
+    IMultiModelReasoningService reasoningService) =>
+{
+    var connStr = config.GetConnectionString("Postgres")
+        ?? $"Host={Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost"};" +
+           $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434"};" +
+           $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
+           $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
+           $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
+
+    await using var conn = new NpgsqlConnection(connStr);
+    await conn.OpenAsync();
+
+    // Create new run in agent_traces
+    var runId = Guid.CreateVersion7();
+    await conn.ExecuteAsync(@"
+        INSERT INTO agent_traces (id, tenant_id, workspace_id, trace_type, status, metadata)
+        VALUES (@Id, 'self', 'default', @Scope, 'running', @Metadata::jsonb)",
+        new {
+            Id = runId,
+            Scope = request.Scope ?? "reasoning",
+            Metadata = System.Text.Json.JsonSerializer.Serialize(new {
+                project = request.Project,
+                memoryId = request.MemoryId
+            })
+        });
+
+    // Run reasoning in background
+    _ = Task.Run(async () =>
+    {
+        var stepNumber = 0;
+        try
+        {
+            // Add plan_start step
+            await AddTraceStep(connStr, runId, ++stepNumber, "plan_start",
+                new { summary = "Starting multi-model reasoning analysis" });
+            await liveEmitter.EmitReasoningProgressAsync(new ReasoningProgressEvent {
+                TraceId = runId,
+                StepNumber = stepNumber,
+                StepType = "plan_start",
+                Description = "Starting analysis"
+            });
+
+            // Run the actual reasoning
+            var result = await reasoningService.ReasonAsync(projectFilter: request.Project);
+
+            // Add completion step
+            await AddTraceStep(connStr, runId, ++stepNumber, "completion",
+                new { summary = $"Completed with {result.Insights.Count} insights", insightCount = result.Insights.Count });
+
+            // Mark run as completed
+            await using var completeConn = new NpgsqlConnection(connStr);
+            await completeConn.OpenAsync();
+            await completeConn.ExecuteAsync(@"
+                UPDATE agent_traces
+                SET status = 'completed', completed_utc = NOW(), duration_ms = @DurationMs, step_count = @StepCount
+                WHERE id = @Id",
+                new { Id = runId, DurationMs = result.TotalDurationMs, StepCount = stepNumber });
+
+            await liveEmitter.EmitReasoningResultAsync(new ReasoningResultEvent {
+                TraceId = runId,
+                Status = "completed",
+                TotalSteps = stepNumber,
+                TotalDurationMs = result.TotalDurationMs
+            });
+        }
+        catch (Exception ex)
+        {
+            await using var errorConn = new NpgsqlConnection(connStr);
+            await errorConn.OpenAsync();
+            await errorConn.ExecuteAsync(@"
+                UPDATE agent_traces SET status = 'failed', completed_utc = NOW() WHERE id = @Id",
+                new { Id = runId });
+
+            await liveEmitter.EmitReasoningResultAsync(new ReasoningResultEvent {
+                TraceId = runId,
+                Status = "failed"
+            });
+        }
+    });
+
+    return Results.Accepted($"/api/reasoning/run/{runId}", new { runId, status = "running" });
+});
+
+// Helper to add trace steps
+static async Task AddTraceStep(string connStr, Guid traceId, int stepNumber, string stepType, object payload)
+{
+    await using var conn = new NpgsqlConnection(connStr);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(@"
+        INSERT INTO agent_trace_steps (id, trace_id, step_number, step_type, payload)
+        VALUES (@Id, @TraceId, @StepNumber, @StepType, @Payload::jsonb)",
+        new {
+            Id = Guid.CreateVersion7(),
+            TraceId = traceId,
+            StepNumber = stepNumber,
+            StepType = stepType,
+            Payload = System.Text.Json.JsonSerializer.Serialize(payload)
+        });
+}
+
 // ============================================
 // TEMPORAL TIMELINE API ENDPOINTS
 // ============================================
@@ -2802,6 +3132,53 @@ app.MapGet("/api/graph/topology/stats", async (IGraphEventStore graphEventStore)
 // NO GUARD RAILS. NO SAFE MODE.
 // ============================================
 
+// ---- POWER PAGE DATA ENDPOINTS ----
+
+// GET /api/power/recent - Get recent memories for Power page
+app.MapGet("/api/power/recent", async (int? limit, IKnowledgeGraphStore store) =>
+{
+    var memories = await store.GetRecentMemoriesAsync(limit ?? 50);
+    return Results.Ok(new
+    {
+        memories = memories.Select(m => new
+        {
+            id = m.Id,
+            content = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content,
+            layer = "L3_KNOWLEDGE",
+            confidence = m.Similarity > 0 ? m.Similarity : 0.8,
+            createdAt = m.CreatedAt,
+            isActive = true
+        })
+    });
+});
+
+// GET /api/power/memory/{id} - Get memory details for Power page
+app.MapGet("/api/power/memory/{memoryId:guid}", async (Guid memoryId, IKnowledgeGraphStore store) =>
+{
+    var memory = await store.GetMemoryByIdAsync(memoryId);
+    if (memory == null)
+        return Results.NotFound(new { error = "Memory not found" });
+
+    var entities = await store.GetEntitiesForMemoryAsync(memoryId);
+
+    return Results.Ok(new
+    {
+        id = memory.Id,
+        content = memory.Content,
+        layer = "L3_KNOWLEDGE",
+        confidence = 0.8,
+        createdAt = memory.CreatedAt,
+        lastReinforcedAt = (DateTime?)null,
+        halfLifeDays = 30,
+        isActive = true,
+        source = memory.Source,
+        contentHash = (string?)null,
+        causalParents = Array.Empty<Guid>(),
+        entities = entities.Select(e => new { name = e.Name, type = e.EntityType }),
+        metadata = memory.Metadata
+    });
+});
+
 // ---- RAW MEMORY EDITING ----
 
 // PUT /api/power/memory/{id}/content - Direct content replacement
@@ -3212,6 +3589,13 @@ app.MapGet("/api/mind/hallucinations", async (int? days, IMindHealthService mind
     return Results.Ok(analysis);
 });
 
+// GET /api/mind/hallucinations/list - List recent unresolved hallucination events
+app.MapGet("/api/mind/hallucinations/list", async (int? limit, IMindHealthService mindService) =>
+{
+    var events = await mindService.GetRecentHallucinationEventsAsync(limit ?? 20);
+    return Results.Ok(new { items = events });
+});
+
 // POST /api/mind/hallucinations - Record hallucination event
 app.MapPost("/api/mind/hallucinations", async (
     HallucinationEventRequest request,
@@ -3361,6 +3745,250 @@ app.MapPost("/api/mind/recalibrate", async (IMindHealthService mindService) =>
         currentScore = snapshot.OverallScore,
         message = "Recalibration initiated. Health scores will be updated in the next cycle."
     });
+});
+
+// ============================================
+// SELF-HEALING ENDPOINTS (Detection & Audit)
+// ============================================
+
+// GET /api/self-healing/stats - Self-healing statistics
+app.MapGet("/api/self-healing/stats", async (ISelfHealingTrigger healingService) =>
+{
+    var stats = await healingService.GetStatsAsync();
+    return Results.Ok(new
+    {
+        stats.UnresolvedContradictions,
+        stats.ResolvedContradictions,
+        stats.TotalMerges,
+        stats.ScansLast24Hours,
+        stats.LastScanAt,
+        stats.AutoRepairEnabled,
+        status = stats.AutoRepairEnabled ? "detection_and_repair" : "detection_only"
+    });
+});
+
+// GET /api/self-healing/scans - Recent self-healing scans
+app.MapGet("/api/self-healing/scans", async (int? limit, ISelfHealingTrigger healingService) =>
+{
+    var scans = await healingService.GetRecentScansAsync(limit ?? 20);
+    return Results.Ok(new { count = scans.Count, scans });
+});
+
+// GET /api/self-healing/contradictions - Unresolved contradictions from self-healing
+app.MapGet("/api/self-healing/contradictions", async (int? limit, ISelfHealingTrigger healingService) =>
+{
+    var contradictions = await healingService.GetUnresolvedContradictionsAsync(limit ?? 50);
+    return Results.Ok(new { count = contradictions.Count, contradictions });
+});
+
+// POST /api/self-healing/trigger/conflict - Trigger reactive scan for conflict
+app.MapPost("/api/self-healing/trigger/conflict", async (
+    SelfHealingTriggerRequest request,
+    ISelfHealingTrigger healingService) =>
+{
+    if (request.MemoryId == null)
+        return Results.BadRequest(new { error = "memoryId is required" });
+
+    await healingService.TriggerOnConflictAsync(request.MemoryId.Value);
+    return Results.Ok(new
+    {
+        triggered = true,
+        triggerType = "conflict",
+        memoryId = request.MemoryId,
+        message = "Reactive scan initiated for memory conflict"
+    });
+});
+
+// POST /api/self-healing/trigger/integrity - Trigger reactive scan for integrity failure
+app.MapPost("/api/self-healing/trigger/integrity", async (
+    SelfHealingTriggerRequest request,
+    ISelfHealingTrigger healingService) =>
+{
+    if (request.MemoryId == null || string.IsNullOrEmpty(request.FailureType))
+        return Results.BadRequest(new { error = "memoryId and failureType are required" });
+
+    await healingService.TriggerOnIntegrityFailureAsync(request.MemoryId.Value, request.FailureType);
+    return Results.Ok(new
+    {
+        triggered = true,
+        triggerType = "integrity_failure",
+        memoryId = request.MemoryId,
+        failureType = request.FailureType,
+        message = "Reactive scan initiated for integrity failure"
+    });
+});
+
+// POST /api/self-healing/trigger/hallucination - Trigger reactive scan for hallucination
+app.MapPost("/api/self-healing/trigger/hallucination", async (
+    SelfHealingTriggerRequest request,
+    ISelfHealingTrigger healingService) =>
+{
+    if (request.MemoryId == null)
+        return Results.BadRequest(new { error = "memoryId is required" });
+
+    await healingService.TriggerOnHallucinationAsync(request.MemoryId.Value, request.Confidence ?? 0.5f);
+    return Results.Ok(new
+    {
+        triggered = true,
+        triggerType = "hallucination",
+        memoryId = request.MemoryId,
+        confidence = request.Confidence,
+        message = "Reactive scan initiated for potential hallucination"
+    });
+});
+
+// ============================================
+// ML ANOMALY DETECTION & HEALING ENDPOINTS
+// ============================================
+
+// GET /api/anomalies - Detect anomalies using ML-style analysis
+app.MapGet("/api/anomalies", async (
+    Guid? tenantId,
+    int? limit,
+    IAnomalyDetectionService anomalyService) =>
+{
+    var anomalies = await anomalyService.DetectAnomaliesAsync(tenantId, limit ?? 100);
+    return Results.Ok(new
+    {
+        count = anomalies.Count,
+        anomalies = anomalies.Select(a => new
+        {
+            a.Id,
+            a.Type,
+            a.Category,
+            a.SeverityScore,
+            a.MemoryId,
+            a.EntityId,
+            a.DetectedAt,
+            a.Description,
+            a.Evidence
+        })
+    });
+});
+
+// GET /api/anomalies/stats - Anomaly statistics
+app.MapGet("/api/anomalies/stats", async (
+    Guid? tenantId,
+    int? daysBack,
+    IAnomalyDetectionService anomalyService) =>
+{
+    var stats = await anomalyService.GetAnomalyStatsAsync(tenantId, daysBack ?? 30);
+    return Results.Ok(stats);
+});
+
+// GET /api/anomalies/trend - Anomaly trend data for visualization
+app.MapGet("/api/anomalies/trend", async (
+    Guid? tenantId,
+    int? daysBack,
+    IAnomalyDetectionService anomalyService) =>
+{
+    var trend = await anomalyService.GetAnomalyTrendAsync(tenantId, daysBack ?? 30);
+    return Results.Ok(new { count = trend.Count, trend });
+});
+
+// GET /api/healing/recommendations - Get pending healing recommendations
+app.MapGet("/api/healing/recommendations", async (
+    Guid? tenantId,
+    int? limit,
+    IHealingRecommendationService healingService) =>
+{
+    var recommendations = await healingService.GetPendingRecommendationsAsync(tenantId, limit ?? 50);
+    return Results.Ok(new
+    {
+        count = recommendations.Count,
+        recommendations = recommendations.Select(r => new
+        {
+            r.Id,
+            r.AnomalyType,
+            r.AnomalyId,
+            r.Confidence,
+            r.Severity,
+            r.RecommendedAction,
+            r.TargetMemoryId,
+            r.TargetEntityId,
+            r.Reason,
+            Status = r.Status.ToString(),
+            r.CreatedAt,
+            RiskLevel = HealingActionRiskMap.GetRisk(r.RecommendedAction).ToString()
+        })
+    });
+});
+
+// GET /api/healing/stats - Recommendation statistics
+app.MapGet("/api/healing/stats", async (
+    Guid? tenantId,
+    int? daysBack,
+    IHealingRecommendationService healingService) =>
+{
+    var stats = await healingService.GetRecommendationStatsAsync(tenantId, daysBack ?? 30);
+    return Results.Ok(stats);
+});
+
+// POST /api/healing/analyze - Run anomaly analysis and generate new recommendations
+app.MapPost("/api/healing/analyze", async (
+    Guid? tenantId,
+    int? maxRecommendations,
+    IHealingRecommendationService healingService) =>
+{
+    var recommendations = await healingService.AnalyzeAndRecommendAsync(tenantId, maxRecommendations ?? 50);
+    return Results.Ok(new
+    {
+        generated = recommendations.Count,
+        recommendations = recommendations.Select(r => new
+        {
+            r.Id,
+            r.AnomalyType,
+            r.RecommendedAction,
+            r.Severity,
+            r.Confidence,
+            r.Reason,
+            RiskLevel = HealingActionRiskMap.GetRisk(r.RecommendedAction).ToString()
+        })
+    });
+});
+
+// POST /api/healing/recommendations/{id}/apply - Apply a specific recommendation
+app.MapPost("/api/healing/recommendations/{id}/apply", async (
+    Guid id,
+    Guid? tenantId,
+    string? appliedBy,
+    IHealingRecommendationService healingService) =>
+{
+    var result = await healingService.ApplyRecommendationAsync(id, tenantId, appliedBy);
+
+    if (!result.Success)
+        return Results.BadRequest(new
+        {
+            success = false,
+            error = result.Error,
+            recommendationId = result.RecommendationId
+        });
+
+    return Results.Ok(new
+    {
+        success = true,
+        action = result.Action,
+        targetId = result.TargetId,
+        details = result.Details,
+        durationMs = result.DurationMs
+    });
+});
+
+// POST /api/healing/recommendations/{id}/dismiss - Dismiss a recommendation
+app.MapPost("/api/healing/recommendations/{id}/dismiss", async (
+    Guid id,
+    HealingDismissRequest request,
+    Guid? tenantId,
+    IHealingRecommendationService healingService) =>
+{
+    if (string.IsNullOrEmpty(request.Reason))
+        return Results.BadRequest(new { error = "reason is required" });
+
+    var dismissed = await healingService.DismissRecommendationAsync(id, request.Reason, tenantId);
+
+    return dismissed
+        ? Results.Ok(new { dismissed = true, id })
+        : Results.NotFound(new { error = "Recommendation not found or already processed" });
 });
 
 // ============================================
@@ -3751,6 +4379,68 @@ app.MapDelete("/context/{key}", async (string key, IContextStore store) =>
     return Results.Ok();
 });
 
+// ============================================
+// REPLAY ENGINE ENDPOINTS (READ-ONLY Forensic)
+// ============================================
+
+// GET /api/mutations/range - Get available event range for replay
+app.MapGet("/api/mutations/range", async (IReplayService replayService) =>
+{
+    var range = await replayService.GetEventRangeAsync();
+    return Results.Ok(range);
+});
+
+// POST /api/mutations/replay - Replay events and compute diff
+app.MapPost("/api/mutations/replay", async (ReplayRequest request, IReplayService replayService) =>
+{
+    var result = await replayService.ReplayAsync(request);
+    return Results.Ok(result);
+});
+
+// ============================================
+// SCALE PREDICTION ENDPOINTS (Advisory Only)
+// ============================================
+
+// GET /api/scale/current - Current observed load status
+app.MapGet("/api/scale/current", async (IScalePredictionService scaleService) =>
+{
+    var status = await scaleService.GetCurrentLoadAsync();
+    return Results.Ok(status);
+});
+
+// POST /api/scale/predict - Predict scale requirements
+app.MapPost("/api/scale/predict", async (ScalePredictRequest request, IScalePredictionService scaleService) =>
+{
+    var horizon = TimeSpan.FromMinutes(request.HorizonMinutes);
+    var prediction = await scaleService.PredictScaleAsync(horizon);
+    return Results.Ok(prediction);
+});
+
+// GET /api/scale/recommendations - Shortcut for 30-minute horizon
+app.MapGet("/api/scale/recommendations", async (IScalePredictionService scaleService) =>
+{
+    var prediction = await scaleService.PredictScaleAsync(TimeSpan.FromMinutes(30));
+    return Results.Ok(prediction);
+});
+
+// ============================================
+// PREDICTIVE SIMULATION ENDPOINTS (READ-ONLY)
+// ============================================
+
+// POST /api/mutations/predict - Predict future state
+app.MapPost("/api/mutations/predict", async (PredictionRequest request, IPredictiveSimulationService predService) =>
+{
+    var prediction = await predService.PredictAsync(request);
+    return Results.Ok(prediction);
+});
+
+// GET /api/mutations/predict/default - Default 30-minute prediction
+app.MapGet("/api/mutations/predict/default", async (IPredictiveSimulationService predService) =>
+{
+    var prediction = await predService.PredictAsync(new PredictionRequest { HorizonMinutes = 30 });
+    return Results.Ok(prediction);
+});
+
 app.Run();
 
 // Request DTOs
@@ -3785,11 +4475,19 @@ internal record ReasoningRunRequest(
     Guid? MemoryId = null,
     int? Limit = 50);
 
+internal record ReasoningStartRequest(
+    string? Project = null,
+    Guid? MemoryId = null,
+    string? Scope = "reasoning");
+
 internal record SecurityScanRequest(
     string? ScanType = null,
     int? BatchSize = null,
     float? Threshold = null,
     int? MaxDepth = null);
+
+// Scale Prediction DTOs
+internal record ScalePredictRequest(int HorizonMinutes = 30);
 
 // Shadow Memory DTOs
 internal record ShadowBranchRequest(
@@ -3902,6 +4600,14 @@ internal record ContradictionEventRequest(
     float Severity,
     string Description,
     float? SimilarityScore = null);
+
+internal record SelfHealingTriggerRequest(
+    Guid? MemoryId = null,
+    string? FailureType = null,
+    float? Confidence = null);
+
+internal record HealingDismissRequest(
+    string? Reason = null);
 
 // Mutation state holder for tracking pause/resume state
 internal class MutationStateHolder

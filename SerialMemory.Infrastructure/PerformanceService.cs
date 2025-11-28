@@ -86,14 +86,15 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
             await conn.OpenAsync(ct);
 
             // Query actual embedding_cache table for real stats
+            // Use PascalCase aliases to match C# property names for Dapper mapping
             var stats = await conn.QueryFirstOrDefaultAsync<EmbeddingCacheStats>(@"
                 SELECT
-                    COUNT(*) as total_items,
-                    COALESCE(SUM(access_count), 0) as total_hits,
-                    COUNT(*) FILTER (WHERE access_count = 0) as items_never_accessed,
-                    COUNT(*) FILTER (WHERE is_compiled = true) as compiled_count,
-                    COALESCE(AVG(access_count), 0) as avg_access_count,
-                    pg_size_pretty(pg_total_relation_size('embedding_cache')) as table_size
+                    COUNT(*) AS ""TotalItems"",
+                    COALESCE(SUM(access_count), 0) AS ""TotalHits"",
+                    COUNT(*) FILTER (WHERE access_count = 0) AS ""ItemsNeverAccessed"",
+                    COUNT(*) FILTER (WHERE is_compiled = true) AS ""CompiledCount"",
+                    COALESCE(AVG(access_count), 0) AS ""AvgAccessCount"",
+                    pg_size_pretty(pg_total_relation_size('embedding_cache')) AS ""TableSize""
                 FROM embedding_cache");
 
             // Create a cache layer snapshot from actual data
@@ -152,11 +153,12 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
             await conn.OpenAsync(ct);
 
             // Query PostgreSQL for connection stats
+            // Use PascalCase aliases to match C# property names for Dapper mapping
             var stats = await conn.QueryFirstOrDefaultAsync<PgStatActivity>(@"
                 SELECT
-                    count(*) FILTER (WHERE state = 'active') as active_count,
-                    count(*) FILTER (WHERE state = 'idle') as idle_count,
-                    count(*) as total_count
+                    count(*) FILTER (WHERE state = 'active') AS ""ActiveCount"",
+                    count(*) FILTER (WHERE state = 'idle') AS ""IdleCount"",
+                    count(*) AS ""TotalCount""
                 FROM pg_stat_activity
                 WHERE datname = current_database()
                   AND pid != pg_backend_pid()");
@@ -242,24 +244,20 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
         _activeOps.Clear();
     }
 
-    private sealed class ActiveOperationTracker : IDisposable
+    private sealed class ActiveOperationTracker(
+        PostgresPerformanceService service,
+        string operationName,
+        string? context)
+        : IDisposable
     {
-        private readonly PostgresPerformanceService _service;
         public string Id { get; } = Guid.CreateVersion7().ToString();
-        public string OperationName { get; }
+        public string OperationName { get; } = operationName;
         public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
-        public string? Context { get; }
-
-        public ActiveOperationTracker(PostgresPerformanceService service, string operationName, string? context)
-        {
-            _service = service;
-            OperationName = operationName;
-            Context = context;
-        }
+        public string? Context { get; } = context;
 
         public void Dispose()
         {
-            _service.CompleteTracking(Id);
+            service.CompleteTracking(Id);
         }
     }
 

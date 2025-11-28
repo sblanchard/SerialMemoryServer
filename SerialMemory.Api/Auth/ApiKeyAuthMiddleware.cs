@@ -130,6 +130,11 @@ public sealed class ApiKeyAuthMiddleware
             path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        // SignalR hubs (allow anonymous for initial connection, auth handled per-hub)
+        if (path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/hub/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         return false;
     }
 

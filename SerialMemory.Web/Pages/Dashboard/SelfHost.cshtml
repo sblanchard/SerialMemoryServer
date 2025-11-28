@@ -1,0 +1,892 @@
+@page "/dashboard/selfhost"
+@model SerialMemory.Web.Pages.Dashboard.SelfHostModel
+@{
+    ViewData["Title"] = "Self-Host Control Room";
+}
+
+@if (!Model.IsSelfHosted)
+{
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="bg-red-900/50 border border-red-500 text-red-200 px-6 py-4 rounded-lg">
+            <h2 class="text-xl font-bold mb-2">Access Denied</h2>
+            <p>This page is only available in self-hosted deployment mode.</p>
+        </div>
+    </div>
+    return;
+}
+
+<style>
+    .control-room {
+        background: linear-gradient(180deg, #0a0a0f 0%, #0d1117 100%);
+        min-height: calc(100vh - 64px);
+    }
+    .hud-panel {
+        background: rgba(13, 17, 23, 0.95);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        border-radius: 4px;
+        position: relative;
+        overflow: hidden;
+    }
+    .hud-panel::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.5), transparent);
+    }
+    .hud-header {
+        background: rgba(0, 212, 255, 0.1);
+        border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+        padding: 0.75rem 1rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #00d4ff;
+    }
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+    .status-ok { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+    .status-warning { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+    .status-critical { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+    @@keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .metric-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #00d4ff;
+        text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+    }
+    .metric-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #6b7280;
+    }
+    .live-log {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        height: 250px;
+        overflow-y: auto;
+        background: #0a0a0f;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        padding: 0.5rem;
+    }
+    .log-entry {
+        padding: 2px 4px;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .log-info { color: #00d4ff; }
+    .log-warning { color: #f59e0b; }
+    .log-error { color: #ef4444; }
+    .log-success { color: #22c55e; }
+    .config-json {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.7rem;
+        background: #0a0a0f;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        padding: 1rem;
+        max-height: 300px;
+        overflow: auto;
+        color: #9ca3af;
+    }
+    .maintenance-btn {
+        background: rgba(0, 212, 255, 0.1);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        color: #00d4ff;
+        padding: 0.75rem 1.5rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        transition: all 0.2s;
+    }
+    .maintenance-btn:hover {
+        background: rgba(0, 212, 255, 0.2);
+        border-color: #00d4ff;
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+    }
+    .maintenance-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .scanline {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        pointer-events: none;
+        background: repeating-linear-gradient(
+            0deg,
+            rgba(0, 0, 0, 0.05) 0px,
+            rgba(0, 0, 0, 0.05) 1px,
+            transparent 1px,
+            transparent 2px
+        );
+        z-index: 1000;
+        opacity: 0.3;
+    }
+</style>
+
+<div class="control-room">
+    <div class="scanline"></div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Top Status Bar -->
+        <div class="hud-panel mb-6">
+            <div class="flex items-center justify-between p-4">
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <div id="serverStatusDot" class="status-dot status-ok"></div>
+                        <span class="text-soft-white font-mono text-sm uppercase tracking-wider">Server Status</span>
+                    </div>
+                    <span id="serverStatusText" class="text-green-400 font-mono text-sm">OPERATIONAL</span>
+                </div>
+                <div class="flex items-center gap-6 text-xs font-mono text-graphite">
+                    <span>Instance: <span id="instanceId" class="text-cyan">@(Model.Status?.InstanceId ?? "—")</span></span>
+                    <span>Uptime: <span id="uptime" class="text-soft-white">@(Model.Status?.Uptime ?? "—")</span></span>
+                    <span>Version: <span class="text-soft-white">@(Model.Status?.Version ?? "—")</span></span>
+                </div>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="mb-4 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded font-mono text-sm">
+                @Model.ErrorMessage
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+        {
+            <div class="mb-4 bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded font-mono text-sm">
+                @Model.SuccessMessage
+            </div>
+        }
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <!-- Core Status Panel -->
+            <div class="hud-panel">
+                <div class="hud-header">Core Status</div>
+                <div class="p-4 grid grid-cols-2 gap-4">
+                    <div class="text-center">
+                        <div id="memoryCount" class="metric-value">@(Model.Diagnostics?.Database?.Memories.ToString("N0") ?? "—")</div>
+                        <div class="metric-label">Memories</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="entityCount" class="metric-value">@(Model.Diagnostics?.Database?.Entities.ToString("N0") ?? "—")</div>
+                        <div class="metric-label">Entities</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="apiRps" class="metric-value">—</div>
+                        <div class="metric-label">API RPS</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="signalrClients" class="metric-value">—</div>
+                        <div class="metric-label">SignalR Clients</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Health Panel -->
+            <div class="hud-panel">
+                <div class="hud-header">System Health</div>
+                <div class="p-4 space-y-4">
+                    <div>
+                        <div class="flex justify-between text-xs font-mono mb-1">
+                            <span class="text-graphite">CPU</span>
+                            <span id="cpuPercent" class="text-cyan">—%</span>
+                        </div>
+                        <div class="h-2 bg-slate rounded overflow-hidden">
+                            <div id="cpuBar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs font-mono mb-1">
+                            <span class="text-graphite">RAM</span>
+                            <span id="ramPercent" class="text-cyan">@(Model.Diagnostics?.System?.WorkingSet ?? 0) MB</span>
+                        </div>
+                        <div class="h-2 bg-slate rounded overflow-hidden">
+                            <div id="ramBar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs font-mono mb-1">
+                            <span class="text-graphite">GC Memory</span>
+                            <span id="gcMemory" class="text-cyan">@(Model.Diagnostics?.System?.GcMemory ?? 0) MB</span>
+                        </div>
+                        <div class="h-2 bg-slate rounded overflow-hidden">
+                            <div id="gcBar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="pt-2 border-t border-slate">
+                        <div class="flex justify-between text-xs font-mono">
+                            <span class="text-graphite">DB Status</span>
+                            <span id="dbStatus" class="@(Model.Diagnostics?.Database?.Status == "connected" ? "text-green-400" : "text-red-400")">
+                                @(Model.Diagnostics?.Database?.Status?.ToUpper() ?? "UNKNOWN")
+                            </span>
+                        </div>
+                        <div class="flex justify-between text-xs font-mono mt-2">
+                            <span class="text-graphite">Processors</span>
+                            <span class="text-cyan">@(Model.Diagnostics?.System?.ProcessorCount ?? 0) cores</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Runtime Info Panel -->
+            <div class="hud-panel">
+                <div class="hud-header">Runtime</div>
+                <div class="p-4 space-y-3">
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-graphite">Machine</span>
+                        <span class="text-soft-white">@(Model.Diagnostics?.System?.MachineName ?? "—")</span>
+                    </div>
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-graphite">OS</span>
+                        <span class="text-soft-white truncate ml-4" title="@(Model.Diagnostics?.System?.OsVersion ?? "—")">
+                            @(Model.Diagnostics?.System?.OsVersion?.Split(' ').FirstOrDefault() ?? "—")
+                        </span>
+                    </div>
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-graphite">.NET Runtime</span>
+                        <span class="text-soft-white">@(Model.Diagnostics?.Runtime?.Version ?? "—")</span>
+                    </div>
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-graphite">Framework</span>
+                        <span class="text-cyan truncate ml-4" title="@(Model.Diagnostics?.Runtime?.Framework ?? "—")">
+                            @(Model.Diagnostics?.Runtime?.Framework?.Replace(".NET ", "").Split(' ').FirstOrDefault() ?? "—")
+                        </span>
+                    </div>
+                    <div class="pt-3 border-t border-slate">
+                        <div class="flex justify-between text-xs font-mono">
+                            <span class="text-graphite">Mode</span>
+                            <span class="text-cyan uppercase">@(Model.Status?.Mode ?? "Self-Hosted")</span>
+                        </div>
+                        <div class="flex justify-between text-xs font-mono mt-2">
+                            <span class="text-graphite">Power Mode</span>
+                            <span class="@(Model.Status?.PowerModeEnabled == true ? "text-green-400" : "text-yellow-400")">
+                                @(Model.Status?.PowerModeEnabled == true ? "ENABLED" : "DISABLED")
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Live Event Log -->
+            <div class="hud-panel">
+                <div class="hud-header flex items-center justify-between">
+                    <span>Live Event Log</span>
+                    <div class="flex items-center gap-2">
+                        <div id="signalrIndicator" class="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span id="signalrStatus" class="text-xs text-graphite">Disconnected</span>
+                    </div>
+                </div>
+                <div class="p-2">
+                    <div id="liveLog" class="live-log">
+                        <div class="log-entry log-info">[INIT] Control room initialized</div>
+                        <div class="log-entry log-info">[INIT] Connecting to SignalR...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration View -->
+            <div class="hud-panel">
+                <div class="hud-header flex items-center justify-between">
+                    <span>Configuration</span>
+                    <button onclick="toggleConfig()" class="text-xs text-cyan hover:text-white transition">
+                        [<span id="configToggleText">Expand</span>]
+                    </button>
+                </div>
+                <div id="configPanel" class="p-2 hidden">
+                    <pre class="config-json">@(Model.ConfigJson ?? "Loading...")</pre>
+                </div>
+                <div id="configSummary" class="p-4 text-xs font-mono text-graphite">
+                    <div class="flex justify-between mb-2">
+                        <span>Quotas</span>
+                        <span class="@(Model.Status?.QuotasEnabled == true ? "text-yellow-400" : "text-green-400")">
+                            @(Model.Status?.QuotasEnabled == true ? "ENABLED" : "DISABLED")
+                        </span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Click [Expand] to view full configuration</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Observability Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Live DB Activity -->
+            <div class="hud-panel">
+                <div class="hud-header flex items-center justify-between">
+                    <span>Live Database Activity</span>
+                    <div class="flex items-center gap-3 text-xs">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500"></span>&lt;20ms</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span>20-100ms</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span>&gt;100ms</span>
+                    </div>
+                </div>
+                <div class="p-2" style="height: 220px;">
+                    <canvas id="queryTracerCanvas" style="width: 100%; height: 100%; background: #0a0a0f; border-radius: 4px;"></canvas>
+                </div>
+            </div>
+
+            <!-- System Topology -->
+            <div class="hud-panel">
+                <div class="hud-header flex items-center justify-between">
+                    <span>System Topology</span>
+                    <span id="topologyStatus" class="text-xs text-graphite">Live</span>
+                </div>
+                <div class="p-2" style="height: 220px;">
+                    <canvas id="topologyCanvas" style="width: 100%; height: 100%; background: #0a0a0f; border-radius: 4px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Maintenance Controls -->
+        <div class="hud-panel">
+            <div class="hud-header">Maintenance Controls</div>
+            <div class="p-4">
+                <div class="flex flex-wrap gap-4">
+                    <form method="post" asp-page-handler="RunIntegrityCheck" class="inline">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="maintenance-btn" id="btnIntegrity">
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                </svg>
+                                Integrity Scan
+                            </span>
+                        </button>
+                    </form>
+
+                    <form method="post" asp-page-handler="CompactStorage" class="inline">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="maintenance-btn" id="btnCompact">
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                                </svg>
+                                Compact Storage
+                            </span>
+                        </button>
+                    </form>
+
+                    <form method="post" asp-page-handler="RebuildIndexes" class="inline">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="maintenance-btn" id="btnReindex">
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Rebuild Indexes
+                            </span>
+                        </button>
+                    </form>
+
+                    <button type="button" class="maintenance-btn" id="btnClearCache" onclick="clearCaches()">
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Clear Caches
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scale Prediction Panel -->
+        <div class="hud-panel mt-6">
+            <div class="hud-header flex items-center justify-between">
+                <span>Scale Prediction (Advisory)</span>
+                <div class="flex items-center gap-2">
+                    <select id="scaleHorizon" onchange="loadScalePrediction()" class="bg-slate text-cyan text-xs font-mono px-2 py-1 rounded border border-cyan/30 focus:outline-none focus:border-cyan">
+                        <option value="5">5 min</option>
+                        <option value="15">15 min</option>
+                        <option value="30" selected>30 min</option>
+                        <option value="60">60 min</option>
+                    </select>
+                    <button onclick="loadScalePrediction()" class="text-xs text-cyan hover:text-white transition">[Refresh]</button>
+                </div>
+            </div>
+            <div class="p-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- API Instances -->
+                    <div class="bg-slate/20 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-graphite uppercase tracking-wide">API Instances</span>
+                            <div id="apiScaleIndicator" class="flex items-center gap-1 text-xs text-green-400">
+                                <span>Stable</span>
+                            </div>
+                        </div>
+                        <div class="flex items-baseline gap-2 mb-2">
+                            <span id="apiCurrentInstances" class="text-3xl font-mono text-cyan">1</span>
+                            <span id="apiArrow" class="text-xl text-graphite hidden">→</span>
+                            <span id="apiRecommendedInstances" class="text-3xl font-mono text-green-400 hidden">1</span>
+                        </div>
+                        <p id="apiReason" class="text-xs text-graphite">Load within normal parameters</p>
+                    </div>
+
+                    <!-- Worker Instances -->
+                    <div class="bg-slate/20 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-graphite uppercase tracking-wide">Worker Instances</span>
+                            <div id="workerScaleIndicator" class="flex items-center gap-1 text-xs text-green-400">
+                                <span>Stable</span>
+                            </div>
+                        </div>
+                        <div class="flex items-baseline gap-2 mb-2">
+                            <span id="workerCurrentInstances" class="text-3xl font-mono text-cyan">1</span>
+                            <span id="workerArrow" class="text-xl text-graphite hidden">→</span>
+                            <span id="workerRecommendedInstances" class="text-3xl font-mono text-green-400 hidden">1</span>
+                        </div>
+                        <p id="workerReason" class="text-xs text-graphite">Queue depth normal</p>
+                    </div>
+
+                    <!-- Database Risk -->
+                    <div class="bg-slate/20 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-graphite uppercase tracking-wide">Database Risk</span>
+                            <span id="dbRiskBadge" class="px-2 py-0.5 text-xs rounded bg-green-600 text-white">Low</span>
+                        </div>
+                        <div class="mb-2">
+                            <div class="flex justify-between text-xs font-mono mb-1">
+                                <span class="text-graphite">Conn. Utilization</span>
+                                <span id="dbUtilization" class="text-cyan">0%</span>
+                            </div>
+                            <div class="h-2 bg-slate rounded overflow-hidden">
+                                <div id="dbUtilBar" class="h-full bg-gradient-to-r from-green-500 to-cyan-500 transition-all" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <p id="dbSuggestion" class="text-xs text-graphite">Database capacity adequate</p>
+                    </div>
+                </div>
+
+                <!-- Load Metrics Summary -->
+                <div class="mt-4 pt-4 border-t border-slate/30">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
+                        <div>
+                            <span class="text-graphite">Current RPS</span>
+                            <span id="currentRps" class="block text-lg text-cyan mt-1">0.0</span>
+                        </div>
+                        <div>
+                            <span class="text-graphite">P95 Latency</span>
+                            <span id="p95Latency" class="block text-lg text-cyan mt-1">0 ms</span>
+                        </div>
+                        <div>
+                            <span class="text-graphite">Pending Tasks</span>
+                            <span id="pendingTasks" class="block text-lg text-cyan mt-1">0</span>
+                        </div>
+                        <div>
+                            <span class="text-graphite">Active Connections</span>
+                            <span id="activeConns" class="block text-lg text-cyan mt-1">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Autoscaler Hint Toggle -->
+                <div class="mt-4">
+                    <button onclick="toggleAutoscalerHint()" class="text-xs text-cyan hover:text-white transition flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                        </svg>
+                        View Kubernetes HPA Example
+                    </button>
+                    <div id="autoscalerHintPanel" class="hidden mt-3">
+                        <pre id="autoscalerYaml" class="config-json text-xs overflow-x-auto">Loading...</pre>
+                        <p class="text-xs text-graphite mt-2">This is advisory only — not automatically applied.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script src="~/js/query-tracer.js"></script>
+<script src="~/js/topology-map.js"></script>
+<script>
+    let connection = null;
+    let queryTracer = null;
+    let topologyMap = null;
+    const liveLog = document.getElementById('liveLog');
+
+    function appendLog(message, level = 'info') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry log-${level}`;
+        const timestamp = new Date().toLocaleTimeString();
+        entry.textContent = `[${timestamp}] ${message}`;
+        liveLog.appendChild(entry);
+        liveLog.scrollTop = liveLog.scrollHeight;
+
+        // Keep only last 100 entries
+        while (liveLog.children.length > 100) {
+            liveLog.removeChild(liveLog.firstChild);
+        }
+    }
+
+    function updateStatus(status) {
+        const dot = document.getElementById('serverStatusDot');
+        const text = document.getElementById('serverStatusText');
+
+        if (status === 'healthy' || status === 'ok') {
+            dot.className = 'status-dot status-ok';
+            text.textContent = 'OPERATIONAL';
+            text.className = 'text-green-400 font-mono text-sm';
+        } else if (status === 'degraded' || status === 'warning') {
+            dot.className = 'status-dot status-warning';
+            text.textContent = 'DEGRADED';
+            text.className = 'text-yellow-400 font-mono text-sm';
+        } else {
+            dot.className = 'status-dot status-critical';
+            text.textContent = 'CRITICAL';
+            text.className = 'text-red-400 font-mono text-sm';
+        }
+    }
+
+    function toggleConfig() {
+        const panel = document.getElementById('configPanel');
+        const summary = document.getElementById('configSummary');
+        const toggleText = document.getElementById('configToggleText');
+
+        if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+            summary.classList.add('hidden');
+            toggleText.textContent = 'Collapse';
+        } else {
+            panel.classList.add('hidden');
+            summary.classList.remove('hidden');
+            toggleText.textContent = 'Expand';
+        }
+    }
+
+    async function clearCaches() {
+        appendLog('Clearing caches...', 'info');
+        try {
+            const response = await fetch('/api/selfhost/maintenance/clear-cache', { method: 'POST' });
+            if (response.ok) {
+                appendLog('Caches cleared successfully', 'success');
+            } else {
+                appendLog('Failed to clear caches', 'error');
+            }
+        } catch (err) {
+            appendLog(`Cache clear error: ${err.message}`, 'error');
+        }
+    }
+
+    async function initSignalR() {
+        const indicator = document.getElementById('signalrIndicator');
+        const statusText = document.getElementById('signalrStatus');
+
+        // API is on port 5000, web-admin on 5002
+        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://' + window.location.hostname + ':5000';
+        connection = new signalR.HubConnectionBuilder()
+            .withUrl(apiBaseUrl + "/hubs/live")
+            .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
+            .configureLogging(signalR.LogLevel.Warning)
+            .build();
+
+        connection.on("SelfHostStatus", (data) => {
+            appendLog(`Status update: ${data.status}`, 'info');
+            updateStatus(data.status);
+            if (data.memoryCount) document.getElementById('memoryCount').textContent = data.memoryCount.toLocaleString();
+            if (data.entityCount) document.getElementById('entityCount').textContent = data.entityCount.toLocaleString();
+        });
+
+        connection.on("SelfHostDiagnostics", (data) => {
+            if (data.cpuPercent !== undefined) {
+                document.getElementById('cpuPercent').textContent = data.cpuPercent.toFixed(1) + '%';
+                document.getElementById('cpuBar').style.width = data.cpuPercent + '%';
+            }
+            if (data.workingSetMb !== undefined) {
+                document.getElementById('ramPercent').textContent = data.workingSetMb + ' MB';
+            }
+        });
+
+        connection.on("SelfHostAlert", (data) => {
+            const level = data.severity === 'error' ? 'error' : data.severity === 'warning' ? 'warning' : 'info';
+            appendLog(`[ALERT] ${data.message}`, level);
+        });
+
+        // Database query telemetry
+        connection.on("db.query", (data) => {
+            if (queryTracer) {
+                queryTracer.addQuery({
+                    operation: data.operation || 'Query',
+                    durationMs: data.durationMs || 0,
+                    rows: data.rows || 0
+                });
+            }
+            // Log slow queries
+            if (data.durationMs > 100) {
+                appendLog(`Slow query: ${data.operation} (${data.durationMs}ms)`, 'warning');
+            }
+        });
+
+        // System topology updates
+        connection.on("system.topology", (data) => {
+            if (topologyMap) {
+                topologyMap.update(data);
+            }
+        });
+
+        connection.on("Subscribed", (stream) => {
+            appendLog(`Subscribed to: ${stream}`, 'success');
+        });
+
+        connection.onreconnecting(() => {
+            indicator.className = 'w-2 h-2 rounded-full bg-yellow-500 animate-pulse';
+            statusText.textContent = 'Reconnecting...';
+            appendLog('SignalR reconnecting...', 'warning');
+        });
+
+        connection.onreconnected(() => {
+            indicator.className = 'w-2 h-2 rounded-full bg-green-500';
+            statusText.textContent = 'Connected';
+            appendLog('SignalR reconnected', 'success');
+            subscribeToStreams();
+        });
+
+        connection.onclose(() => {
+            indicator.className = 'w-2 h-2 rounded-full bg-red-500';
+            statusText.textContent = 'Disconnected';
+            appendLog('SignalR disconnected', 'error');
+        });
+
+        try {
+            await connection.start();
+            indicator.className = 'w-2 h-2 rounded-full bg-green-500';
+            statusText.textContent = 'Connected';
+            appendLog('SignalR connected', 'success');
+            await subscribeToStreams();
+        } catch (err) {
+            indicator.className = 'w-2 h-2 rounded-full bg-red-500';
+            statusText.textContent = 'Failed';
+            appendLog(`SignalR connection failed: ${err}`, 'error');
+        }
+    }
+
+    async function subscribeToStreams() {
+        try {
+            await connection.invoke("Subscribe", "selfhost.status");
+            await connection.invoke("Subscribe", "selfhost.diagnostics");
+            await connection.invoke("Subscribe", "selfhost.alerts");
+            await connection.invoke("Subscribe", "db.query");
+            await connection.invoke("Subscribe", "system.topology");
+        } catch (err) {
+            appendLog(`Subscription error: ${err}`, 'warning');
+        }
+    }
+
+    // Start polling for updates every 30s as fallback
+    async function pollStatus() {
+        try {
+            const response = await fetch('/api/selfhost/status');
+            if (response.ok) {
+                const data = await response.json();
+                updateStatus(data.status);
+                if (data.uptime) document.getElementById('uptime').textContent = data.uptime;
+            }
+        } catch (err) {
+            // Silent fail for polling
+        }
+    }
+
+    // Scale Prediction Functions
+    let cachedAutoscalerYaml = null;
+
+    async function loadScalePrediction() {
+        const horizonMinutes = parseInt(document.getElementById('scaleHorizon').value);
+        const apiBaseUrl = window.location.protocol + '//' + window.location.hostname + ':5000';
+
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/scale/predict`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ horizonMinutes })
+            });
+
+            if (!response.ok) {
+                appendLog(`Scale prediction failed: ${response.status}`, 'error');
+                return;
+            }
+
+            const data = await response.json();
+            updateScalePrediction(data);
+            cachedAutoscalerYaml = data.autoscalerHint?.exampleConfigYaml || null;
+
+        } catch (err) {
+            appendLog(`Scale prediction error: ${err.message}`, 'error');
+        }
+    }
+
+    function updateScalePrediction(data) {
+        // API Instances
+        const apiCurrent = document.getElementById('apiCurrentInstances');
+        const apiRecommended = document.getElementById('apiRecommendedInstances');
+        const apiArrow = document.getElementById('apiArrow');
+        const apiIndicator = document.getElementById('apiScaleIndicator');
+        const apiReason = document.getElementById('apiReason');
+
+        apiCurrent.textContent = data.currentApiInstances || 1;
+        apiReason.textContent = data.apiReason || 'Load within normal parameters';
+
+        if (data.recommendedApiInstances > data.currentApiInstances) {
+            apiRecommended.textContent = data.recommendedApiInstances;
+            apiRecommended.classList.remove('hidden', 'text-green-400');
+            apiRecommended.classList.add('text-yellow-400');
+            apiArrow.classList.remove('hidden');
+            apiArrow.textContent = '→';
+            apiIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+        } else if (data.recommendedApiInstances < data.currentApiInstances) {
+            apiRecommended.textContent = data.recommendedApiInstances;
+            apiRecommended.classList.remove('hidden', 'text-yellow-400');
+            apiRecommended.classList.add('text-green-400');
+            apiArrow.classList.remove('hidden');
+            apiArrow.textContent = '→';
+            apiIndicator.innerHTML = '<span class="text-green-400">Scale Down</span>';
+        } else {
+            apiRecommended.classList.add('hidden');
+            apiArrow.classList.add('hidden');
+            apiIndicator.innerHTML = '<span class="text-green-400">Stable</span>';
+        }
+
+        // Worker Instances
+        const workerCurrent = document.getElementById('workerCurrentInstances');
+        const workerRecommended = document.getElementById('workerRecommendedInstances');
+        const workerArrow = document.getElementById('workerArrow');
+        const workerIndicator = document.getElementById('workerScaleIndicator');
+        const workerReason = document.getElementById('workerReason');
+
+        workerCurrent.textContent = data.currentWorkerInstances || 1;
+        workerReason.textContent = data.workerReason || 'Queue depth normal';
+
+        if (data.recommendedWorkerInstances > data.currentWorkerInstances) {
+            workerRecommended.textContent = data.recommendedWorkerInstances;
+            workerRecommended.classList.remove('hidden', 'text-green-400');
+            workerRecommended.classList.add('text-yellow-400');
+            workerArrow.classList.remove('hidden');
+            workerIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+        } else if (data.recommendedWorkerInstances < data.currentWorkerInstances) {
+            workerRecommended.textContent = data.recommendedWorkerInstances;
+            workerRecommended.classList.remove('hidden', 'text-yellow-400');
+            workerRecommended.classList.add('text-green-400');
+            workerArrow.classList.remove('hidden');
+            workerIndicator.innerHTML = '<span class="text-green-400">Scale Down</span>';
+        } else {
+            workerRecommended.classList.add('hidden');
+            workerArrow.classList.add('hidden');
+            workerIndicator.innerHTML = '<span class="text-green-400">Stable</span>';
+        }
+
+        // Database Risk
+        const dbRiskBadge = document.getElementById('dbRiskBadge');
+        const dbUtilization = document.getElementById('dbUtilization');
+        const dbUtilBar = document.getElementById('dbUtilBar');
+        const dbSuggestion = document.getElementById('dbSuggestion');
+
+        if (data.database) {
+            const utilPct = (data.database.connectionUtilization * 100).toFixed(0);
+            dbUtilization.textContent = utilPct + '%';
+            dbUtilBar.style.width = utilPct + '%';
+            dbSuggestion.textContent = data.database.suggestion || 'Database capacity adequate';
+
+            dbRiskBadge.textContent = data.database.riskLevel;
+            dbRiskBadge.className = 'px-2 py-0.5 text-xs rounded text-white ' +
+                (data.database.riskLevel === 'High' ? 'bg-red-600' :
+                 data.database.riskLevel === 'Medium' ? 'bg-yellow-600' : 'bg-green-600');
+
+            // Update bar color based on risk
+            if (data.database.riskLevel === 'High') {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-red-500 to-orange-500 transition-all';
+            } else if (data.database.riskLevel === 'Medium') {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-yellow-500 to-orange-500 transition-all';
+            } else {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-green-500 to-cyan-500 transition-all';
+            }
+        }
+
+        // Load metrics - fetch current load status for real-time metrics
+        fetchCurrentLoadMetrics();
+    }
+
+    async function fetchCurrentLoadMetrics() {
+        const apiBaseUrl = window.location.protocol + '//' + window.location.hostname + ':5000';
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/scale/current`);
+            if (response.ok) {
+                const load = await response.json();
+                document.getElementById('currentRps').textContent = (load.rpsMetrics?.currentRps || 0).toFixed(1);
+                document.getElementById('p95Latency').textContent = (load.latencyMetrics?.p95Ms || 0).toFixed(0) + ' ms';
+                document.getElementById('pendingTasks').textContent = load.queueMetrics?.pendingTasks || 0;
+                document.getElementById('activeConns').textContent = load.databaseMetrics?.activeConnections || 0;
+            }
+        } catch (err) {
+            // Silent fail
+        }
+    }
+
+    function toggleAutoscalerHint() {
+        const panel = document.getElementById('autoscalerHintPanel');
+        const yaml = document.getElementById('autoscalerYaml');
+
+        if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+            if (cachedAutoscalerYaml) {
+                yaml.textContent = cachedAutoscalerYaml;
+            } else {
+                yaml.textContent = '# No autoscaler hint available. Run scale prediction first.';
+            }
+        } else {
+            panel.classList.add('hidden');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // Initialize visualizations
+        queryTracer = new QueryTracer('queryTracerCanvas');
+        queryTracer.start();
+        appendLog('Query tracer initialized', 'success');
+
+        topologyMap = new TopologyMap('topologyCanvas');
+        topologyMap.start();
+        appendLog('Topology map initialized', 'success');
+
+        // Connect to SignalR
+        initSignalR();
+        setInterval(pollStatus, 30000);
+
+        // Load scale prediction on page load and refresh every 60s
+        loadScalePrediction();
+        setInterval(loadScalePrediction, 60000);
+
+        // Demo mode: simulate queries if no real data (remove in production)
+        const demoInterval = setInterval(() => {
+            if (queryTracer && queryTracer.pulses.length === 0) {
+                // Add occasional demo pulses when idle
+                const operations = ['MemorySearch', 'EntityQuery', 'GraphTraversal', 'InsertMemory'];
+                queryTracer.addQuery({
+                    operation: operations[Math.floor(Math.random() * operations.length)],
+                    durationMs: Math.random() * 150,
+                    rows: Math.floor(Math.random() * 50)
+                });
+            }
+        }, 3000);
+    });
+</script>
+}

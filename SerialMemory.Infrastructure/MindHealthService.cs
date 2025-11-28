@@ -9,16 +9,10 @@ namespace SerialMemory.Infrastructure;
 /// PostgreSQL-backed mind health tracking service.
 /// Persists confidence drift, hallucination events, and contradiction frequency.
 /// </summary>
-public sealed class PostgresMindHealthService : IMindHealthService
+public sealed class PostgresMindHealthService(string connectionString, ILogger<PostgresMindHealthService> logger)
+    : IMindHealthService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<PostgresMindHealthService> _logger;
-
-    public PostgresMindHealthService(string connectionString, ILogger<PostgresMindHealthService> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
+    private readonly ILogger<PostgresMindHealthService> _logger = logger;
 
     // ==========================================
     // CONFIDENCE DRIFT
@@ -26,7 +20,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task RecordConfidenceAsync(ConfidenceObservation observation, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_confidence_observations
                 (id, operation_type, predicted_confidence, actual_accuracy, drift, timestamp, memory_id, context)
@@ -47,7 +41,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<ConfidenceDriftAnalysis> GetConfidenceDriftAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var observations = await conn.QueryAsync<ConfidenceObservationRow>(@"
@@ -100,7 +94,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<ConfidenceTrend> GetConfidenceTrendAsync(string operationType, int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var dailyDrift = await conn.QueryAsync<DriftPoint>(@"
@@ -143,7 +137,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task RecordHallucinationAsync(HallucinationEvent evt, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_hallucination_events
                 (id, memory_id, type, severity, description, evidence, ground_truth, detected_at, source, resolved, resolution)
@@ -167,7 +161,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<HallucinationAnalysis> GetHallucinationAnalysisAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var events = await conn.QueryAsync<HallucinationEventRow>(@"
@@ -231,7 +225,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
         await RecordHallucinationAsync(evt, ct);
 
         // Also update memory confidence
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             UPDATE memories
             SET confidence = confidence * (1 - @Severity),
@@ -240,13 +234,59 @@ public sealed class PostgresMindHealthService : IMindHealthService
             new { MemoryId = memoryId, Severity = severity });
     }
 
+    public async Task<IReadOnlyList<HallucinationEvent>> GetRecentHallucinationEventsAsync(int limit = 20, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        var rows = await conn.QueryAsync<HallucinationEventFullRow>(@"
+            SELECT h.id, h.memory_id, h.type, h.severity, h.description, h.evidence, h.ground_truth,
+                   h.detected_at, h.source, h.resolved, h.resolution,
+                   COALESCE(SUBSTRING(m.content, 1, 200), '') as memory_content
+            FROM mind_hallucination_events h
+            LEFT JOIN memories m ON h.memory_id = m.id
+            WHERE h.resolved = false
+            ORDER BY h.severity DESC, h.detected_at DESC
+            LIMIT @Limit",
+            new { Limit = limit });
+
+        return rows.Select(r => new HallucinationEvent
+        {
+            Id = r.Id,
+            MemoryId = r.MemoryId,
+            Type = Enum.TryParse<HallucinationType>(r.Type, out var t) ? t : HallucinationType.FactualError,
+            Severity = r.Severity,
+            Description = r.Description,
+            Evidence = r.Evidence,
+            GroundTruth = r.GroundTruth,
+            DetectedAt = r.DetectedAt,
+            Source = Enum.TryParse<HallucinationSource>(r.Source, out var s) ? s : HallucinationSource.AutoDetected,
+            Resolved = r.Resolved,
+            Resolution = r.Resolution
+        }).ToList();
+    }
+
+    private sealed class HallucinationEventFullRow
+    {
+        public Guid Id { get; init; }
+        public Guid? MemoryId { get; init; }
+        public string Type { get; init; } = "";
+        public float Severity { get; init; }
+        public string Description { get; init; } = "";
+        public string? Evidence { get; init; }
+        public string? GroundTruth { get; init; }
+        public DateTimeOffset DetectedAt { get; init; }
+        public string Source { get; init; } = "";
+        public bool Resolved { get; init; }
+        public string? Resolution { get; init; }
+        public string MemoryContent { get; init; } = "";
+    }
+
     // ==========================================
     // CONTRADICTION TRACKING
     // ==========================================
 
     public async Task RecordContradictionAsync(ContradictionEvent evt, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_contradiction_events
                 (id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status, resolution_strategy, resolution_rationale, winner_id, merged_into_id, resolved_at)
@@ -273,7 +313,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<ContradictionAnalysis> GetContradictionAnalysisAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var events = await conn.QueryAsync<ContradictionEventRow>(@"
@@ -330,7 +370,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<IReadOnlyList<ContradictionEvent>> GetUnresolvedContradictionsAsync(int limit = 100, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var rows = await conn.QueryAsync<ContradictionEventRow>(@"
             SELECT id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status
             FROM mind_contradiction_events
@@ -446,7 +486,7 @@ public sealed class PostgresMindHealthService : IMindHealthService
 
     public async Task<IReadOnlyList<DailyHealthScore>> GetDailyScoresAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var scores = await conn.QueryAsync<DailyHealthScoreRow>(@"

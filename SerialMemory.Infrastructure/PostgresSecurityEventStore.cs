@@ -9,17 +9,11 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL implementation of security event storage
 /// </summary>
-public class PostgresSecurityEventStore : ISecurityEventStore
+public class PostgresSecurityEventStore(string connectionString) : ISecurityEventStore
 {
-    private readonly string _connectionString;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public PostgresSecurityEventStore(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
-
-    private NpgsqlConnection CreateConnection() => new(_connectionString);
+    private NpgsqlConnection CreateConnection() => new(connectionString);
 
     public async Task<Guid> LogEventAsync(IntegrityEvent integrityEvent, CancellationToken ct = default)
     {

@@ -68,7 +68,8 @@ builder.Services.AddOpenTelemetry()
     {
         mb.AddMeter(Metrics.MeterName);
         mb.AddPrometheusExporter();
-        mb.AddRuntimeInstrumentation();
+        mb.AddAspNetCoreInstrumentation();
+        mb.AddHttpClientInstrumentation();
         mb.AddProcessInstrumentation();
     });
 

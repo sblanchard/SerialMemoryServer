@@ -10,12 +10,57 @@
             <h1 class="text-3xl font-bold text-soft-white">Mind Health</h1>
             <p class="mt-2 text-graphite">Monitor knowledge graph coherence, drift, and cognitive health.</p>
         </div>
-        <form method="post" asp-page-handler="Recalibrate">
-            @Html.AntiForgeryToken()
-            <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium">
-                Recalibrate
+        <div class="flex items-center gap-3">
+            <button onclick="toggleExplanation()" class="text-sm text-cyan hover:text-white transition flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                How scores work
             </button>
-        </form>
+            <form method="post" asp-page-handler="Recalibrate">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium">
+                    Recalibrate
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Score Explanation Panel (Hidden by default) -->
+    <div id="explanationPanel" class="hidden mb-6 card bg-midnight/50 border border-cyan/20">
+        <div class="flex items-start gap-4">
+            <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-cyan/10 flex items-center justify-center">
+                <svg class="w-5 h-5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+            </div>
+            <div class="flex-1">
+                <h3 class="text-soft-white font-medium mb-2">Understanding Mind Health Scores</h3>
+                <div class="grid md:grid-cols-2 gap-4 text-sm text-graphite">
+                    <div>
+                        <p class="font-medium text-electric mb-1">Overall Score</p>
+                        <p>Weighted average: Coherence (25%) + Consistency (30%) + Reliability (25%) + Freshness (20%)</p>
+                    </div>
+                    <div>
+                        <p class="font-medium text-cyan mb-1">Status Thresholds</p>
+                        <p>Excellent: 90%+ | Healthy: 70-89% | Warning: 50-69% | Critical: &lt;50%</p>
+                    </div>
+                    <div>
+                        <p class="font-medium text-green-400 mb-1">Improving Scores</p>
+                        <p>Reinforce validated memories, resolve contradictions, archive stale data, and flag hallucinations.</p>
+                    </div>
+                    <div>
+                        <p class="font-medium text-purple-400 mb-1">Recalibrate</p>
+                        <p>Triggers full re-analysis: decay application, duplicate detection, and contradiction scanning.</p>
+                    </div>
+                </div>
+            </div>
+            <button onclick="toggleExplanation()" class="text-graphite hover:text-soft-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
     </div>
 
     @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -55,32 +100,80 @@
                     <div class="text-xs text-graphite mt-1">Updated @Model.HealthScore.CalculatedAt.ToString("HH:mm")</div>
                 </div>
                 <div class="md:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div class="bg-slate/30 rounded-md p-4 text-center">
+                    <!-- Coherence Score -->
+                    <div class="bg-slate/30 rounded-md p-4 text-center group relative">
                         <div class="text-2xl font-semibold text-soft-white">@((Model.HealthScore.CoherenceScore * 100).ToString("F0"))%</div>
-                        <div class="text-xs text-graphite mt-1">Coherence</div>
+                        <div class="text-xs text-graphite mt-1 flex items-center justify-center gap-1">
+                            Coherence
+                            <svg class="w-3 h-3 text-graphite/60 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
                         <div class="w-full bg-slate rounded-full h-1 mt-2">
                             <div class="bg-electric h-1 rounded-full" style="width: @((Model.HealthScore.CoherenceScore * 100))%"></div>
                         </div>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-midnight border border-slate rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 text-left">
+                            <div class="text-xs text-soft-white font-medium mb-1">Coherence Score</div>
+                            <div class="text-xs text-graphite">Measures how well memories relate to each other semantically. High coherence means memories form logical clusters and don't contain isolated, disconnected information.</div>
+                            <div class="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45 w-2 h-2 bg-midnight border-r border-b border-slate"></div>
+                        </div>
                     </div>
-                    <div class="bg-slate/30 rounded-md p-4 text-center">
+                    <!-- Consistency Score -->
+                    <div class="bg-slate/30 rounded-md p-4 text-center group relative">
                         <div class="text-2xl font-semibold text-soft-white">@((Model.HealthScore.ConsistencyScore * 100).ToString("F0"))%</div>
-                        <div class="text-xs text-graphite mt-1">Consistency</div>
+                        <div class="text-xs text-graphite mt-1 flex items-center justify-center gap-1">
+                            Consistency
+                            <svg class="w-3 h-3 text-graphite/60 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
                         <div class="w-full bg-slate rounded-full h-1 mt-2">
                             <div class="bg-cyan h-1 rounded-full" style="width: @((Model.HealthScore.ConsistencyScore * 100))%"></div>
                         </div>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-midnight border border-slate rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 text-left">
+                            <div class="text-xs text-soft-white font-medium mb-1">Consistency Score</div>
+                            <div class="text-xs text-graphite">Measures absence of contradictions. Low score indicates conflicting information exists (e.g., "X uses PostgreSQL" vs "X uses MySQL"). Resolve contradictions to improve.</div>
+                            <div class="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45 w-2 h-2 bg-midnight border-r border-b border-slate"></div>
+                        </div>
                     </div>
-                    <div class="bg-slate/30 rounded-md p-4 text-center">
+                    <!-- Reliability Score -->
+                    <div class="bg-slate/30 rounded-md p-4 text-center group relative">
                         <div class="text-2xl font-semibold text-soft-white">@((Model.HealthScore.ReliabilityScore * 100).ToString("F0"))%</div>
-                        <div class="text-xs text-graphite mt-1">Reliability</div>
+                        <div class="text-xs text-graphite mt-1 flex items-center justify-center gap-1">
+                            Reliability
+                            <svg class="w-3 h-3 text-graphite/60 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
                         <div class="w-full bg-slate rounded-full h-1 mt-2">
                             <div class="bg-green-500 h-1 rounded-full" style="width: @((Model.HealthScore.ReliabilityScore * 100))%"></div>
                         </div>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-midnight border border-slate rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 text-left">
+                            <div class="text-xs text-soft-white font-medium mb-1">Reliability Score</div>
+                            <div class="text-xs text-graphite">Based on average confidence and hallucination rate. High confidence memories with few flagged hallucinations indicate reliable knowledge. Validate low-confidence memories to improve.</div>
+                            <div class="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45 w-2 h-2 bg-midnight border-r border-b border-slate"></div>
+                        </div>
                     </div>
-                    <div class="bg-slate/30 rounded-md p-4 text-center">
+                    <!-- Freshness Score -->
+                    <div class="bg-slate/30 rounded-md p-4 text-center group relative">
                         <div class="text-2xl font-semibold text-soft-white">@((Model.HealthScore.FreshnessScore * 100).ToString("F0"))%</div>
-                        <div class="text-xs text-graphite mt-1">Freshness</div>
+                        <div class="text-xs text-graphite mt-1 flex items-center justify-center gap-1">
+                            Freshness
+                            <svg class="w-3 h-3 text-graphite/60 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
                         <div class="w-full bg-slate rounded-full h-1 mt-2">
                             <div class="bg-purple-500 h-1 rounded-full" style="width: @((Model.HealthScore.FreshnessScore * 100))%"></div>
+                        </div>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-midnight border border-slate rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 text-left">
+                            <div class="text-xs text-soft-white font-medium mb-1">Freshness Score</div>
+                            <div class="text-xs text-graphite">Measures how recently memories have been reinforced. Old, unaccessed memories decay over time. Reinforce important memories or archive stale ones to improve freshness.</div>
+                            <div class="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45 w-2 h-2 bg-midnight border-r border-b border-slate"></div>
                         </div>
                     </div>
                 </div>
@@ -92,31 +185,31 @@
     @if (Model.Stats != null)
     {
         <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-8">
-            <div class="card">
+            <div class="card group relative" title="All memories ever stored in the knowledge graph">
                 <div class="text-sm font-medium text-graphite">Total Memories</div>
                 <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.Stats.TotalMemories.ToString("N0")</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Memories currently available for retrieval (not archived/invalidated)">
                 <div class="text-sm font-medium text-graphite">Active</div>
                 <div class="mt-1 text-2xl font-semibold text-green-400">@Model.Stats.ActiveMemories.ToString("N0")</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Memories moved to cold storage due to low access/confidence">
                 <div class="text-sm font-medium text-graphite">Archived</div>
                 <div class="mt-1 text-2xl font-semibold text-graphite">@Model.Stats.ArchivedMemories.ToString("N0")</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Average confidence score across all active memories (0-100%)">
                 <div class="text-sm font-medium text-graphite">Avg Confidence</div>
                 <div class="mt-1 text-2xl font-semibold text-cyan">@((Model.Stats.AvgConfidence * 100).ToString("F0"))%</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Memories flagged as potentially containing fabricated/incorrect information">
                 <div class="text-sm font-medium text-graphite">Hallucinations</div>
                 <div class="mt-1 text-2xl font-semibold text-purple-400">@Model.Stats.HallucinationCount</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Pairs of memories with conflicting information that need resolution">
                 <div class="text-sm font-medium text-graphite">Contradictions</div>
                 <div class="mt-1 text-2xl font-semibold text-red-400">@Model.Stats.ContradictionCount</div>
             </div>
-            <div class="card">
+            <div class="card group relative" title="Alerts requiring attention (low confidence, high decay, integrity issues)">
                 <div class="text-sm font-medium text-graphite">Unresolved Alerts</div>
                 <div class="mt-1 text-2xl font-semibold text-yellow-400">@Model.Stats.UnresolvedAlerts</div>
             </div>
@@ -357,3 +450,12 @@
         </div>
     }
 </div>
+
+@section Scripts {
+<script>
+    function toggleExplanation() {
+        const panel = document.getElementById('explanationPanel');
+        panel.classList.toggle('hidden');
+    }
+</script>
+}

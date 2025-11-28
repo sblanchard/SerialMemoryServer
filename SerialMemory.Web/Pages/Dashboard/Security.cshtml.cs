@@ -9,10 +9,12 @@ namespace SerialMemory.Web.Pages.Dashboard;
 public sealed class SecurityModel : PageModel
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AppConfig _appConfig;
 
-    public SecurityModel(IHttpClientFactory httpClientFactory)
+    public SecurityModel(IHttpClientFactory httpClientFactory, AppConfig appConfig)
     {
         _httpClientFactory = httpClientFactory;
+        _appConfig = appConfig;
     }
 
     // Tenant Isolation
@@ -168,9 +170,19 @@ public sealed class SecurityModel : PageModel
         TamperDetected = false;
         IntegrityStatus = "OK";
 
-        Region = "US-East";
-        RetentionPolicy = "90 days";
-        ComplianceProof = "Compliant";
+        // Self-hosted shows local/self-managed, SaaS shows cloud regions
+        if (_appConfig.IsSelfHosted)
+        {
+            Region = "Local (Self-Hosted)";
+            RetentionPolicy = "Self-Managed";
+            ComplianceProof = "Self-Managed";
+        }
+        else
+        {
+            Region = "US-East";
+            RetentionPolicy = "90 days";
+            ComplianceProof = "Compliant";
+        }
         ResidencyStatus = "OK";
     }
 

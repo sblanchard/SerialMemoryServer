@@ -9,25 +9,13 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// Security pipeline implementation for memory integrity validation
 /// </summary>
-public class SecurityPipeline : ISecurityPipeline
+public class SecurityPipeline(
+    ISecurityEventStore eventStore,
+    IKnowledgeGraphStore knowledgeGraphStore,
+    IEmbeddingService? embeddingService,
+    ILogger<SecurityPipeline> logger)
+    : ISecurityPipeline
 {
-    private readonly ISecurityEventStore _eventStore;
-    private readonly IKnowledgeGraphStore _knowledgeGraphStore;
-    private readonly IEmbeddingService? _embeddingService;
-    private readonly ILogger<SecurityPipeline> _logger;
-
-    public SecurityPipeline(
-        ISecurityEventStore eventStore,
-        IKnowledgeGraphStore knowledgeGraphStore,
-        IEmbeddingService? embeddingService,
-        ILogger<SecurityPipeline> logger)
-    {
-        _eventStore = eventStore;
-        _knowledgeGraphStore = knowledgeGraphStore;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
-
     /// <summary>
     /// Compute SHA-256 hash of content
     /// </summary>
@@ -58,7 +46,7 @@ public class SecurityPipeline : ISecurityPipeline
         {
             // No stored hash - this is a pass but log as info
             result.IsValid = true;
-            await _eventStore.LogEventAsync(new IntegrityEvent
+            await eventStore.LogEventAsync(new IntegrityEvent
             {
                 EventType = IntegrityEventType.MemoryReadValidated,
                 Severity = IntegritySeverity.Info,
@@ -71,7 +59,7 @@ public class SecurityPipeline : ISecurityPipeline
         else if (expectedHash == actualHash)
         {
             result.IsValid = true;
-            await _eventStore.LogEventAsync(new IntegrityEvent
+            await eventStore.LogEventAsync(new IntegrityEvent
             {
                 EventType = IntegrityEventType.HashValidationPass,
                 Severity = IntegritySeverity.Info,
@@ -85,10 +73,10 @@ public class SecurityPipeline : ISecurityPipeline
         else
         {
             result.IsValid = false;
-            _logger.LogWarning("Hash mismatch detected for memory {MemoryId}: expected {Expected}, got {Actual}",
+            logger.LogWarning("Hash mismatch detected for memory {MemoryId}: expected {Expected}, got {Actual}",
                 memory.Id, expectedHash, actualHash);
 
-            await _eventStore.LogEventAsync(new IntegrityEvent
+            await eventStore.LogEventAsync(new IntegrityEvent
             {
                 EventType = IntegrityEventType.HashMismatch,
                 Severity = IntegritySeverity.Critical,
@@ -124,7 +112,7 @@ public class SecurityPipeline : ISecurityPipeline
         memory.Metadata ??= new Dictionary<string, object>();
         memory.Metadata["content_hash"] = contentHash;
 
-        await _eventStore.LogEventAsync(new IntegrityEvent
+        await eventStore.LogEventAsync(new IntegrityEvent
         {
             EventType = IntegrityEventType.MemoryWriteValidated,
             Severity = IntegritySeverity.Info,
@@ -141,7 +129,7 @@ public class SecurityPipeline : ISecurityPipeline
     {
         var contradictions = new List<ContradictionResult>();
 
-        if (_embeddingService == null || memory.Embedding == null || memory.Embedding.Length == 0)
+        if (embeddingService == null || memory.Embedding == null || memory.Embedding.Length == 0)
         {
             return contradictions;
         }
@@ -174,7 +162,7 @@ public class SecurityPipeline : ISecurityPipeline
 
                     contradictions.Add(contradiction);
 
-                    await _eventStore.LogEventAsync(new IntegrityEvent
+                    await eventStore.LogEventAsync(new IntegrityEvent
                     {
                         EventType = IntegrityEventType.ContradictionDetected,
                         Severity = IntegritySeverity.Warning,
@@ -222,7 +210,7 @@ public class SecurityPipeline : ISecurityPipeline
                 result.LoopPath = new List<Guid>(path);
                 result.Depth = path.Count;
 
-                await _eventStore.LogEventAsync(new IntegrityEvent
+                await eventStore.LogEventAsync(new IntegrityEvent
                 {
                     EventType = IntegrityEventType.CausalLoopDetected,
                     Severity = IntegritySeverity.Error,
@@ -266,7 +254,7 @@ public class SecurityPipeline : ISecurityPipeline
         path.Add(currentId);
 
         // Get memory to check its causal parents
-        var memory = await _knowledgeGraphStore.GetMemoryByIdAsync(currentId, ct);
+        var memory = await knowledgeGraphStore.GetMemoryByIdAsync(currentId, ct);
         if (memory?.Metadata?.TryGetValue("causal_parents", out var parentsObj) == true)
         {
             Guid[]? parents = null;
@@ -305,7 +293,7 @@ public class SecurityPipeline : ISecurityPipeline
             TriggeredBy = "manual"
         };
 
-        await _eventStore.StartScanAsync(scan, ct);
+        await eventStore.StartScanAsync(scan, ct);
         var eventsGenerated = 0;
         var issuesFound = 0;
         var criticalIssues = 0;
@@ -330,7 +318,7 @@ public class SecurityPipeline : ISecurityPipeline
             issuesFound += loopResult.IssuesFound;
             criticalIssues += loopResult.CriticalIssues;
 
-            await _eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, criticalIssues, ct);
+            await eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, criticalIssues, ct);
 
             scan.Status = "completed";
             scan.EventsGenerated = eventsGenerated;
@@ -340,10 +328,10 @@ public class SecurityPipeline : ISecurityPipeline
         }
         catch (Exception ex)
         {
-            await _eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
+            await eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
             scan.Status = "failed";
             scan.ErrorMessage = ex.Message;
-            _logger.LogError(ex, "Full integrity scan failed");
+            logger.LogError(ex, "Full integrity scan failed");
         }
 
         return scan;
@@ -357,14 +345,14 @@ public class SecurityPipeline : ISecurityPipeline
             TriggeredBy = "manual"
         };
 
-        await _eventStore.StartScanAsync(scan, ct);
+        await eventStore.StartScanAsync(scan, ct);
         var eventsGenerated = 0;
         var issuesFound = 0;
         var criticalIssues = 0;
 
         try
         {
-            var memories = await _knowledgeGraphStore.GetAllMemoriesAsync(batchSize, 0, ct);
+            var memories = await knowledgeGraphStore.GetAllMemoriesAsync(batchSize, 0, ct);
             scan.MemoriesScanned = memories.Count;
 
             foreach (var memory in memories)
@@ -379,7 +367,7 @@ public class SecurityPipeline : ISecurityPipeline
                 }
             }
 
-            await _eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, criticalIssues, ct);
+            await eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, criticalIssues, ct);
             scan.Status = "completed";
             scan.EventsGenerated = eventsGenerated;
             scan.IssuesFound = issuesFound;
@@ -388,10 +376,10 @@ public class SecurityPipeline : ISecurityPipeline
         }
         catch (Exception ex)
         {
-            await _eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
+            await eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
             scan.Status = "failed";
             scan.ErrorMessage = ex.Message;
-            _logger.LogError(ex, "Hash validation scan failed");
+            logger.LogError(ex, "Hash validation scan failed");
         }
 
         return scan;
@@ -405,13 +393,13 @@ public class SecurityPipeline : ISecurityPipeline
             TriggeredBy = "manual"
         };
 
-        await _eventStore.StartScanAsync(scan, ct);
+        await eventStore.StartScanAsync(scan, ct);
         var eventsGenerated = 0;
         var issuesFound = 0;
 
         try
         {
-            var memories = await _knowledgeGraphStore.GetRecentMemoriesAsync(batchSize, ct);
+            var memories = await knowledgeGraphStore.GetRecentMemoriesAsync(batchSize, ct);
             scan.MemoriesScanned = memories.Count;
 
             // Compare each memory against others
@@ -424,7 +412,7 @@ public class SecurityPipeline : ISecurityPipeline
                 issuesFound += contradictions.Count;
             }
 
-            await _eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, 0, ct);
+            await eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, 0, ct);
             scan.Status = "completed";
             scan.EventsGenerated = eventsGenerated;
             scan.IssuesFound = issuesFound;
@@ -432,10 +420,10 @@ public class SecurityPipeline : ISecurityPipeline
         }
         catch (Exception ex)
         {
-            await _eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
+            await eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
             scan.Status = "failed";
             scan.ErrorMessage = ex.Message;
-            _logger.LogError(ex, "Contradiction scan failed");
+            logger.LogError(ex, "Contradiction scan failed");
         }
 
         return scan;
@@ -449,13 +437,13 @@ public class SecurityPipeline : ISecurityPipeline
             TriggeredBy = "manual"
         };
 
-        await _eventStore.StartScanAsync(scan, ct);
+        await eventStore.StartScanAsync(scan, ct);
         var eventsGenerated = 0;
         var issuesFound = 0;
 
         try
         {
-            var memories = await _knowledgeGraphStore.GetRecentMemoriesAsync(100, ct);
+            var memories = await knowledgeGraphStore.GetRecentMemoriesAsync(100, ct);
             scan.MemoriesScanned = memories.Count;
 
             foreach (var memory in memories)
@@ -481,7 +469,7 @@ public class SecurityPipeline : ISecurityPipeline
                 }
             }
 
-            await _eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, issuesFound, ct);
+            await eventStore.CompleteScanAsync(scan.ScanId, eventsGenerated, issuesFound, issuesFound, ct);
             scan.Status = "completed";
             scan.EventsGenerated = eventsGenerated;
             scan.IssuesFound = issuesFound;
@@ -490,10 +478,10 @@ public class SecurityPipeline : ISecurityPipeline
         }
         catch (Exception ex)
         {
-            await _eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
+            await eventStore.FailScanAsync(scan.ScanId, ex.Message, ct);
             scan.Status = "failed";
             scan.ErrorMessage = ex.Message;
-            _logger.LogError(ex, "Loop detection scan failed");
+            logger.LogError(ex, "Loop detection scan failed");
         }
 
         return scan;

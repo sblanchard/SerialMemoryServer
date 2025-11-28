@@ -12,17 +12,9 @@ namespace SerialMemory.Infrastructure;
 /// Power-user service for direct memory manipulation.
 /// NO GUARD RAILS. NO SAFE MODE.
 /// </summary>
-public sealed class PostgresPowerUserService : IPowerUserService
+public sealed class PostgresPowerUserService(string connectionString, ILogger<PostgresPowerUserService> logger)
+    : IPowerUserService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<PostgresPowerUserService> _logger;
-
-    public PostgresPowerUserService(string connectionString, ILogger<PostgresPowerUserService> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
-
     // ==========================================
     // RAW MEMORY EDITING
     // ==========================================
@@ -33,7 +25,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool skipHashUpdate = false,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var previousHash = await conn.ExecuteScalarAsync<string?>(
@@ -49,7 +41,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Content = newContent, Hash = newHash });
 
-        _logger.LogWarning("[POWER-USER] Direct content edit on {MemoryId}, skipHash={Skip}", memoryId, skipHashUpdate);
+        logger.LogWarning("[POWER-USER] Direct content edit on {MemoryId}, skipHash={Skip}", memoryId, skipHashUpdate);
 
         return new RawEditResult
         {
@@ -66,7 +58,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         MemoryMetadataUpdate update,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var changes = new Dictionary<string, object>();
@@ -126,7 +118,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
         var rows = await conn.ExecuteAsync(sql, parameters);
 
-        _logger.LogWarning("[POWER-USER] Metadata edit on {MemoryId}: {Changes}", memoryId, string.Join(", ", changes.Keys));
+        logger.LogWarning("[POWER-USER] Metadata edit on {MemoryId}: {Changes}", memoryId, string.Join(", ", changes.Keys));
 
         return new RawEditResult
         {
@@ -141,7 +133,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float confidence,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var previousConfidence = await conn.ExecuteScalarAsync<float?>(
@@ -155,7 +147,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Confidence = confidence });
 
-        _logger.LogWarning("[POWER-USER] Force confidence on {MemoryId}: {Prev} -> {New}",
+        logger.LogWarning("[POWER-USER] Force confidence on {MemoryId}: {Prev} -> {New}",
             memoryId, previousConfidence, confidence);
 
         return new RawEditResult
@@ -175,7 +167,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float[] embedding,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var vectorString = $"[{string.Join(",", embedding)}]";
@@ -187,7 +179,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Embedding = vectorString });
 
-        _logger.LogWarning("[POWER-USER] Embedding replacement on {MemoryId}, dim={Dim}", memoryId, embedding.Length);
+        logger.LogWarning("[POWER-USER] Embedding replacement on {MemoryId}, dim={Dim}", memoryId, embedding.Length);
 
         return new RawEditResult
         {
@@ -206,7 +198,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool cascade = false,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -232,7 +224,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] HARD DELETE on {MemoryId}, cascade={Cascade}, deleted={Rows}",
+            logger.LogWarning("[POWER-USER] HARD DELETE on {MemoryId}, cascade={Cascade}, deleted={Rows}",
                 memoryId, cascade, JsonSerializer.Serialize(deletedRows));
 
             return new RawEditResult
@@ -301,7 +293,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float? minSeverity = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflicts = await conn.QueryAsync<ConflictRow>("""
@@ -379,7 +371,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflicts = await conn.QueryAsync<ConflictRow>("""
@@ -428,7 +420,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         Guid? winnerId = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         await conn.ExecuteAsync("""
@@ -440,7 +432,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = conflictId, WinnerId = winnerId, Resolution = resolution });
 
-        _logger.LogWarning("[POWER-USER] Resolved conflict {ConflictId}: resolution={Resolution}, winner={Winner}",
+        logger.LogWarning("[POWER-USER] Resolved conflict {ConflictId}: resolution={Resolution}, winner={Winner}",
             conflictId, resolution, winnerId);
     }
 
@@ -475,7 +467,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflicts = await conn.QueryAsync<ConflictRow>("""
@@ -524,7 +516,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         ConflictResolutionAction action,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -576,7 +568,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] Force resolved conflict {ConflictId}: winner={Winner}, action={Action}",
+            logger.LogWarning("[POWER-USER] Force resolved conflict {ConflictId}: winner={Winner}, action={Action}",
                 conflictId, winnerId, action);
 
             return new ConflictResolution
@@ -601,7 +593,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         string? reason = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflictId = Guid.CreateVersion7();
@@ -614,7 +606,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
                 reason = COALESCE(@Reason, memory_conflicts.reason)
             """, new { Id = conflictId, A = memoryA, B = memoryB, Severity = severity, Reason = reason });
 
-        _logger.LogWarning("[POWER-USER] Manual contradiction flag: {A} <-> {B}, severity={Severity}",
+        logger.LogWarning("[POWER-USER] Manual contradiction flag: {A} <-> {B}, severity={Severity}",
             memoryA, memoryB, severity);
 
         return new MemoryConflict
@@ -636,7 +628,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
@@ -687,7 +679,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
@@ -725,7 +717,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 1000,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
@@ -765,10 +757,10 @@ public sealed class PostgresPowerUserService : IPowerUserService
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
-        _logger.LogWarning("[POWER-USER] RAW SQL EXECUTION: {Sql}", sql);
+        logger.LogWarning("[POWER-USER] RAW SQL EXECUTION: {Sql}", sql);
 
         try
         {
@@ -839,7 +831,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var mutations = await conn.QueryAsync<MutationRow>("""
@@ -901,7 +893,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float confidence = 1.0f,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var edgeId = Guid.CreateVersion7();
@@ -911,7 +903,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             VALUES (@Id, @Source, @Target, @Type, @Confidence, NOW())
             """, new { Id = edgeId, Source = sourceId, Target = targetId, Type = edgeType, Confidence = confidence });
 
-        _logger.LogWarning("[POWER-USER] Force edge creation: {Source} --[{Type}]--> {Target}", sourceId, edgeType, targetId);
+        logger.LogWarning("[POWER-USER] Force edge creation: {Source} --[{Type}]--> {Target}", sourceId, edgeType, targetId);
 
         return new GraphMutation
         {
@@ -929,7 +921,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool cascadeEdges = true,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -951,7 +943,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] Force node deletion: {NodeId}, cascade={Cascade}", nodeId, cascadeEdges);
+            logger.LogWarning("[POWER-USER] Force node deletion: {NodeId}, cascade={Cascade}", nodeId, cascadeEdges);
 
             return new GraphMutation
             {
@@ -973,7 +965,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         long toSequence,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var mutations = await conn.QueryAsync<MutationRow>("""

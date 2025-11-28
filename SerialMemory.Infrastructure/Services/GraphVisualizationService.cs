@@ -6,11 +6,11 @@ namespace SerialMemory.Infrastructure.Services;
 /// <summary>
 /// Service for generating graph visualization data with integrated reasoning overlays.
 /// </summary>
-public sealed class GraphVisualizationService : IGraphVisualizationService
+public sealed class GraphVisualizationService(
+    IKnowledgeGraphStore store,
+    IEngineeringReasoningService reasoningService)
+    : IGraphVisualizationService
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly IEngineeringReasoningService _reasoningService;
-
     // Software entity types
     private static readonly HashSet<string> SoftwareEntityTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -28,22 +28,14 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
         "ACTUATOR", "ENCLOSURE", "CABLE", "ANTENNA"
     };
 
-    public GraphVisualizationService(
-        IKnowledgeGraphStore store,
-        IEngineeringReasoningService reasoningService)
-    {
-        _store = store;
-        _reasoningService = reasoningService;
-    }
-
     public async Task<GraphVisualizationResult> GenerateVisualizationAsync(
         VisualizationMode mode = VisualizationMode.Mixed,
         string? projectFilter = null,
         bool includeOverlays = true,
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
 
         // Filter by project if specified
         if (!string.IsNullOrEmpty(projectFilter))
@@ -115,7 +107,7 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
         bool includeOverlays = true,
         CancellationToken cancellationToken = default)
     {
-        var memoryEntities = await _store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
+        var memoryEntities = await store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
         if (memoryEntities.Count == 0)
         {
             return new GraphVisualizationResult { Mode = mode };
@@ -123,7 +115,7 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
 
         // Get all relationships for these entities
         var entityIds = memoryEntities.Select(e => e.Id).ToHashSet();
-        var allRelationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var allRelationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
 
         // Include entities connected via relationships
         var connectedEntityIds = new HashSet<Guid>(entityIds);
@@ -135,7 +127,7 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
         }
 
         // Get all connected entities
-        var allEntities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
+        var allEntities = await store.GetAllEntitiesAsync(10000, cancellationToken);
         var entities = allEntities.Where(e => connectedEntityIds.Contains(e.Id)).ToList();
 
         // Filter by mode
@@ -171,7 +163,7 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
         var overlays = new List<VisualizationOverlay>();
         if (includeOverlays)
         {
-            var analysisResult = await _reasoningService.AnalyzeMemoryAsync(memoryId, cancellationToken);
+            var analysisResult = await reasoningService.AnalyzeMemoryAsync(memoryId, cancellationToken);
             overlays = ConvertInsightsToOverlays(analysisResult.Insights);
         }
 
@@ -250,7 +242,7 @@ public sealed class GraphVisualizationService : IGraphVisualizationService
         string? projectFilter,
         CancellationToken cancellationToken)
     {
-        var analysisResult = await _reasoningService.AnalyzeAsync(projectFilter, cancellationToken);
+        var analysisResult = await reasoningService.AnalyzeAsync(projectFilter, cancellationToken);
         return ConvertInsightsToOverlays(analysisResult.Insights);
     }
 
