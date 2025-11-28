@@ -1,3 +1,4 @@
+using System.Dynamic;
 using Dapper;
 using Npgsql;
 using Pgvector;
@@ -191,17 +192,17 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new
-            {
-                id = reader.GetGuid(0),
-                content = reader.GetString(1),
-                created_at = reader.GetDateTime(2),
-                updated_at = reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3),
-                source = reader.IsDBNull(4) ? null : reader.GetString(4),
-                conversation_session_id = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5),
-                metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
-                similarity = reader.GetFloat(7)
-            });
+            dynamic row = new ExpandoObject();
+            var dict = (IDictionary<string, object>)row;
+            dict["id"] = reader.GetGuid(0);
+            dict["content"] = reader.GetString(1);
+            dict["created_at"] = reader.GetDateTime(2);
+            dict["updated_at"] = reader.IsDBNull(3) ? null : reader.GetDateTime(3);
+            dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
+            dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
+            dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
+            dict["similarity"] = reader.GetFloat(7);
+            results.Add(row);
         }
 
         return results.Select(MapToMemory).ToList();

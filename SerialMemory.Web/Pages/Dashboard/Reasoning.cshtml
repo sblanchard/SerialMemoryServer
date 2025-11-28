@@ -13,7 +13,7 @@
             </div>
             <div class="flex items-center gap-3">
                 <div class="flex items-center gap-2 text-sm">
-                    <span id="connectionStatus" class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                    <span id="connectionStatus" class="w-2 h-2 rounded-full bg-yellow-900/300"></span>
                     <span class="text-graphite" id="connectionText">Connecting...</span>
                 </div>
                 <button onclick="startNewRun()" class="btn-primary px-4 py-2 rounded-lg font-medium flex items-center gap-2">
@@ -51,10 +51,10 @@
                         var isSelected = Model.SelectedRunId == run.Id;
                         var statusColor = run.Status switch
                         {
-                            "completed" => "bg-green-500",
+                            "completed" => "bg-green-900/300",
                             "running" => "bg-cyan animate-pulse",
                             "failed" => "bg-red-500",
-                            _ => "bg-gray-500"
+                            _ => "bg-slate/300"
                         };
                         <button onclick="selectRun('@run.Id')"
                                 class="w-full text-left p-3 rounded-lg transition hover:bg-slate/50 @(isSelected ? "bg-cyan/10 border border-cyan/30" : "")">
@@ -189,7 +189,7 @@
     function updateConnectionUI(connected, text) {
         const status = document.getElementById('connectionStatus');
         const txt = document.getElementById('connectionText');
-        status.className = 'w-2 h-2 rounded-full ' + (connected ? 'bg-green-500' : 'bg-red-500');
+        status.className = 'w-2 h-2 rounded-full ' + (connected ? 'bg-green-900/300' : 'bg-red-500');
         txt.textContent = text;
         isConnected = connected;
     }
@@ -282,9 +282,9 @@
             const typeColors = {
                 'plan_start': 'bg-purple-500/20 text-purple-400 border-purple-500/30',
                 'reasoning_step': 'bg-cyan/20 text-cyan border-cyan/30',
-                'tool_call': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-                'reflection': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-                'completion': 'bg-green-500/20 text-green-400 border-green-500/30',
+                'tool_call': 'bg-yellow-900/300/20 text-yellow-400 border-yellow-500/30',
+                'reflection': 'bg-blue-900/300/20 text-blue-400 border-blue-500/30',
+                'completion': 'bg-green-900/300/20 text-green-400 border-green-500/30',
                 'error': 'bg-red-500/20 text-red-400 border-red-500/30'
             };
             const colors = typeColors[step.type] || 'bg-slate text-graphite border-slate';
@@ -431,7 +431,7 @@
         if (runBtn) {
             const statusDot = runBtn.querySelector('.rounded-full');
             if (statusDot) {
-                statusDot.className = 'w-2 h-2 rounded-full ' + (status === 'completed' ? 'bg-green-500' : status === 'failed' ? 'bg-red-500' : 'bg-cyan');
+                statusDot.className = 'w-2 h-2 rounded-full ' + (status === 'completed' ? 'bg-green-900/300' : status === 'failed' ? 'bg-red-500' : 'bg-cyan');
             }
         }
     }

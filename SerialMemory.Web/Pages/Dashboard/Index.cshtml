@@ -179,7 +179,7 @@
             return;
         }
 
-        resultDiv.innerHTML = '<span class="text-gray-600">Ingesting...</span>';
+        resultDiv.innerHTML = '<span class="text-graphite">Ingesting...</span>';
 
         try {
             const response = await fetch(`${apiBaseUrl}/api/memory/ingest`, {
@@ -212,7 +212,7 @@
             return;
         }
 
-        resultDiv.innerHTML = '<span class="text-gray-600">Searching...</span>';
+        resultDiv.innerHTML = '<span class="text-graphite">Searching...</span>';
 
         try {
             const response = await fetch(`${apiBaseUrl}/api/memory/search?query=${encodeURIComponent(query)}`, {
@@ -225,13 +225,13 @@
                 const data = await response.json();
                 if (data.memories && data.memories.length > 0) {
                     resultDiv.innerHTML = data.memories.map(m =>
-                        `<div class="p-2 bg-gray-50 rounded mb-2">
-                            <div class="text-gray-900">${m.content}</div>
-                            <div class="text-xs text-gray-500">Score: ${(m.score * 100).toFixed(1)}%</div>
+                        `<div class="p-2 bg-slate/30 rounded mb-2">
+                            <div class="text-soft-white">${m.content}</div>
+                            <div class="text-xs text-graphite">Score: ${(m.score * 100).toFixed(1)}%</div>
                         </div>`
                     ).join('');
                 } else {
-                    resultDiv.innerHTML = '<span class="text-gray-600">No memories found</span>';
+                    resultDiv.innerHTML = '<span class="text-graphite">No memories found</span>';
                 }
             } else {
                 const error = await response.json();

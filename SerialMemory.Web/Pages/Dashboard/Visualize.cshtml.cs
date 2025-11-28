@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class VisualizeModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public VisualizeModel(IHttpClientFactory httpClientFactory)
+    public VisualizeModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -49,7 +49,7 @@ public sealed class VisualizeModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var request = new
             {
@@ -174,11 +174,6 @@ public sealed class VisualizeModel : PageModel
                 criticalPaths = new[] { "api-gateway", "payment-service", "database" }
             }
         });
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     private sealed class NodesApiResponse

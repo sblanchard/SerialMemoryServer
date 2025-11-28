@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class ConfidenceModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ConfidenceModel(IHttpClientFactory httpClientFactory)
+    public ConfidenceModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<ConfidenceHistoryItem> History { get; set; } = [];
@@ -32,7 +33,7 @@ public sealed class ConfidenceModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/confidence/reason", new
             {
                 project,
@@ -60,7 +61,7 @@ public sealed class ConfidenceModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             // Load history
             var historyResponse = await client.GetAsync("/api/confidence/history?limit=20");

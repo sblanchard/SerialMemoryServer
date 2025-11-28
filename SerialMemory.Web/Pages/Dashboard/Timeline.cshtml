@@ -197,8 +197,8 @@
                             var height = ((point.Confidence - minConf) / range) * 100;
                             var color = point.EventType switch
                             {
-                                "MemoryDecayed" => "bg-yellow-500",
-                                "MemoryReinforced" => "bg-green-500",
+                                "MemoryDecayed" => "bg-yellow-900/300",
+                                "MemoryReinforced" => "bg-green-900/300",
                                 "MemoryCreated" => "bg-cyan",
                                 _ => "bg-electric"
                             };
@@ -212,8 +212,8 @@
                     </div>
                     <div class="flex gap-4 mt-4 text-xs">
                         <div class="flex items-center gap-1"><div class="w-3 h-3 bg-cyan rounded"></div> Created</div>
-                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-green-500 rounded"></div> Reinforced</div>
-                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-yellow-500 rounded"></div> Decayed</div>
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-green-900/300 rounded"></div> Reinforced</div>
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-yellow-900/300 rounded"></div> Decayed</div>
                         <div class="flex items-center gap-1"><div class="w-3 h-3 bg-electric rounded"></div> Other</div>
                     </div>
                 </div>

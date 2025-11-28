@@ -148,7 +148,7 @@
                             </svg>
                         </div>
                         <div class="w-full bg-slate rounded-full h-1 mt-2">
-                            <div class="bg-green-500 h-1 rounded-full" style="width: @((Model.HealthScore.ReliabilityScore * 100))%"></div>
+                            <div class="bg-green-900/300 h-1 rounded-full" style="width: @((Model.HealthScore.ReliabilityScore * 100))%"></div>
                         </div>
                         <!-- Tooltip -->
                         <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-midnight border border-slate rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 text-left">
@@ -245,7 +245,7 @@
                     <div class="h-40 flex items-end gap-1">
                         @foreach (var point in Model.DailyTrend)
                         {
-                            var color = point.HealthScore >= 0.8 ? "bg-green-500" : point.HealthScore >= 0.6 ? "bg-yellow-500" : "bg-red-500";
+                            var color = point.HealthScore >= 0.8 ? "bg-green-900/300" : point.HealthScore >= 0.6 ? "bg-yellow-900/300" : "bg-red-500";
                             <div class="flex-1 @color rounded-t hover:opacity-80 transition" style="height: @((point.HealthScore * 100))%"
                                  title="@point.Date.ToString("MMM dd"): @((point.HealthScore * 100).ToString("F0"))%"></div>
                         }

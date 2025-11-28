@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class TimelineModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public TimelineModel(IHttpClientFactory httpClientFactory)
+    public TimelineModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<TimelineEntry> TimelineEntries { get; set; } = [];
@@ -87,7 +88,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/timeline/restore", new { memoryId, sequence });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -106,7 +107,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/timeline/replay", new { memoryId, fromSequence, toSequence });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -125,7 +126,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             // Use the correct API endpoints
             var timelineResponse = await client.GetFromJsonAsync<GlobalTimelineResponse>("/api/memory/timeline?limit=100");
@@ -182,7 +183,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             // Use correct API endpoints
             var timelineTask = client.GetFromJsonAsync<MemoryTimelineResponse>($"/api/memory/{memoryId}/timeline");

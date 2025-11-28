@@ -83,6 +83,10 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
+      # Internal token key for dashboard-to-API communication (base64 64-byte key)
+      # WARNING: Change this in production! Generate with: openssl rand -base64 64 | tr -d '\n'
+      - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
       # Deployment Mode: PublicSaaS (default) or SelfHosted
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
@@ -128,6 +132,10 @@ services:
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_pro_monthly}
       - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_enterprise_monthly}
+      # Azure Communication Services for email
+      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
+      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
+      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-http://localhost:5002}
       # Deployment Mode
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
@@ -151,11 +159,18 @@ services:
       - DASHBOARD_API_URL=http://dashboard-api:8080
       - PUBLIC_API_URL=http://localhost:5000
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
-      - SERVICE_API_KEY=sm_live_svc_serialmemory_admin_key_2024
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
+      # Internal token key for dashboard-to-API communication (must match API)
+      # WARNING: Change this in production! Must match the API service key
+      - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
+      # Data Protection keys path (persisted across container restarts)
+      - DATA_PROTECTION_PATH=/app/keys
       # Deployment Mode
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
       - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+    volumes:
+      - web_admin_keys:/app/keys
     depends_on:
       - api
       - dashboard-api
@@ -238,3 +253,4 @@ volumes:
   postgres_data:
   redis_data:
   grafana_data:
+  web_admin_keys:

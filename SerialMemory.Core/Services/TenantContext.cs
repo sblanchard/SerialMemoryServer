@@ -3,28 +3,28 @@ using SerialMemory.Core.Interfaces;
 namespace SerialMemory.Core.Services;
 
 /// <summary>
-/// AsyncLocal-based tenant context for ambient tenant information.
-/// Thread-safe and async-safe.
+/// Scoped tenant context for ambient tenant information.
+/// Uses instance state (not static AsyncLocal) for proper DI scoping.
 /// </summary>
 public sealed class TenantContext : IMutableTenantContext
 {
-    private static readonly AsyncLocal<TenantContextData?> _current = new();
+    private TenantContextData? _data;
 
-    public string TenantId => _current.Value?.TenantId
+    public string TenantId => _data?.TenantId
         ?? throw new InvalidOperationException("Tenant context not set. Call SetContext before accessing TenantId.");
 
-    public string WorkspaceId => _current.Value?.WorkspaceId
+    public string WorkspaceId => _data?.WorkspaceId
         ?? throw new InvalidOperationException("Tenant context not set. Call SetContext before accessing WorkspaceId.");
 
-    public string? UserId => _current.Value?.UserId;
+    public string? UserId => _data?.UserId;
 
-    public Guid? SessionId => _current.Value?.SessionId;
+    public Guid? SessionId => _data?.SessionId;
 
-    public bool IsLabMode => _current.Value?.IsLabMode ?? false;
+    public bool IsLabMode => _data?.IsLabMode ?? false;
 
-    public bool AllowPowerMode => _current.Value?.AllowPowerMode ?? false;
+    public bool AllowPowerMode => _data?.AllowPowerMode ?? false;
 
-    public IReadOnlyList<string> Scopes => _current.Value?.Scopes ?? Array.Empty<string>();
+    public IReadOnlyList<string> Scopes => _data?.Scopes ?? Array.Empty<string>();
 
     public void SetContext(
         string tenantId,
@@ -38,7 +38,7 @@ public sealed class TenantContext : IMutableTenantContext
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
 
-        _current.Value = new TenantContextData(
+        _data = new TenantContextData(
             tenantId,
             workspaceId,
             userId,
@@ -50,7 +50,7 @@ public sealed class TenantContext : IMutableTenantContext
 
     public void Clear()
     {
-        _current.Value = null;
+        _data = null;
     }
 
     /// <summary>
@@ -73,12 +73,11 @@ public sealed class TenantContext : IMutableTenantContext
     /// <summary>
     /// Tries to get the current tenant context without throwing.
     /// </summary>
-    public static bool TryGetCurrent(out ITenantContext? context)
+    public bool TryGetCurrent(out ITenantContext? context)
     {
-        var data = _current.Value;
-        if (data != null)
+        if (_data != null)
         {
-            context = new TenantContext();
+            context = this;
             return true;
         }
         context = null;
@@ -88,7 +87,7 @@ public sealed class TenantContext : IMutableTenantContext
     /// <summary>
     /// Gets whether a tenant context is currently set.
     /// </summary>
-    public static bool IsSet => _current.Value != null;
+    public bool IsSet => _data != null;
 
     private sealed record TenantContextData(
         string TenantId,

@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class MindModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public MindModel(IHttpClientFactory httpClientFactory)
+    public MindModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public MindHealthScore? HealthScore { get; set; }
@@ -36,7 +37,7 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/mind/recalibrate", null);
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Recalibration started"
@@ -55,7 +56,7 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mind/alerts/dismiss", new { alertId });
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Alert dismissed"
@@ -74,7 +75,7 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mind/hallucinations/acknowledge", new { memoryId, confirm });
             SuccessMessage = response.IsSuccessStatusCode
                 ? (confirm ? "Hallucination confirmed and memory invalidated" : "Hallucination dismissed")
@@ -93,7 +94,7 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/mind/contradictions/resolve", new { contradictionId, resolution });
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Contradiction resolved"
@@ -112,7 +113,7 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var healthTask = client.GetFromJsonAsync<MindHealthScore>("/api/mind/health");
             var alertsTask = client.GetFromJsonAsync<AlertsResponse>("/api/mind/alerts?limit=20");

@@ -334,7 +334,7 @@
                 <div class="hud-header flex items-center justify-between">
                     <span>Live Database Activity</span>
                     <div class="flex items-center gap-3 text-xs">
-                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500"></span>&lt;20ms</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-900/300"></span>&lt;20ms</span>
                         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span>20-100ms</span>
                         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span>&gt;100ms</span>
                     </div>
@@ -657,13 +657,13 @@
         });
 
         connection.onreconnecting(() => {
-            indicator.className = 'w-2 h-2 rounded-full bg-yellow-500 animate-pulse';
+            indicator.className = 'w-2 h-2 rounded-full bg-yellow-900/300 animate-pulse';
             statusText.textContent = 'Reconnecting...';
             appendLog('SignalR reconnecting...', 'warning');
         });
 
         connection.onreconnected(() => {
-            indicator.className = 'w-2 h-2 rounded-full bg-green-500';
+            indicator.className = 'w-2 h-2 rounded-full bg-green-900/300';
             statusText.textContent = 'Connected';
             appendLog('SignalR reconnected', 'success');
             subscribeToStreams();
@@ -677,7 +677,7 @@
 
         try {
             await connection.start();
-            indicator.className = 'w-2 h-2 rounded-full bg-green-500';
+            indicator.className = 'w-2 h-2 rounded-full bg-green-900/300';
             statusText.textContent = 'Connected';
             appendLog('SignalR connected', 'success');
             await subscribeToStreams();

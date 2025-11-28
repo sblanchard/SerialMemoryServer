@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class ConflictsModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ConflictsModel(IHttpClientFactory httpClientFactory)
+    public ConflictsModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<ConflictItem> Conflicts { get; set; } = [];
@@ -30,7 +31,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/resolve", new
             {
                 conflictId,
@@ -55,7 +56,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/keep-winner", new { conflictId, winnerId });
             SuccessMessage = response.IsSuccessStatusCode ? "Winner kept successfully" : "Failed to keep winner";
         }
@@ -72,7 +73,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/merge-both", new { conflictId, mergedContent });
             SuccessMessage = response.IsSuccessStatusCode ? "Memories merged successfully" : "Failed to merge memories";
         }
@@ -89,7 +90,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/discard-both", new { conflictId });
             SuccessMessage = response.IsSuccessStatusCode ? "Both memories discarded" : "Failed to discard memories";
         }
@@ -106,7 +107,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/dismiss-hallucination", new { memoryId });
             SuccessMessage = response.IsSuccessStatusCode ? "Hallucination dismissed" : "Failed to dismiss hallucination";
         }
@@ -123,7 +124,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/conflicts/flag-hallucination", new { memoryId });
             SuccessMessage = response.IsSuccessStatusCode ? "Memory flagged as hallucination" : "Failed to flag memory";
         }
@@ -140,7 +141,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/conflicts/run-detection", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Detection scan started" : "Failed to start detection";
         }
@@ -157,7 +158,7 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var conflictsTask = client.GetFromJsonAsync<ConflictsResponse>("/api/conflicts/list?limit=50");
             var contradictionsTask = client.GetFromJsonAsync<ContradictionsResponse>("/api/conflicts/contradictions?limit=50");

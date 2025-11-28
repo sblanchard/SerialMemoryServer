@@ -1,19 +1,19 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class BillingModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
     private readonly AppConfig _config;
 
-    public BillingModel(IHttpClientFactory httpClientFactory, AppConfig config)
+    public BillingModel(ApiClientService apiClient, AppConfig config)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
         _config = config;
     }
 
@@ -50,19 +50,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostCheckoutAsync(string plan)
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient();
             var request = new
             {
                 PlanName = plan,
@@ -95,19 +85,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostPortalAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient();
             var request = new
             {
                 ReturnUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing"
@@ -138,19 +118,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostCancelAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/billing/cancel", null);
 
             if (response.IsSuccessStatusCode)
@@ -174,19 +144,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostResumeAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/billing/resume", null);
 
             if (response.IsSuccessStatusCode)
@@ -210,17 +170,9 @@ public sealed class BillingModel : PageModel
 
     private async Task LoadBillingDataAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            LoadSampleData();
-            return;
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient();
 
             // Get billing summary
             var billingResponse = await client.GetAsync("/billing");
@@ -276,11 +228,6 @@ public sealed class BillingModel : PageModel
         CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(15);
         CreditsIncluded = 100;
         PaymentHistory = [];
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     public sealed class PaymentRecord

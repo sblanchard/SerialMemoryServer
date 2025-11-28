@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class PowerModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public PowerModel(IHttpClientFactory httpClientFactory)
+    public PowerModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public MemoryDetail? SelectedMemory { get; set; }
@@ -76,7 +77,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/power/update-content", new
             {
                 memoryId = id,
@@ -114,7 +115,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/power/delete-memory", new
             {
                 memoryId = id,
@@ -163,7 +164,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = BatchAction switch
             {
                 "delete" => await client.PostAsJsonAsync("/api/power/batch-delete", new { memoryIds = ids, reason = "Batch delete via Power Mode" }),
@@ -197,7 +198,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/power/force-reembed", null);
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -217,7 +218,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/power/recrawl-entities", null);
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -237,7 +238,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.GetFromJsonAsync<RecentMemoriesResponse>("/api/power/recent?limit=50");
             RecentMemories = response?.Memories ?? [];
         }
@@ -251,7 +252,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             SelectedMemory = await client.GetFromJsonAsync<MemoryDetail>($"/api/power/memory/{id}");
         }
         catch (HttpRequestException ex)

@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class PerformanceModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public PerformanceModel(IHttpClientFactory httpClientFactory)
+    public PerformanceModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public MetricsSnapshot? Metrics { get; set; }
@@ -32,7 +33,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/performance/threshold", new { operation, thresholdMs });
             SuccessMessage = response.IsSuccessStatusCode ? $"Threshold set for {operation}" : "Failed to set threshold";
         }
@@ -48,7 +49,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsync("/api/performance/reset", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Metrics reset successfully" : "Failed to reset metrics";
         }
@@ -64,7 +65,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var metricsTask = client.GetFromJsonAsync<MetricsSnapshot>("/api/performance/metrics");
             var slowTask = client.GetFromJsonAsync<SlowOpsResponse>("/api/performance/slow?limit=20");

@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class TracesModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public TracesModel(IHttpClientFactory httpClientFactory)
+    public TracesModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public IReadOnlyList<MemoryTraceItem> Traces { get; set; } = [];
@@ -76,7 +77,7 @@ public sealed class TracesModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync("/api/traces/execute-sql", new { query = SqlQuery });
 
             if (response.IsSuccessStatusCode)
@@ -103,7 +104,7 @@ public sealed class TracesModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
 
             var tracesUrl = "/api/traces/recent?limit=50";
             if (!string.IsNullOrEmpty(EventFilter))
@@ -129,7 +130,7 @@ public sealed class TracesModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             SelectedTrace = await client.GetFromJsonAsync<MemoryTraceDetail>($"/api/traces/memory/{id}");
         }
         catch (HttpRequestException ex)

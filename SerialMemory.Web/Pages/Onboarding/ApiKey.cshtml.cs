@@ -1,17 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Onboarding;
 
 [Authorize]
 public sealed class ApiKeyModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ApiKeyModel(IHttpClientFactory httpClientFactory)
+    public ApiKeyModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     [BindProperty]
@@ -46,7 +47,7 @@ public sealed class ApiKeyModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var response = await client.PostAsJsonAsync($"/api/tenants/{TenantId}/apikeys", new
             {
                 name = KeyName
@@ -78,7 +79,7 @@ public sealed class ApiKeyModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient();
             var tenant = await client.GetFromJsonAsync<TenantInfo>("/api/tenants/current");
 
             if (tenant != null)

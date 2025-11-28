@@ -214,11 +214,11 @@
                 <h3 class="text-sm font-semibold text-soft-white mb-3">Legend</h3>
                 <div class="space-y-2 text-xs">
                     <div class="flex items-center gap-2">
-                        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-blue-900/300"></span>
                         <span class="text-graphite">Service</span>
                     </div>
                     <div class="flex items-center gap-2">
-                        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-900/300"></span>
                         <span class="text-graphite">Database</span>
                     </div>
                     <div class="flex items-center gap-2">
@@ -226,7 +226,7 @@
                         <span class="text-graphite">Module</span>
                     </div>
                     <div class="flex items-center gap-2">
-                        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-900/300"></span>
                         <span class="text-graphite">Cache</span>
                     </div>
                     <div class="flex items-center gap-2">
@@ -234,7 +234,7 @@
                         <span class="text-graphite">Gateway</span>
                     </div>
                     <div class="flex items-center gap-2">
-                        <span class="w-3 h-3 rounded-full bg-gray-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-slate/300"></span>
                         <span class="text-graphite">Entity</span>
                     </div>
                     <hr class="border-slate my-2" />
@@ -471,7 +471,7 @@
                 <span class="text-graphite text-sm">Risk Level</span>
                 <div class="flex items-center gap-2">
                     <div class="flex-1 h-2 bg-midnight rounded-full overflow-hidden">
-                        <div class="h-full ${node.risk > 0.7 ? 'bg-red-500' : node.risk > 0.4 ? 'bg-orange-500' : 'bg-green-500'}" style="width: ${node.risk * 100}%"></div>
+                        <div class="h-full ${node.risk > 0.7 ? 'bg-red-500' : node.risk > 0.4 ? 'bg-orange-500' : 'bg-green-900/300'}" style="width: ${node.risk * 100}%"></div>
                     </div>
                     <span class="text-soft-white text-sm">${(node.risk * 100).toFixed(0)}%</span>
                 </div>
