@@ -116,12 +116,23 @@ public sealed class IntrospectionBackgroundService : BackgroundService
 
         if (string.IsNullOrEmpty(connectionString)) return;
 
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(ct);
+        // Use separate connections for parallel queries (Npgsql doesn't support concurrent commands on one connection)
+        async Task<JobBacklogSnapshot> GetJobBacklogAsync()
+        {
+            await using var conn = new NpgsqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+            return await BuildJobBacklogAsync(conn, ct);
+        }
 
-        // Emit granular snapshots in parallel
-        var jobTask = BuildJobBacklogAsync(conn, ct);
-        var traceTask = BuildActiveTracesAsync(conn, ct);
+        async Task<ActiveTracesSnapshot> GetActiveTracesAsync()
+        {
+            await using var conn = new NpgsqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+            return await BuildActiveTracesAsync(conn, ct);
+        }
+
+        var jobTask = GetJobBacklogAsync();
+        var traceTask = GetActiveTracesAsync();
 
         await Task.WhenAll(jobTask, traceTask);
 

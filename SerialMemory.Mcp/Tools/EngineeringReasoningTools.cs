@@ -9,42 +9,29 @@ namespace SerialMemory.Mcp.Tools;
 /// <summary>
 /// MCP tool handlers for engineering reasoning and visualization.
 /// </summary>
-public sealed class EngineeringReasoningTools
+public sealed class EngineeringReasoningTools(
+    IEngineeringReasoningService reasoningService,
+    IGraphVisualizationService visualizationService,
+    IMultiModelReasoningService multiModelService,
+    ILogger logger)
 {
-    private readonly IEngineeringReasoningService _reasoningService;
-    private readonly IGraphVisualizationService _visualizationService;
-    private readonly IMultiModelReasoningService _multiModelService;
-    private readonly ILogger _logger;
-
-    public EngineeringReasoningTools(
-        IEngineeringReasoningService reasoningService,
-        IGraphVisualizationService visualizationService,
-        IMultiModelReasoningService multiModelService,
-        ILogger logger)
-    {
-        _reasoningService = reasoningService;
-        _visualizationService = visualizationService;
-        _multiModelService = multiModelService;
-        _logger = logger;
-    }
-
     public async Task<object> HandleEngineeringAnalyze(JsonNode? arguments)
     {
         var memoryIdStr = arguments?["memory_id"]?.GetValue<string>();
         var project = arguments?["project"]?.GetValue<string>();
 
-        _logger.LogInformation("Engineering analysis requested. MemoryId: {MemoryId}, Project: {Project}",
+        logger.LogInformation("Engineering analysis requested. MemoryId: {MemoryId}, Project: {Project}",
             memoryIdStr, project);
 
         EngineeringAnalysisResult result;
 
         if (!string.IsNullOrEmpty(memoryIdStr) && Guid.TryParse(memoryIdStr, out var memoryId))
         {
-            result = await _reasoningService.AnalyzeMemoryAsync(memoryId);
+            result = await reasoningService.AnalyzeMemoryAsync(memoryId);
         }
         else
         {
-            result = await _reasoningService.AnalyzeAsync(project);
+            result = await reasoningService.AnalyzeAsync(project);
         }
 
         var text = FormatAnalysisResult(result);
@@ -180,18 +167,18 @@ public sealed class EngineeringReasoningTools
             _ => VisualizationMode.Mixed
         };
 
-        _logger.LogInformation("Visualization requested. MemoryId: {MemoryId}, Project: {Project}, Mode: {Mode}",
+        logger.LogInformation("Visualization requested. MemoryId: {MemoryId}, Project: {Project}, Mode: {Mode}",
             memoryIdStr, project, mode);
 
         GraphVisualizationResult result;
 
         if (!string.IsNullOrEmpty(memoryIdStr) && Guid.TryParse(memoryIdStr, out var memoryId))
         {
-            result = await _visualizationService.GenerateMemoryVisualizationAsync(memoryId, mode, includeOverlays);
+            result = await visualizationService.GenerateMemoryVisualizationAsync(memoryId, mode, includeOverlays);
         }
         else
         {
-            result = await _visualizationService.GenerateVisualizationAsync(mode, project, includeOverlays);
+            result = await visualizationService.GenerateVisualizationAsync(mode, project, includeOverlays);
         }
 
         // Return JSON for react-force-graph consumption
@@ -274,18 +261,18 @@ public sealed class EngineeringReasoningTools
         var project = arguments?["project"]?.GetValue<string>();
         var maxDurationMs = arguments?["max_duration_ms"]?.GetValue<int>() ?? 30000;
 
-        _logger.LogInformation("Multi-model reasoning requested. MemoryId: {MemoryId}, Project: {Project}, MaxDuration: {MaxDuration}ms",
+        logger.LogInformation("Multi-model reasoning requested. MemoryId: {MemoryId}, Project: {Project}, MaxDuration: {MaxDuration}ms",
             memoryIdStr, project, maxDurationMs);
 
         MultiModelReasoningResult result;
 
         if (!string.IsNullOrEmpty(memoryIdStr) && Guid.TryParse(memoryIdStr, out var memoryId))
         {
-            result = await _multiModelService.ReasonMemoryAsync(memoryId, maxDurationMs);
+            result = await multiModelService.ReasonMemoryAsync(memoryId, maxDurationMs);
         }
         else
         {
-            result = await _multiModelService.ReasonAsync(project, maxDurationMs);
+            result = await multiModelService.ReasonAsync(project, maxDurationMs);
         }
 
         var text = FormatMultiModelResult(result);

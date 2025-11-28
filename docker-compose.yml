@@ -44,6 +44,7 @@ services:
       - ./ops/telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
       - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
       - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
+      - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/99-rls-fix.sql:ro
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d contextdb"]
@@ -70,11 +71,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=contextdb_app
+      - POSTGRES_PASSWORD=contextdb_app_secure_password_change_me
       - POSTGRES_DB=contextdb
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       - ConnectionStrings__Redis=redis:6379
@@ -114,11 +115,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=contextdb_app
+      - POSTGRES_PASSWORD=contextdb_app_secure_password_change_me
       - POSTGRES_DB=contextdb
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=postgres;Password=postgres
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api

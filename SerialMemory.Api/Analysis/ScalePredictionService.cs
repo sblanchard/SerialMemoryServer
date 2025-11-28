@@ -77,18 +77,19 @@ public sealed class ScalePredictionService : IScalePredictionService
     private async Task<RpsMetrics> GetRpsMetricsAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         // Get RPS from usage_events in last 15 minutes
+        // Note: usage_events uses event_timestamp column (from usage_metering_schema.sql)
         var rpsData = await conn.QueryFirstOrDefaultAsync<(double? Current, double? Avg, double? Peak)>(@"
             SELECT
-                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 minute')::float / 60.0 AS current_rps,
+                COUNT(*) FILTER (WHERE event_timestamp > NOW() - INTERVAL '1 minute')::float / 60.0 AS current_rps,
                 COUNT(*)::float / 900.0 AS avg_rps,
                 (SELECT COUNT(*)::float / 60.0
                  FROM usage_events
-                 WHERE created_at > NOW() - INTERVAL '15 minutes'
-                 GROUP BY date_trunc('minute', created_at)
+                 WHERE event_timestamp > NOW() - INTERVAL '15 minutes'
+                 GROUP BY date_trunc('minute', event_timestamp)
                  ORDER BY 1 DESC
                  LIMIT 1) AS peak_rps
             FROM usage_events
-            WHERE created_at > NOW() - INTERVAL '15 minutes'");
+            WHERE event_timestamp > NOW() - INTERVAL '15 minutes'");
 
         return new RpsMetrics
         {

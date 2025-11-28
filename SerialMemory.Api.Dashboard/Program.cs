@@ -35,7 +35,10 @@ builder.Services.AddSingleton<IAdminService>(sp =>
     new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
 
 // Email and onboarding services - use NoOp if ACS not configured
+// Check multiple config key patterns for backward compatibility
 var acsConnectionString = builder.Configuration["Email:AcsConnectionString"]
+    ?? builder.Configuration["AzureCommunicationServices:ConnectionString"]
+    ?? builder.Configuration["AzureCommunicationServices__ConnectionString"]
     ?? Environment.GetEnvironmentVariable("SERIALMEMORY_ACS_CONNECTION");
 if (!string.IsNullOrEmpty(acsConnectionString))
 {

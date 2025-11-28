@@ -135,6 +135,10 @@ public sealed class ApiKeyAuthMiddleware
             path.StartsWith("/hub/", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        // Scale prediction endpoints (operational, for self-host control room)
+        if (path.StartsWith("/api/scale/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         return false;
     }
 

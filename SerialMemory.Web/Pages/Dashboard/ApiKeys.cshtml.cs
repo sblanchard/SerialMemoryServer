@@ -36,7 +36,7 @@ public sealed class ApiKeysModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _httpClientFactory.CreateClient("DashboardApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var request = new
@@ -95,7 +95,7 @@ public sealed class ApiKeysModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _httpClientFactory.CreateClient("DashboardApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var response = await client.DeleteAsync($"/api-keys/{keyId}");
@@ -144,7 +144,7 @@ public sealed class ApiKeysModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _httpClientFactory.CreateClient("DashboardApi");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var response = await client.GetAsync("/api-keys?includeRevoked=true");

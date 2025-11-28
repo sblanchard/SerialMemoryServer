@@ -15,6 +15,7 @@ public sealed class GraphRecrawlService(
     IEntityExtractionService entityExtractor,
     IKnowledgeGraphStore graphStore,
     ILogger<GraphRecrawlService> logger)
+    : IGraphRecrawlService
 {
     private readonly IKnowledgeGraphStore _graphStore = graphStore;
 
@@ -69,14 +70,12 @@ public sealed class GraphRecrawlService(
         if (job.Status is "completed" or "cancelled")
         {
             logger.LogWarning("Job {JobId} already {Status}", jobId, job.Status);
-            return new RecrawlJobResult
-            {
-                JobId = jobId,
-                Status = job.Status,
-                TotalProcessed = job.ProcessedCount,
-                SuccessCount = job.SuccessCount,
-                FailureCount = job.FailureCount
-            };
+            return new RecrawlJobResult(
+                jobId,
+                job.Status,
+                job.ProcessedCount,
+                job.SuccessCount,
+                job.FailureCount);
         }
 
         // Start the job
@@ -138,14 +137,12 @@ public sealed class GraphRecrawlService(
                 jobId, successCount, failureCount);
         }
 
-        return new RecrawlJobResult
-        {
-            JobId = jobId,
-            Status = failureCount > 0 && successCount == 0 ? "failed" : "completed",
-            TotalProcessed = totalProcessed,
-            SuccessCount = successCount,
-            FailureCount = failureCount
-        };
+        return new RecrawlJobResult(
+            jobId,
+            failureCount > 0 && successCount == 0 ? "failed" : "completed",
+            totalProcessed,
+            successCount,
+            failureCount);
     }
 
     /// <summary>
@@ -461,27 +458,3 @@ public sealed class GraphRecrawlService(
     #endregion
 }
 
-/// <summary>
-/// Result of a recrawl job execution.
-/// </summary>
-public sealed class RecrawlJobResult
-{
-    public Guid JobId { get; set; }
-    public string Status { get; set; } = "";
-    public int TotalProcessed { get; set; }
-    public int SuccessCount { get; set; }
-    public int FailureCount { get; set; }
-}
-
-/// <summary>
-/// Statistics about recrawl progress.
-/// </summary>
-public sealed class RecrawlStatistics
-{
-    public long TotalMemories { get; set; }
-    public long Version1Count { get; set; }
-    public long Version2Count { get; set; }
-    public long NeedsRecrawl { get; set; }
-    public int ActiveJobs { get; set; }
-    public long FailedExtractions { get; set; }
-}
