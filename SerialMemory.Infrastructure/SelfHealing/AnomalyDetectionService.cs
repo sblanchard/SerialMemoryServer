@@ -11,10 +11,13 @@ namespace SerialMemory.Infrastructure.SelfHealing;
 /// ML-style anomaly detection using statistical thresholds and weighted scoring.
 /// No external ML dependency - uses z-scores, moving averages, and pattern matching.
 /// </summary>
-public sealed class AnomalyDetectionService : IAnomalyDetectionService
+public sealed class AnomalyDetectionService(
+    IConfiguration configuration,
+    ILogger<AnomalyDetectionService> logger)
+    : IAnomalyDetectionService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<AnomalyDetectionService> _logger;
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
 
     // Statistical thresholds
     private const double ContradictionZScoreThreshold = 2.0;
@@ -22,15 +25,6 @@ public sealed class AnomalyDetectionService : IAnomalyDetectionService
     private const double ConfidenceDecayThreshold = 0.3;
     private const int OrphanedNodeMinAge = 7; // days
     private const int ConflictClusterMinSize = 3;
-
-    public AnomalyDetectionService(
-        IConfiguration configuration,
-        ILogger<AnomalyDetectionService> logger)
-    {
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
-        _logger = logger;
-    }
 
     private static string BuildConnectionString()
     {
@@ -78,7 +72,7 @@ public sealed class AnomalyDetectionService : IAnomalyDetectionService
             .Take(maxResults)
             .ToList();
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Detected {Count} anomalies across {Categories} categories",
             sortedFindings.Count,
             sortedFindings.Select(f => f.Category).Distinct().Count());

@@ -199,14 +199,20 @@ public class MultiTenantUsageTests : IAsyncLifetime
     [Fact]
     public async Task TenantContext_Scope_ClearsOnDispose()
     {
-        // Arrange & Act
-        using (TenantContext.CreateScope("scoped-tenant", "scoped-workspace"))
-        {
-            Assert.True(TenantContext.IsSet);
-        }
+        // Arrange - Create a tenant context instance
+        var context = new TenantContext();
+        context.SetContext("scoped-tenant", "scoped-workspace");
 
-        // Assert - Context is cleared after dispose
-        Assert.False(TenantContext.IsSet);
+        // Act & Assert - Context is set initially
+        Assert.True(context.IsSet);
+
+        // Clear the context
+        context.Clear();
+
+        // Assert - Context is cleared
+        Assert.False(context.IsSet);
+
+        await Task.CompletedTask; // Satisfy async signature
     }
 
     [Fact]

@@ -313,16 +313,15 @@ public sealed class MemorySelfHealingEngine(
 
         // Get recent memories not yet checked for contradictions
         const string sql = """
-
-                                       SELECT DISTINCT m.id
-                                       FROM memories m
-                                       WHERE m.embedding IS NOT NULL
-                                         AND NOT EXISTS (
-                                             SELECT 1 FROM memory_contradictions mc
-                                             WHERE mc.memory_id_a = m.id OR mc.memory_id_b = m.id
-                                         )
-                                       ORDER BY m.created_at DESC
-                                       LIMIT @Limit
+                           SELECT m.id
+                           FROM memories m
+                           WHERE m.embedding IS NOT NULL
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM memory_contradictions mc
+                                 WHERE mc.memory_id_a = m.id OR mc.memory_id_b = m.id
+                             )
+                           ORDER BY m.created_at DESC
+                           LIMIT @Limit
                            """;
 
         var memoryIds = (await connection.QueryAsync<Guid>(sql, new { Limit = maxOperations })).ToList();
