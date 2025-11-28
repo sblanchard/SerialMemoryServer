@@ -43,27 +43,28 @@ public sealed class IndexModel : PageModel
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             // Get usage info
-            var usageResponse = await client.GetAsync("/tenant/usage");
+            var usageResponse = await client.GetAsync("/api/usage/current");
             if (usageResponse.IsSuccessStatusCode)
             {
                 var usage = await usageResponse.Content.ReadFromJsonAsync<UsageResult>();
                 if (usage != null)
                 {
                     CreditsUsed = usage.CreditsUsed;
-                    CreditsAllocated = usage.CreditsAllocated;
-                    CycleEnd = usage.CycleEnd;
-                    MemoryCount = usage.MemoryCount;
+                    CreditsAllocated = usage.CreditsIncluded;
+                    CycleEnd = !string.IsNullOrEmpty(usage.CycleEnd)
+                        ? DateTimeOffset.Parse(usage.CycleEnd)
+                        : null;
                 }
             }
 
-            // Get plan info
-            var planResponse = await client.GetAsync("/tenant/plan");
-            if (planResponse.IsSuccessStatusCode)
+            // Get stats for memory count
+            var statsResponse = await client.GetAsync("/api/stats");
+            if (statsResponse.IsSuccessStatusCode)
             {
-                var plan = await planResponse.Content.ReadFromJsonAsync<PlanResult>();
-                if (plan != null)
+                var stats = await statsResponse.Content.ReadFromJsonAsync<StatsResult>();
+                if (stats != null)
                 {
-                    PlanName = plan.DisplayName ?? plan.PlanName ?? "Free";
+                    MemoryCount = stats.Memories;
                 }
             }
 
@@ -79,14 +80,18 @@ public sealed class IndexModel : PageModel
     private sealed class UsageResult
     {
         public decimal CreditsUsed { get; init; }
-        public decimal CreditsAllocated { get; init; }
-        public DateTimeOffset? CycleEnd { get; init; }
-        public int MemoryCount { get; init; }
+        public decimal CreditsIncluded { get; init; }
+        public int PercentUsed { get; init; }
+        public int TotalOperations { get; init; }
+        public string? CycleStart { get; init; }
+        public string? CycleEnd { get; init; }
+        public int DaysRemaining { get; init; }
     }
 
-    private sealed class PlanResult
+    private sealed class StatsResult
     {
-        public string? PlanName { get; init; }
-        public string? DisplayName { get; init; }
+        public int Memories { get; init; }
+        public int Entities { get; init; }
+        public int Relationships { get; init; }
     }
 }

@@ -89,8 +89,8 @@ var ollamaEmbeddingDim = int.TryParse(
     builder.Configuration["Ollama:EmbeddingDim"] ?? Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_DIM"),
     out var dim) ? dim : 768;
 
-// Base knowledge graph store (will be decorated)
-var baseKnowledgeGraphStore = new PostgresKnowledgeGraphStore(pgConnectionString);
+// Base knowledge graph store - created per-scope with tenant context for proper RLS enforcement
+// Note: We'll register this as Scoped later with ITenantContext injection
 
 Console.WriteLine($"Using Ollama embedding service: {ollamaModel} at {ollamaUrl} (dim={ollamaEmbeddingDim})");
 builder.Services.AddSingleton<IEmbeddingService>(_ => new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
@@ -102,8 +102,9 @@ var extractionServiceUrl = builder.Configuration["ExtractionServiceUrl"]
 var entityExtractionService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
 Console.WriteLine($"Using entity extraction service: {entityExtractionService.GetType().Name}");
 builder.Services.AddSingleton<IEntityExtractionService>(_ => entityExtractionService);
-builder.Services.AddSingleton<KnowledgeGraphService>();
-builder.Services.AddSingleton<RelationshipDiscoveryService>();
+// These services depend on scoped IKnowledgeGraphStore
+builder.Services.AddScoped<KnowledgeGraphService>();
+builder.Services.AddScoped<RelationshipDiscoveryService>();
 
 // Usage and billing services
 builder.Services.AddSingleton<IUsageService>(sp =>
@@ -111,8 +112,20 @@ builder.Services.AddSingleton<IUsageService>(sp =>
 builder.Services.AddSingleton<IPlanService>(sp =>
     new PlanService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanService>()));
 
-// Email service (Azure Communication Services)
-builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+// Email service (Azure Communication Services) - use NoOp if ACS not configured
+var acsConnectionString = builder.Configuration["Email:AcsConnectionString"]
+    ?? builder.Configuration["AzureCommunicationServices:ConnectionString"]
+    ?? builder.Configuration["AzureCommunicationServices__ConnectionString"]
+    ?? Environment.GetEnvironmentVariable("SERIALMEMORY_ACS_CONNECTION");
+if (!string.IsNullOrEmpty(acsConnectionString))
+{
+    builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+}
+else
+{
+    Console.WriteLine("[WARN] ACS not configured - using NoOp email service (emails will be logged but not sent)");
+    builder.Services.AddSingleton<IEmailService, NoOpEmailService>();
+}
 
 // Tenant context and API key services
 var jwtSecret = builder.Configuration["JWT_SECRET"]
@@ -176,9 +189,9 @@ builder.Services.AddSingleton<ICodeAnalyzer, CodeAnalyzer>();
 builder.Services.AddSingleton<IAnalysisResultsRepository>(sp =>
     new AnalysisResultsRepository(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<AnalysisResultsRepository>()));
 
-// Security pipeline services
+// Security pipeline services (scoped because they depend on tenant-scoped IKnowledgeGraphStore)
 builder.Services.AddSingleton<ISecurityEventStore>(_ => new PostgresSecurityEventStore(pgConnectionString));
-builder.Services.AddSingleton<ISecurityPipeline>(sp =>
+builder.Services.AddScoped<ISecurityPipeline>(sp =>
     new SecurityPipeline(
         sp.GetRequiredService<ISecurityEventStore>(),
         sp.GetRequiredService<IKnowledgeGraphStore>(),
@@ -188,13 +201,18 @@ builder.Services.AddSingleton<ISecurityPipeline>(sp =>
 // Graph event store for logging graph mutations
 builder.Services.AddSingleton<IGraphEventStore>(_ => new PostgresGraphEventStore(pgConnectionString));
 
-// Register the instrumented knowledge graph store (decorator pattern - manually wired)
-builder.Services.AddSingleton<IKnowledgeGraphStore>(sp =>
-    new InstrumentedKnowledgeGraphStore(
-        baseKnowledgeGraphStore,  // Inner store created earlier
+// Register the instrumented knowledge graph store (decorator pattern - SCOPED for tenant isolation)
+// Each request gets a new store instance with the proper tenant context from the request pipeline
+builder.Services.AddScoped<IKnowledgeGraphStore>(sp =>
+{
+    var tenantContext = sp.GetRequiredService<ITenantContext>();
+    var baseStore = new PostgresKnowledgeGraphStore(pgConnectionString, tenantContext);
+    return new InstrumentedKnowledgeGraphStore(
+        baseStore,
         sp.GetRequiredService<IGraphEventStore>(),
         sp.GetRequiredService<ILiveEventEmitter>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstrumentedKnowledgeGraphStore>()));
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstrumentedKnowledgeGraphStore>());
+});
 
 // Background job workers - move heavy work off request threads
 builder.Services.AddSingleton<SerialMemory.Infrastructure.Jobs.AnalysisJobWorker>(sp =>
@@ -240,8 +258,8 @@ builder.Services.AddSingleton<IAnomalyDetectionService>(sp =>
         builder.Configuration,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.AnomalyDetectionService>()));
 
-// Healing recommendation engine (register before SelfHealingWorker)
-builder.Services.AddSingleton<IHealingRecommendationService>(sp =>
+// Healing recommendation engine (scoped - depends on tenant-scoped IKnowledgeGraphStore)
+builder.Services.AddScoped<IHealingRecommendationService>(sp =>
     new SerialMemory.Infrastructure.SelfHealing.HealingRecommendationService(
         sp.GetRequiredService<IAnomalyDetectionService>(),
         sp.GetRequiredService<IMemorySelfHealing>(),
@@ -250,13 +268,15 @@ builder.Services.AddSingleton<IHealingRecommendationService>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.HealingRecommendationService>()));
 
 // Self-healing worker with optional ML services
+// Note: IHealingRecommendationService is scoped (depends on tenant context), so we pass null here
+// Background workers should use IServiceScopeFactory to create scopes when needed
 builder.Services.AddSingleton<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>(sp =>
     new SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker(
         sp.GetRequiredService<IMemorySelfHealing>(),
         builder.Configuration,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>(),
         sp.GetService<IAnomalyDetectionService>(),
-        sp.GetService<IHealingRecommendationService>()));
+        null)); // IHealingRecommendationService is scoped, not available in singleton context
 builder.Services.AddSingleton<ISelfHealingTrigger>(sp =>
     sp.GetRequiredService<SerialMemory.Infrastructure.SelfHealing.SelfHealingWorker>());
 builder.Services.AddHostedService(sp =>
@@ -274,17 +294,17 @@ builder.Services.AddSingleton<IDisagreementStore>(sp =>
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<PostgresDisagreementStore>()));
 
-// Multi-model reasoning services
-builder.Services.AddSingleton<IReasoningModelFactory>(sp =>
+// Multi-model reasoning services (scoped - depend on tenant-scoped IKnowledgeGraphStore)
+builder.Services.AddScoped<IReasoningModelFactory>(sp =>
     new DefaultReasoningModelFactory(
         sp.GetRequiredService<IKnowledgeGraphStore>(),
         sp.GetRequiredService<ILoggerFactory>()));
 
-builder.Services.AddSingleton<IEngineeringReasoningService>(sp =>
+builder.Services.AddScoped<IEngineeringReasoningService>(sp =>
     new EngineeringReasoningService(
         sp.GetRequiredService<IKnowledgeGraphStore>()));
 
-builder.Services.AddSingleton<IMultiModelReasoningService>(sp =>
+builder.Services.AddScoped<IMultiModelReasoningService>(sp =>
     new MultiModelReasoningService(
         sp.GetRequiredService<IKnowledgeGraphStore>(),
         sp.GetRequiredService<IEngineeringReasoningService>(),
