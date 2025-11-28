@@ -143,7 +143,7 @@ public sealed class MindModel : PageModel
             }).ToList();
 
             // Map contradiction events to display format
-            var contradictionEvents = await contradictionsTask ?? [];
+            var contradictionEvents = (await contradictionsTask)?.Contradictions ?? [];
             Contradictions = contradictionEvents.Select(c => new ContradictionFlag
             {
                 Id = c.Id,
@@ -171,7 +171,11 @@ public sealed class MindModel : PageModel
 
     // API response types that match the actual API structure
     public sealed class HallucinationsListResponse { public IReadOnlyList<HallucinationEventDto>? Items { get; init; } }
-    public sealed class ContradictionsListResponse : List<ContradictionEventDto> { }
+    public sealed class ContradictionsListResponse
+    {
+        public int Count { get; init; }
+        public IReadOnlyList<ContradictionEventDto>? Contradictions { get; init; }
+    }
 
     public sealed class HallucinationEventDto
     {
