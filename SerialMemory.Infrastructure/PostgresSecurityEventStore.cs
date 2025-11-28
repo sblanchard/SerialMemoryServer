@@ -28,7 +28,7 @@ public class PostgresSecurityEventStore(string connectionString) : ISecurityEven
                 loop_path, loop_depth,
                 occurred_at, detected_by, session_id, scan_batch_id
             ) VALUES (
-                @EventId, @EventType::security_event_type, @Severity::security_severity, @MemoryId, @EntityId,
+                @EventId, @EventType, @Severity, @MemoryId, @EntityId,
                 @Message, @Details::jsonb, @ExpectedHash, @ActualHash,
                 @ContradictingMemoryIds, @ContradictionScore,
                 @LoopPath, @LoopDepth,
@@ -150,7 +150,7 @@ public class PostgresSecurityEventStore(string connectionString) : ISecurityEven
                    loop_path, loop_depth,
                    occurred_at, detected_by, session_id, scan_batch_id
             FROM security_events
-            WHERE event_type = @EventType::security_event_type
+            WHERE event_type = @EventType
             ORDER BY occurred_at DESC
             LIMIT @Limit
             """;
