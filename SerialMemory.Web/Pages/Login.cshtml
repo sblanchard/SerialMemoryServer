@@ -29,22 +29,21 @@
                 @Html.AntiForgeryToken()
 
                 <div>
-                    <label for="apiKey" class="block text-sm font-medium text-soft-white mb-2">API Key</label>
-                    <input id="apiKey" name="ApiKey" type="text" required
+                    <label for="ApiKey" class="block text-sm font-medium text-soft-white mb-2">API Key</label>
+                    <input id="ApiKey" type="text" required asp-for="ApiKey"
                         class="w-full px-4 py-3 rounded-lg text-soft-white placeholder-graphite focus:outline-none focus:ring-2 focus:ring-cyan"
                         style="background: #0B0F1A; border: 1px solid #374151;"
-                        placeholder="sm_live_..." asp-for="ApiKey">
+                        placeholder="sm_live_...">
                     <p class="mt-2 text-xs text-graphite">
                         Your API key was provided when you signed up. Check your dashboard or email.
                     </p>
                 </div>
 
                 <div class="flex items-center">
-                    <input id="remember" name="RememberMe" type="checkbox"
+                    <input id="RememberMe" type="checkbox" asp-for="RememberMe"
                         class="h-4 w-4 rounded focus:ring-2 focus:ring-cyan"
-                        style="background: #0B0F1A; border: 1px solid #374151;"
-                        asp-for="RememberMe">
-                    <label for="remember" class="ml-2 text-sm text-graphite">Remember me for 7 days</label>
+                        style="background: #0B0F1A; border: 1px solid #374151;">
+                    <label for="RememberMe" class="ml-2 text-sm text-graphite">Remember me for 7 days</label>
                 </div>
 
                 <button type="submit" class="btn-primary w-full py-3 rounded-xl font-semibold text-lg">
