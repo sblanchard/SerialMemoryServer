@@ -34,8 +34,18 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 builder.Services.AddSingleton<IAdminService>(sp =>
     new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
 
-// Email and onboarding services
-builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+// Email and onboarding services - use NoOp if ACS not configured
+var acsConnectionString = builder.Configuration["Email:AcsConnectionString"]
+    ?? Environment.GetEnvironmentVariable("SERIALMEMORY_ACS_CONNECTION");
+if (!string.IsNullOrEmpty(acsConnectionString))
+{
+    builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+}
+else
+{
+    Console.WriteLine("[WARN] ACS not configured - using NoOp email service (emails will be logged but not sent)");
+    builder.Services.AddSingleton<IEmailService, NoOpEmailService>();
+}
 builder.Services.AddSingleton<IDeveloperOnboardingService>(sp =>
     new SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService(
         builder.Configuration,
