@@ -5,307 +5,264 @@
     ViewData["Description"] = "SerialMemory API and MCP documentation for developers.";
 }
 
-<!-- Hero -->
+<!-- Header -->
 <section class="gradient-bg py-16">
     <div class="max-w-4xl mx-auto px-6">
-        <h1 class="text-4xl font-bold text-soft-white mb-4">Documentation</h1>
-        <p class="text-graphite text-lg">Everything you need to integrate SerialMemory into your AI agents.</p>
+        <h1 class="text-4xl font-bold text-soft-white mb-6">SerialMemory Documentation</h1>
+        <p class="text-graphite text-lg leading-relaxed">
+            SerialMemory provides persistent, tenant-isolated memory for AI agents and developer systems.
+            It combines vector search, knowledge graphs, and deterministic reasoning into one unified API.
+        </p>
+        <p class="text-graphite text-lg mt-4">
+            This documentation focuses on practical usage, patterns, and real-world integration.
+        </p>
     </div>
 </section>
 
-<!-- Quick Start -->
+<!-- Quickstart -->
 <section class="bg-midnight py-16">
     <div class="max-w-4xl mx-auto px-6">
-        <h2 class="text-2xl font-bold text-soft-white mb-8">Quick Start</h2>
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Quickstart</h2>
 
-        <div class="space-y-6">
-            <!-- Step 1 -->
-            <div class="card">
-                <div class="flex items-start gap-4">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">1</div>
-                    <div class="flex-1">
-                        <h3 class="text-lg font-semibold text-soft-white mb-2">Get an API Key</h3>
-                        <p class="text-graphite mb-4">Sign up and generate an API key from your dashboard.</p>
-                        <a href="/signup" class="text-cyan hover:text-electric transition-colors">Create account &rarr;</a>
-                    </div>
-                </div>
+        <div class="rounded-lg overflow-hidden border border-slate mb-8">
+            <div class="flex items-center gap-2 px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #EF4444;"></div>
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #FACC15;"></div>
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #22C55E;"></div>
+                <span class="ml-2 text-graphite text-xs font-mono">terminal</span>
             </div>
-
-            <!-- Step 2 -->
-            <div class="card">
-                <div class="flex items-start gap-4">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">2</div>
-                    <div class="flex-1">
-                        <h3 class="text-lg font-semibold text-soft-white mb-2">Run the MCP Server</h3>
-                        <p class="text-graphite mb-4">Pull and run the Docker image. First run will prompt for your API key.</p>
-                        <div class="rounded-lg overflow-hidden border border-slate">
-                            <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                                <span class="text-graphite text-xs font-mono">terminal</span>
-                            </div>
-                            <div class="px-4 py-3" style="background: #0B0F1A;">
-                                <code class="text-cyan font-mono text-sm">docker run -it serialcoder/serialmemory-mcp</code>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div class="px-6 py-4" style="background: #0B0F1A;">
+                <code class="text-cyan font-mono">docker run -it serialcoder/serialmemory-mcp</code>
             </div>
+        </div>
 
-            <!-- Step 3 -->
-            <div class="card">
-                <div class="flex items-start gap-4">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">3</div>
-                    <div class="flex-1">
-                        <h3 class="text-lg font-semibold text-soft-white mb-2">Configure Your AI Client</h3>
-                        <p class="text-graphite mb-4">Add the MCP server to Claude Desktop or your preferred client.</p>
-                        <div class="rounded-lg overflow-hidden border border-slate">
-                            <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                                <span class="text-graphite text-xs font-mono">claude_desktop_config.json</span>
-                            </div>
-                            <div class="px-4 py-3 overflow-x-auto" style="background: #0B0F1A;">
-<pre class="text-cyan font-mono text-sm"><code>{
-  "mcpServers": {
-    "serialmemory": {
-      "command": "docker",
-      "args": ["run", "-i", "serialcoder/serialmemory-mcp"]
-    }
-  }
-}</code></pre>
-                            </div>
-                        </div>
-                    </div>
+        <h3 class="text-lg font-semibold text-soft-white mb-4">First run flow:</h3>
+        <ul class="space-y-3 text-graphite">
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">1.</span>
+                <span>The MCP client will ask for your API key.</span>
+            </li>
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">2.</span>
+                <span>Press Enter to accept the default server URL.</span>
+            </li>
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">3.</span>
+                <span>The client starts a local MCP bridge.</span>
+            </li>
+        </ul>
+
+        <div class="mt-8 p-4 rounded-lg border border-slate" style="background: rgba(34, 211, 238, 0.05);">
+            <p class="text-soft-white">There is no config file required.</p>
+            <p class="text-soft-white">There are no environment variables required.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Core Concepts -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Core Concepts</h2>
+
+        <h3 class="text-xl font-semibold text-soft-white mb-4">Memory Types</h3>
+        <p class="text-graphite mb-6">SerialMemory stores structured memory in multiple layers:</p>
+
+        <div class="rounded-lg overflow-hidden border border-slate mb-6">
+            <div class="px-6 py-4 font-mono text-sm" style="background: #0B0F1A;">
+                <div class="grid gap-2">
+                    <div><span class="text-cyan">L0_RAW</span><span class="text-graphite ml-8">- Raw user or system input</span></div>
+                    <div><span class="text-cyan">L1_CONTEXT</span><span class="text-graphite ml-4">- Interpreted meaning</span></div>
+                    <div><span class="text-cyan">L2_SUMMARY</span><span class="text-graphite ml-4">- Compressed understanding</span></div>
+                    <div><span class="text-cyan">L3_KNOWLEDGE</span><span class="text-graphite ml-2">- Extracted facts</span></div>
+                    <div><span class="text-cyan">L4_HEURISTIC</span><span class="text-graphite ml-2">- Learned system patterns</span></div>
                 </div>
             </div>
         </div>
+
+        <p class="text-graphite">Each layer can be queried independently.</p>
+        <p class="text-graphite">All writes are versioned and traceable.</p>
     </div>
 </section>
 
 <!-- MCP Tools Reference -->
-<section class="bg-navy py-16">
+<section class="bg-midnight py-16">
     <div class="max-w-4xl mx-auto px-6">
         <h2 class="text-2xl font-bold text-soft-white mb-8">MCP Tools Reference</h2>
 
-        <div class="space-y-4">
-            <!-- memory_ingest -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">memory_ingest</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(34, 197, 94, 0.2); color: #22C55E;">write</span>
+        <div class="rounded-lg overflow-hidden border border-slate mb-6">
+            <div class="px-6 py-4 font-mono text-sm" style="background: #0B0F1A;">
+                <div class="grid gap-1">
+                    <div class="text-cyan">memory_ingest</div>
+                    <div class="text-cyan">memory_search</div>
+                    <div class="text-cyan">memory_multi_hop_search</div>
+                    <div class="text-cyan">memory_update</div>
+                    <div class="text-cyan">memory_delete</div>
+                    <div class="text-cyan">crawl_relationships</div>
+                    <div class="text-cyan">export_memories</div>
+                    <div class="text-cyan">get_graph_statistics</div>
+                    <div class="text-cyan">memory_about_user</div>
                 </div>
-                <p class="text-graphite mb-4">Store a new memory with automatic entity extraction and embedding generation.</p>
-                <div class="rounded-lg overflow-hidden border border-slate">
-                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                        <span class="text-graphite text-xs font-mono">parameters</span>
-                    </div>
-                    <div class="px-4 py-3" style="background: #0B0F1A;">
-<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">content</span>: string      <span class="text-graphite"># Memory content to store</span>
-<span class="text-cyan">source</span>: string       <span class="text-graphite"># Optional source identifier</span>
-<span class="text-cyan">metadata</span>: object     <span class="text-graphite"># Optional tags, importance, etc.</span></code></pre>
-                    </div>
-                </div>
-            </div>
-
-            <!-- memory_search -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">memory_search</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite mb-4">Search memories using semantic, full-text, or hybrid search.</p>
-                <div class="rounded-lg overflow-hidden border border-slate">
-                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                        <span class="text-graphite text-xs font-mono">parameters</span>
-                    </div>
-                    <div class="px-4 py-3" style="background: #0B0F1A;">
-<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">query</span>: string        <span class="text-graphite"># Natural language search query</span>
-<span class="text-cyan">mode</span>: string         <span class="text-graphite"># "semantic" | "text" | "hybrid"</span>
-<span class="text-cyan">limit</span>: number        <span class="text-graphite"># Max results (default: 10)</span>
-<span class="text-cyan">threshold</span>: number    <span class="text-graphite"># Similarity threshold 0.0-1.0</span></code></pre>
-                    </div>
-                </div>
-            </div>
-
-            <!-- memory_multi_hop_search -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">memory_multi_hop_search</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite mb-4">Traverse the knowledge graph to find connected memories through entity relationships.</p>
-                <div class="rounded-lg overflow-hidden border border-slate">
-                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                        <span class="text-graphite text-xs font-mono">parameters</span>
-                    </div>
-                    <div class="px-4 py-3" style="background: #0B0F1A;">
-<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">query</span>: string        <span class="text-graphite"># Initial search query</span>
-<span class="text-cyan">hops</span>: number         <span class="text-graphite"># Relationship hops (default: 2)</span>
-<span class="text-cyan">max_results_per_hop</span>: number  <span class="text-graphite"># Results per hop</span></code></pre>
-                    </div>
-                </div>
-            </div>
-
-            <!-- memory_about_user -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">memory_about_user</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite">Retrieve structured user persona: preferences, skills, goals, and background.</p>
-            </div>
-
-            <!-- set_user_persona -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">set_user_persona</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(34, 197, 94, 0.2); color: #22C55E;">write</span>
-                </div>
-                <p class="text-graphite mb-4">Set or update a user persona attribute.</p>
-                <div class="rounded-lg overflow-hidden border border-slate">
-                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
-                        <span class="text-graphite text-xs font-mono">parameters</span>
-                    </div>
-                    <div class="px-4 py-3" style="background: #0B0F1A;">
-<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">attribute_type</span>: string   <span class="text-graphite"># "preference" | "skill" | "goal" | "background"</span>
-<span class="text-cyan">attribute_key</span>: string    <span class="text-graphite"># Attribute name</span>
-<span class="text-cyan">attribute_value</span>: string  <span class="text-graphite"># Attribute value</span></code></pre>
-                    </div>
-                </div>
-            </div>
-
-            <!-- crawl_relationships -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">crawl_relationships</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(250, 204, 21, 0.2); color: #FACC15;">maintenance</span>
-                </div>
-                <p class="text-graphite">Extract entities and relationships from existing memories to populate the knowledge graph.</p>
-            </div>
-
-            <!-- get_graph_statistics -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">get_graph_statistics</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite">Get knowledge graph statistics including entity and relationship counts by type.</p>
-            </div>
-
-            <!-- export_memories -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">export_memories</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite">Export memories with filters. Supports JSON and CSV formats.</p>
-            </div>
-
-            <!-- reembed_memories -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">reembed_memories</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(250, 204, 21, 0.2); color: #FACC15;">maintenance</span>
-                </div>
-                <p class="text-graphite">Re-generate embeddings for memories. Use after switching embedding models.</p>
-            </div>
-
-            <!-- detect_contradictions -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">detect_contradictions</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite">Find memories that contradict each other using semantic similarity and content analysis.</p>
-            </div>
-
-            <!-- detect_hallucinations -->
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">detect_hallucinations</code>
-                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
-                </div>
-                <p class="text-graphite">Flag potential hallucinations based on confidence, validation status, and isolation.</p>
             </div>
         </div>
+
+        <p class="text-graphite">
+            These tools are exposed through MCP and can be called directly from Claude, Cursor, or custom agents.
+        </p>
     </div>
 </section>
 
-<!-- Memory Lifecycle -->
-<section class="bg-midnight py-16">
+<!-- Typical Usage Patterns -->
+<section class="bg-navy py-16">
     <div class="max-w-4xl mx-auto px-6">
-        <h2 class="text-2xl font-bold text-soft-white mb-8">Memory Lifecycle</h2>
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Typical Usage Patterns</h2>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="card">
-                <h3 class="text-lg font-semibold text-soft-white mb-3">Confidence Decay</h3>
-                <p class="text-graphite mb-4">Memories naturally decay over time using exponential half-life:</p>
-                <div class="px-4 py-3 rounded-lg" style="background: #0B0F1A;">
-                    <code class="text-cyan font-mono text-sm">confidence * 0.5^(days / half_life)</code>
-                </div>
+                <h3 class="text-lg font-semibold text-soft-white mb-4">Before answering a question:</h3>
+                <ol class="space-y-3 text-graphite">
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">1.</span>
+                        <span>Run <code class="text-cyan">memory_search</code></span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">2.</span>
+                        <span>Use the top results as context</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">3.</span>
+                        <span>Answer the user</span>
+                    </li>
+                </ol>
             </div>
 
             <div class="card">
-                <h3 class="text-lg font-semibold text-soft-white mb-3">Reinforcement</h3>
-                <p class="text-graphite">When a memory is validated or frequently accessed, use <code class="text-cyan">memory_reinforce</code> to reset decay and boost confidence.</p>
-            </div>
-
-            <div class="card">
-                <h3 class="text-lg font-semibold text-soft-white mb-3">Memory Layers</h3>
-                <p class="text-graphite">Memories are organized into cognitive layers:</p>
-                <ul class="mt-3 space-y-1 text-sm">
-                    <li class="text-graphite"><code class="text-cyan">L0_RAW</code> - Raw input data</li>
-                    <li class="text-graphite"><code class="text-cyan">L1_CONTEXT</code> - Contextual understanding</li>
-                    <li class="text-graphite"><code class="text-cyan">L2_SUMMARY</code> - Summarized info</li>
-                    <li class="text-graphite"><code class="text-cyan">L3_KNOWLEDGE</code> - Extracted facts</li>
-                    <li class="text-graphite"><code class="text-cyan">L4_HEURISTIC</code> - Learned patterns</li>
-                </ul>
-            </div>
-
-            <div class="card">
-                <h3 class="text-lg font-semibold text-soft-white mb-3">Merge & Split</h3>
-                <p class="text-graphite">Combine duplicate memories with <code class="text-cyan">memory_merge</code> or decompose complex memories with <code class="text-cyan">memory_split</code>. Full lineage is preserved.</p>
+                <h3 class="text-lg font-semibold text-soft-white mb-4">After answering:</h3>
+                <ol class="space-y-3 text-graphite">
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">1.</span>
+                        <span>Run <code class="text-cyan">memory_ingest</code></span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">2.</span>
+                        <span>Store both the question and the answer</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">3.</span>
+                        <span>Let SerialMemory extract entities and relationships automatically</span>
+                    </li>
+                </ol>
             </div>
         </div>
     </div>
 </section>
 
-<!-- Engineering Reasoning -->
+<!-- Tenant Isolation -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Tenant Isolation</h2>
+
+        <p class="text-graphite mb-6">SerialMemory enforces tenant isolation at three layers:</p>
+
+        <div class="space-y-4 mb-8">
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Application Layer</h3>
+                    <p class="text-graphite">Tenant-scoped access control on every API call</p>
+                </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Database Layer</h3>
+                    <p class="text-graphite">Row Level Security policies enforced at PostgreSQL level</p>
+                </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Vector Layer</h3>
+                    <p class="text-graphite">Tenant-isolated embeddings in pgvector</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 rounded-lg border" style="background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3);">
+            <p class="text-soft-white font-medium">A tenant can never access data belonging to another tenant.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Example Claude Prompt -->
 <section class="bg-navy py-16">
     <div class="max-w-4xl mx-auto px-6">
-        <h2 class="text-2xl font-bold text-soft-white mb-8">Engineering Reasoning</h2>
-        <p class="text-graphite mb-8">SerialMemory includes specialized tools for engineering system analysis.</p>
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Example Claude Prompt</h2>
+
+        <div class="rounded-lg overflow-hidden border border-slate">
+            <div class="flex items-center justify-between px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                <span class="text-graphite text-xs font-mono">system prompt snippet</span>
+                <button onclick="navigator.clipboard.writeText(document.getElementById('prompt-code').innerText)" class="text-xs text-cyan hover:text-electric transition-colors">Copy</button>
+            </div>
+            <div class="px-6 py-4" style="background: #0B0F1A;">
+<pre id="prompt-code" class="text-soft-white font-mono text-sm whitespace-pre-wrap"><code>Before answering:
+1. Use memory_search for relevant context.
+2. Use that context in reasoning.
+
+After answering:
+Store important information using memory_ingest.</code></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Roadmap -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Roadmap</h2>
 
         <div class="space-y-4">
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">engineering_analyze</code>
-                </div>
-                <p class="text-graphite">Analyze the knowledge graph for engineering issues: power integrity, signal integrity, dependency corruption, thermal risks.</p>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Live graph streaming (SignalR)</span>
             </div>
-
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">engineering_reason</code>
-                </div>
-                <p class="text-graphite">Run multi-model reasoning: Structural, Risk, Optimization, and Contradiction models execute in parallel with confidence-weighted result merging.</p>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Deterministic replay for reasoning</span>
             </div>
-
-            <div class="card">
-                <div class="flex items-center gap-3 mb-3">
-                    <code class="text-cyan font-mono font-semibold">engineering_visualize</code>
-                </div>
-                <p class="text-graphite">Generate graph visualization data with nodes, links, and risk overlays. Returns JSON for react-force-graph-3d rendering.</p>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Time travel debugging for memory state</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Self-hosted enterprise mode (on-request)</span>
             </div>
         </div>
     </div>
 </section>
 
 <!-- CTA -->
-<section class="bg-midnight py-16">
+<section class="bg-navy py-16">
     <div class="max-w-4xl mx-auto px-6 text-center">
-        <h2 class="text-2xl font-bold text-soft-white mb-4">Ready to build?</h2>
-        <p class="text-graphite mb-8">Get your API key and start integrating persistent memory into your agents.</p>
+        <h2 class="text-2xl font-bold text-soft-white mb-4">Ready to integrate?</h2>
+        <p class="text-graphite mb-8">Get your API key and start building agents with persistent memory.</p>
         <div class="flex flex-col sm:flex-row justify-center gap-4">
             <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold">Get API Key</a>
-            <a href="/developers" class="btn-outline px-8 py-3 rounded-xl font-semibold">Back to Developers</a>
+            <a href="/developers" class="btn-outline px-8 py-3 rounded-xl font-semibold">Developers</a>
         </div>
     </div>
 </section>
