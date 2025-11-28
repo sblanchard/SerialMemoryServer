@@ -1,0 +1,311 @@
+@page
+@model DocsModel
+@{
+    ViewData["Title"] = "Documentation";
+    ViewData["Description"] = "SerialMemory API and MCP documentation for developers.";
+}
+
+<!-- Hero -->
+<section class="gradient-bg py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h1 class="text-4xl font-bold text-soft-white mb-4">Documentation</h1>
+        <p class="text-graphite text-lg">Everything you need to integrate SerialMemory into your AI agents.</p>
+    </div>
+</section>
+
+<!-- Quick Start -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Quick Start</h2>
+
+        <div class="space-y-6">
+            <!-- Step 1 -->
+            <div class="card">
+                <div class="flex items-start gap-4">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">1</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-semibold text-soft-white mb-2">Get an API Key</h3>
+                        <p class="text-graphite mb-4">Sign up and generate an API key from your dashboard.</p>
+                        <a href="/signup" class="text-cyan hover:text-electric transition-colors">Create account &rarr;</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="card">
+                <div class="flex items-start gap-4">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">2</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-semibold text-soft-white mb-2">Run the MCP Server</h3>
+                        <p class="text-graphite mb-4">Pull and run the Docker image. First run will prompt for your API key.</p>
+                        <div class="rounded-lg overflow-hidden border border-slate">
+                            <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                                <span class="text-graphite text-xs font-mono">terminal</span>
+                            </div>
+                            <div class="px-4 py-3" style="background: #0B0F1A;">
+                                <code class="text-cyan font-mono text-sm">docker run -it serialcoder/serialmemory-mcp</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="card">
+                <div class="flex items-start gap-4">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold" style="background: rgba(34, 211, 238, 0.2); color: #22D3EE;">3</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-semibold text-soft-white mb-2">Configure Your AI Client</h3>
+                        <p class="text-graphite mb-4">Add the MCP server to Claude Desktop or your preferred client.</p>
+                        <div class="rounded-lg overflow-hidden border border-slate">
+                            <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                                <span class="text-graphite text-xs font-mono">claude_desktop_config.json</span>
+                            </div>
+                            <div class="px-4 py-3 overflow-x-auto" style="background: #0B0F1A;">
+<pre class="text-cyan font-mono text-sm"><code>{
+  "mcpServers": {
+    "serialmemory": {
+      "command": "docker",
+      "args": ["run", "-i", "serialcoder/serialmemory-mcp"]
+    }
+  }
+}</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- MCP Tools Reference -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">MCP Tools Reference</h2>
+
+        <div class="space-y-4">
+            <!-- memory_ingest -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">memory_ingest</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(34, 197, 94, 0.2); color: #22C55E;">write</span>
+                </div>
+                <p class="text-graphite mb-4">Store a new memory with automatic entity extraction and embedding generation.</p>
+                <div class="rounded-lg overflow-hidden border border-slate">
+                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                        <span class="text-graphite text-xs font-mono">parameters</span>
+                    </div>
+                    <div class="px-4 py-3" style="background: #0B0F1A;">
+<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">content</span>: string      <span class="text-graphite"># Memory content to store</span>
+<span class="text-cyan">source</span>: string       <span class="text-graphite"># Optional source identifier</span>
+<span class="text-cyan">metadata</span>: object     <span class="text-graphite"># Optional tags, importance, etc.</span></code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- memory_search -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">memory_search</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite mb-4">Search memories using semantic, full-text, or hybrid search.</p>
+                <div class="rounded-lg overflow-hidden border border-slate">
+                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                        <span class="text-graphite text-xs font-mono">parameters</span>
+                    </div>
+                    <div class="px-4 py-3" style="background: #0B0F1A;">
+<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">query</span>: string        <span class="text-graphite"># Natural language search query</span>
+<span class="text-cyan">mode</span>: string         <span class="text-graphite"># "semantic" | "text" | "hybrid"</span>
+<span class="text-cyan">limit</span>: number        <span class="text-graphite"># Max results (default: 10)</span>
+<span class="text-cyan">threshold</span>: number    <span class="text-graphite"># Similarity threshold 0.0-1.0</span></code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- memory_multi_hop_search -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">memory_multi_hop_search</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite mb-4">Traverse the knowledge graph to find connected memories through entity relationships.</p>
+                <div class="rounded-lg overflow-hidden border border-slate">
+                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                        <span class="text-graphite text-xs font-mono">parameters</span>
+                    </div>
+                    <div class="px-4 py-3" style="background: #0B0F1A;">
+<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">query</span>: string        <span class="text-graphite"># Initial search query</span>
+<span class="text-cyan">hops</span>: number         <span class="text-graphite"># Relationship hops (default: 2)</span>
+<span class="text-cyan">max_results_per_hop</span>: number  <span class="text-graphite"># Results per hop</span></code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- memory_about_user -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">memory_about_user</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite">Retrieve structured user persona: preferences, skills, goals, and background.</p>
+            </div>
+
+            <!-- set_user_persona -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">set_user_persona</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(34, 197, 94, 0.2); color: #22C55E;">write</span>
+                </div>
+                <p class="text-graphite mb-4">Set or update a user persona attribute.</p>
+                <div class="rounded-lg overflow-hidden border border-slate">
+                    <div class="px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                        <span class="text-graphite text-xs font-mono">parameters</span>
+                    </div>
+                    <div class="px-4 py-3" style="background: #0B0F1A;">
+<pre class="text-soft-white font-mono text-sm"><code><span class="text-cyan">attribute_type</span>: string   <span class="text-graphite"># "preference" | "skill" | "goal" | "background"</span>
+<span class="text-cyan">attribute_key</span>: string    <span class="text-graphite"># Attribute name</span>
+<span class="text-cyan">attribute_value</span>: string  <span class="text-graphite"># Attribute value</span></code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- crawl_relationships -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">crawl_relationships</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(250, 204, 21, 0.2); color: #FACC15;">maintenance</span>
+                </div>
+                <p class="text-graphite">Extract entities and relationships from existing memories to populate the knowledge graph.</p>
+            </div>
+
+            <!-- get_graph_statistics -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">get_graph_statistics</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite">Get knowledge graph statistics including entity and relationship counts by type.</p>
+            </div>
+
+            <!-- export_memories -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">export_memories</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite">Export memories with filters. Supports JSON and CSV formats.</p>
+            </div>
+
+            <!-- reembed_memories -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">reembed_memories</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(250, 204, 21, 0.2); color: #FACC15;">maintenance</span>
+                </div>
+                <p class="text-graphite">Re-generate embeddings for memories. Use after switching embedding models.</p>
+            </div>
+
+            <!-- detect_contradictions -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">detect_contradictions</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite">Find memories that contradict each other using semantic similarity and content analysis.</p>
+            </div>
+
+            <!-- detect_hallucinations -->
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">detect_hallucinations</code>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(59, 130, 246, 0.2); color: #3B82F6;">read</span>
+                </div>
+                <p class="text-graphite">Flag potential hallucinations based on confidence, validation status, and isolation.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Memory Lifecycle -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Memory Lifecycle</h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-3">Confidence Decay</h3>
+                <p class="text-graphite mb-4">Memories naturally decay over time using exponential half-life:</p>
+                <div class="px-4 py-3 rounded-lg" style="background: #0B0F1A;">
+                    <code class="text-cyan font-mono text-sm">confidence * 0.5^(days / half_life)</code>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-3">Reinforcement</h3>
+                <p class="text-graphite">When a memory is validated or frequently accessed, use <code class="text-cyan">memory_reinforce</code> to reset decay and boost confidence.</p>
+            </div>
+
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-3">Memory Layers</h3>
+                <p class="text-graphite">Memories are organized into cognitive layers:</p>
+                <ul class="mt-3 space-y-1 text-sm">
+                    <li class="text-graphite"><code class="text-cyan">L0_RAW</code> - Raw input data</li>
+                    <li class="text-graphite"><code class="text-cyan">L1_CONTEXT</code> - Contextual understanding</li>
+                    <li class="text-graphite"><code class="text-cyan">L2_SUMMARY</code> - Summarized info</li>
+                    <li class="text-graphite"><code class="text-cyan">L3_KNOWLEDGE</code> - Extracted facts</li>
+                    <li class="text-graphite"><code class="text-cyan">L4_HEURISTIC</code> - Learned patterns</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-3">Merge & Split</h3>
+                <p class="text-graphite">Combine duplicate memories with <code class="text-cyan">memory_merge</code> or decompose complex memories with <code class="text-cyan">memory_split</code>. Full lineage is preserved.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Engineering Reasoning -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Engineering Reasoning</h2>
+        <p class="text-graphite mb-8">SerialMemory includes specialized tools for engineering system analysis.</p>
+
+        <div class="space-y-4">
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">engineering_analyze</code>
+                </div>
+                <p class="text-graphite">Analyze the knowledge graph for engineering issues: power integrity, signal integrity, dependency corruption, thermal risks.</p>
+            </div>
+
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">engineering_reason</code>
+                </div>
+                <p class="text-graphite">Run multi-model reasoning: Structural, Risk, Optimization, and Contradiction models execute in parallel with confidence-weighted result merging.</p>
+            </div>
+
+            <div class="card">
+                <div class="flex items-center gap-3 mb-3">
+                    <code class="text-cyan font-mono font-semibold">engineering_visualize</code>
+                </div>
+                <p class="text-graphite">Generate graph visualization data with nodes, links, and risk overlays. Returns JSON for react-force-graph-3d rendering.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-2xl font-bold text-soft-white mb-4">Ready to build?</h2>
+        <p class="text-graphite mb-8">Get your API key and start integrating persistent memory into your agents.</p>
+        <div class="flex flex-col sm:flex-row justify-center gap-4">
+            <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold">Get API Key</a>
+            <a href="/developers" class="btn-outline px-8 py-3 rounded-xl font-semibold">Back to Developers</a>
+        </div>
+    </div>
+</section>
