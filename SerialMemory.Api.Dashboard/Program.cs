@@ -34,8 +34,13 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 builder.Services.AddSingleton<IAdminService>(sp =>
     new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
 
-// Email services
+// Email and onboarding services
 builder.Services.AddSingleton<IEmailService, AcsEmailService>();
+builder.Services.AddSingleton<IDeveloperOnboardingService>(sp =>
+    new SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService(
+        builder.Configuration,
+        sp.GetRequiredService<IEmailService>(),
+        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService>>()));
 builder.Services.AddSingleton<IEmailVerificationService, EmailVerificationService>();
 
 // Stripe configuration
