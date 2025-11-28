@@ -29,7 +29,7 @@ builder.Services.AddSingleton(operationalConfig);
 
 // Deployment context (SaaS vs SelfHosted)
 builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
-builder.Services.AddSingleton<IQuotaEnforcementService, QuotaEnforcementService>();
+builder.Services.AddSingleton<SerialMemory.Core.Deployment.IQuotaEnforcementService, SerialMemory.Core.Deployment.QuotaEnforcementService>();
 
 // Log deployment mode at startup
 var deploymentContext = new DeploymentContext();

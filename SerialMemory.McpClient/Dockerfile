@@ -10,9 +10,9 @@ WORKDIR /src
 COPY SerialMemory.McpClient.csproj ./
 RUN dotnet restore -r linux-x64
 
-# Copy source and build
+# Copy source and build (restore again since COPY overwrites obj folder)
 COPY . .
-RUN dotnet publish -c Release -r linux-x64 -o /app --no-restore
+RUN dotnet publish -c Release -r linux-x64 -o /app
 
 # Runtime stage - minimal image
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime

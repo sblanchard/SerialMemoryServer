@@ -3,11 +3,15 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using SerialMemory.Api.Dashboard;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Telemetry;
 using SerialMemory.Infrastructure;
+using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Email;
+using SerialMemory.Infrastructure.KillSwitch;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +37,30 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 
 builder.Services.AddSingleton<IAdminService>(sp =>
     new AdminService(connectionString, sp.GetRequiredService<ILogger<AdminService>>()));
+
+// Deployment context
+builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
+
+// Kill switch service
+builder.Services.AddSingleton<IKillSwitchService>(sp =>
+{
+    var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
+    return new KillSwitchService(
+        dataSource,
+        sp.GetRequiredService<IDeploymentContext>(),
+        sp.GetRequiredService<ILogger<KillSwitchService>>());
+});
+
+// Quota enforcement service (uses full billing integration)
+builder.Services.AddSingleton<SerialMemory.Core.Interfaces.IQuotaEnforcementService>(sp =>
+{
+    var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
+    return new SerialMemory.Infrastructure.Billing.QuotaEnforcementService(
+        dataSource,
+        sp.GetRequiredService<IKillSwitchService>(),
+        sp.GetRequiredService<IDeploymentContext>(),
+        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Billing.QuotaEnforcementService>>());
+});
 
 // Email and onboarding services - use NoOp if ACS not configured
 // Check multiple config key patterns for backward compatibility
@@ -965,6 +993,11 @@ app.MapGet("/admin/system/health", async (
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTimeOffset.UtcNow }))
 .WithName("HealthCheck")
 .ExcludeFromDescription();
+
+// =============================================================================
+// Control Room Endpoints
+// =============================================================================
+app.MapControlRoomEndpoints(selfHostedMode);
 
 app.Run();
 
