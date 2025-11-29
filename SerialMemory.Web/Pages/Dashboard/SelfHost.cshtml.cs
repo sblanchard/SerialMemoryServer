@@ -19,6 +19,7 @@ public sealed class SelfHostModel : PageModel
     }
 
     public bool IsSelfHosted => _appConfig.IsSelfHosted;
+    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
 
     // Status Panel
     public SelfHostStatus? Status { get; set; }

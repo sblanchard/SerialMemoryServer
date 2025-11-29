@@ -17,6 +17,8 @@ public sealed class SecurityModel : PageModel
         _appConfig = appConfig;
     }
 
+    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
+
     // Tenant Isolation
     public Guid TenantId { get; set; }
     public string RlsStatus { get; set; } = "Unknown";
