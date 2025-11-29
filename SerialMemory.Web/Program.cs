@@ -57,7 +57,15 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.SlidingExpiration = true;
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Owner", policy =>
+        policy.RequireAssertion(context =>
+            context.User.IsInRole("owner") ||
+            context.User.IsInRole("admin") ||
+            context.User.HasClaim("role", "owner") ||
+            context.User.HasClaim("role", "admin")));
+});
 
 // Add session for storing internal tokens (server-side, not in cookies)
 builder.Services.AddDistributedMemoryCache();
