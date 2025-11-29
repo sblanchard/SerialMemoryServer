@@ -526,12 +526,11 @@
     let topologyMap = null;
     const liveLog = document.getElementById('liveLog');
 
-    // In production (HTTPS), use same origin. In local dev, API is on port 5000.
+    // API base URL injected from server configuration
+    const API_BASE_URL = '@Model.ApiBaseUrl';
+
     function getApiBaseUrl() {
-        const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        return isLocalDev
-            ? window.location.protocol + '//' + window.location.hostname + ':5000'
-            : window.location.origin;
+        return API_BASE_URL;
     }
 
     function appendLog(message, level = 'info') {

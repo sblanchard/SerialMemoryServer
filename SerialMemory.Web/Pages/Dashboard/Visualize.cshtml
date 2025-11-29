@@ -517,7 +517,7 @@
     let signalRConnection = null;
 
     async function initLiveUpdates() {
-        const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://@(ViewContext.HttpContext.Request.Host.ToString().Replace("5001", "5004"))';
+        const apiBaseUrl = '@Model.ApiBaseUrl';
 
         signalRConnection = new signalR.HubConnectionBuilder()
             .withUrl(apiBaseUrl + "/hubs/live")

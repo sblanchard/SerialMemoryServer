@@ -139,7 +139,7 @@
     let currentSteps = [];
     let currentEdges = [];
 
-    const apiBaseUrl = window.location.protocol + '//' + window.location.hostname + ':5000';
+    const apiBaseUrl = '@Model.ApiBaseUrl';
 
     // Initialize SignalR
     async function initSignalR() {

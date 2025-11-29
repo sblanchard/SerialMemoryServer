@@ -9,11 +9,15 @@ namespace SerialMemory.Web.Pages.Dashboard;
 public sealed class VisualizeModel : PageModel
 {
     private readonly ApiClientService _apiClient;
+    private readonly AppConfig _appConfig;
 
-    public VisualizeModel(ApiClientService apiClient)
+    public VisualizeModel(ApiClientService apiClient, AppConfig appConfig)
     {
         _apiClient = apiClient;
+        _appConfig = appConfig;
     }
+
+    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
 
     [BindProperty(SupportsGet = true)]
     public string? Project { get; set; }
