@@ -106,9 +106,18 @@ builder.Services.AddSingleton<IEntityExtractionService>(_ => entityExtractionSer
 builder.Services.AddScoped<KnowledgeGraphService>();
 builder.Services.AddScoped<RelationshipDiscoveryService>();
 
-// Usage and billing services
-builder.Services.AddSingleton<IUsageService>(sp =>
-    new UsageService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<UsageService>(), "self", "default"));
+// Usage and billing services - scoped to current tenant context
+builder.Services.AddSingleton<IUsageServiceFactory>(sp =>
+    new UsageServiceFactory(pgConnectionString, sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddScoped<IUsageService>(sp =>
+{
+    var factory = sp.GetRequiredService<IUsageServiceFactory>();
+    var tenantContext = sp.GetRequiredService<ITenantContext>();
+    // Use tenant context if available, otherwise fall back to "self" for system operations
+    var tenantId = !string.IsNullOrEmpty(tenantContext.TenantId) ? tenantContext.TenantId : "self";
+    var workspaceId = !string.IsNullOrEmpty(tenantContext.WorkspaceId) ? tenantContext.WorkspaceId : "default";
+    return factory.CreateForTenant(tenantId, workspaceId);
+});
 builder.Services.AddSingleton<IPlanService>(sp =>
     new PlanService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanService>()));
 
