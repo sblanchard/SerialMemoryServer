@@ -101,14 +101,15 @@ public sealed class ScalePredictionService : IScalePredictionService
 
     private async Task<LatencyMetrics> GetLatencyMetricsAsync(NpgsqlConnection conn, CancellationToken ct)
     {
-        // Get latency percentiles from graph_metrics_hourly or security_metrics_hourly
+        // Get latency percentiles from graph_metrics_hourly
+        // Note: bucket_hour is the actual column name
         var latencyData = await conn.QueryFirstOrDefaultAsync<(double? P50, double? P95, double? P99)>(@"
             SELECT
-                AVG(p50_latency_ms) AS ""P50"",
-                AVG(p95_latency_ms) AS ""P95"",
-                AVG(p99_latency_ms) AS ""P99""
+                COALESCE(AVG(p50_latency_ms), 0) AS ""P50"",
+                COALESCE(AVG(p95_latency_ms), 0) AS ""P95"",
+                COALESCE(AVG(p99_latency_ms), 0) AS ""P99""
             FROM graph_metrics_hourly
-            WHERE hour_bucket > NOW() - INTERVAL '1 hour'");
+            WHERE bucket_hour > NOW() - INTERVAL '1 hour'");
 
         return new LatencyMetrics
         {
@@ -121,11 +122,12 @@ public sealed class ScalePredictionService : IScalePredictionService
     private async Task<QueueMetrics> GetQueueMetricsAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         // Get queue depth from maintenance_tasks and supervised_jobs
+        // Note: maintenance_tasks uses scheduled_at, not created_at
         var queueData = await conn.QueryFirstOrDefaultAsync<(int? Pending, int? Running, int? Failed)>(@"
             SELECT
                 (SELECT COUNT(*) FROM maintenance_tasks WHERE status = 'pending')::int AS pending,
                 (SELECT COUNT(*) FROM supervised_jobs WHERE status = 'running')::int AS running,
-                (SELECT COUNT(*) FROM maintenance_tasks WHERE status = 'failed' AND created_at > NOW() - INTERVAL '1 hour')::int AS failed");
+                (SELECT COUNT(*) FROM maintenance_tasks WHERE status = 'failed' AND scheduled_at > NOW() - INTERVAL '1 hour')::int AS failed");
 
         return new QueueMetrics
         {
@@ -158,13 +160,15 @@ public sealed class ScalePredictionService : IScalePredictionService
     private async Task<LoadTrends> GetTrendsAsync(NpgsqlConnection conn, TimeSpan horizon, CancellationToken ct)
     {
         // Get hourly trends from usage_daily_rollups
+        // Note: uses event_count column (not total_requests)
         var trendData = await conn.QueryAsync<(DateTimeOffset Hour, int Count)>(@"
             SELECT
-                date_trunc('hour', rollup_date) AS ""Hour"",
-                total_requests AS ""Count""
+                date_trunc('hour', rollup_date::timestamp) AS ""Hour"",
+                SUM(event_count) AS ""Count""
             FROM usage_daily_rollups
-            WHERE rollup_date > NOW() - INTERVAL '24 hours'
-            ORDER BY rollup_date DESC
+            WHERE rollup_date > CURRENT_DATE - INTERVAL '24 hours'
+            GROUP BY date_trunc('hour', rollup_date::timestamp)
+            ORDER BY 1 DESC
             LIMIT 24");
 
         var dataPoints = trendData.ToList();
