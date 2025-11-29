@@ -7,30 +7,24 @@
 # 4. Add DNS: cloudflared tunnel route dns serialmemory serialmemory.serialcoder.com
 # 5. Add DNS: cloudflared tunnel route dns serialmemory memory.serialcoder.com
 
-tunnel: YOUR_TUNNEL_ID_HERE
+tunnel: 54f487a0-dcef-4bb4-af20-459d889c1cee
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
-  # SignalR WebSocket connections (must come before catch-all)
+  # SignalR WebSocket connections (for real-time updates)
   - hostname: serialmemory.serialcoder.com
     path: /hubs/*
     service: http://api:8080
     originRequest:
       noTLSVerify: true
 
-  # API endpoints
-  - hostname: serialmemory.serialcoder.com
-    path: /api/*
-    service: http://api:8080
-    originRequest:
-      noTLSVerify: true
-
-  # Health check
+  # Health check (direct to API)
   - hostname: serialmemory.serialcoder.com
     path: /health
     service: http://api:8080
 
-  # Web admin dashboard (catch-all for serialmemory.*)
+  # Web admin dashboard - ALL requests including /api/* go through web-admin
+  # The web-admin proxies /api/* requests to the API with proper auth headers
   - hostname: serialmemory.serialcoder.com
     service: http://web-admin:8080
     originRequest:

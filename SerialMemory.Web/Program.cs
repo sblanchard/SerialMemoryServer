@@ -129,7 +129,9 @@ app.Map("/api/{**path}", async (
     string path) =>
 {
     var client = httpClientFactory.CreateClient("Api");
-    // Ensure X-Api-Key is present (may not be set if HttpClient handler is reused)
+
+    // Ensure X-Api-Key is present for service-to-service auth
+    // (may not be set if HttpClient handler pooling resets headers)
     if (!client.DefaultRequestHeaders.Contains("X-Api-Key"))
     {
         var svcKey = context.RequestServices.GetRequiredService<IConfiguration>()["SERVICE_API_KEY"]
