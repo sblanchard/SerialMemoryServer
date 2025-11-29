@@ -17,6 +17,7 @@ builder.Services.AddDataProtection()
 
 // Configuration
 var apiBaseUrl = builder.Configuration["API_BASE_URL"] ?? "http://localhost:5000";
+var publicApiUrl = builder.Configuration["PUBLIC_API_URL"] ?? apiBaseUrl; // For browser JavaScript
 var dashboardApiUrl = builder.Configuration["DASHBOARD_API_URL"] ?? "http://localhost:5001";
 var stripePublishableKey = builder.Configuration["STRIPE_PUBLISHABLE_KEY"] ?? "";
 var serviceApiKey = builder.Configuration["SERVICE_API_KEY"]
@@ -93,7 +94,7 @@ var deploymentContext = new DeploymentContext();
 // Store configuration for views
 builder.Services.AddSingleton(new AppConfig
 {
-    ApiBaseUrl = apiBaseUrl,
+    ApiBaseUrl = publicApiUrl, // Public URL for browser JavaScript (SignalR, fetch)
     StripePublishableKey = stripePublishableKey,
     IsSelfHosted = deploymentContext.IsSelfHosted,
     DeploymentMode = deploymentContext.Mode.ToString(),
