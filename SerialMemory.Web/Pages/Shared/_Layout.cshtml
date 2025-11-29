@@ -89,6 +89,11 @@
                                         <a href="/dashboard/billing" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Billing</a>
                                     }
                                     <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
+                                    @if (User.IsInRole("owner") || User.IsInRole("admin") || User.HasClaim("role", "owner"))
+                                    {
+                                        <div class="border-t border-slate my-1"></div>
+                                        <a href="/dashboard/control-room" class="block px-4 py-2 text-sm text-red-400 hover:bg-slate">Control Room</a>
+                                    }
                                     @if (AppConfig.IsSelfHosted)
                                     {
                                         <div class="border-t border-slate my-1"></div>
