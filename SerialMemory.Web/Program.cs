@@ -129,7 +129,16 @@ app.Map("/api/{**path}", async (
     string path) =>
 {
     var client = httpClientFactory.CreateClient("Api");
-    // Note: X-Api-Key (service key) is already set on the client from AddHttpClient configuration
+    // Ensure X-Api-Key is present (may not be set if HttpClient handler is reused)
+    if (!client.DefaultRequestHeaders.Contains("X-Api-Key"))
+    {
+        var svcKey = context.RequestServices.GetRequiredService<IConfiguration>()["SERVICE_API_KEY"]
+            ?? Environment.GetEnvironmentVariable("SERVICE_API_KEY");
+        if (!string.IsNullOrEmpty(svcKey))
+        {
+            client.DefaultRequestHeaders.Add("X-Api-Key", svcKey);
+        }
+    }
 
     // SECURITY: Get tenant context from cookie claims (primary authority)
     var cookieTenantId = context.User.FindFirst("tenant_id")?.Value;
