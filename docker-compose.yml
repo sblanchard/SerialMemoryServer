@@ -157,7 +157,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - API_BASE_URL=http://api:8080
       - DASHBOARD_API_URL=http://dashboard-api:8080
-      - PUBLIC_API_URL=http://localhost:5000
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:5000}  # Set to https://serialmemory.serialcoder.com for production
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
       # Internal token key for dashboard-to-API communication (must match API)
@@ -248,6 +248,30 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Cloudflare Tunnel (optional - for public access)
+  # ---------------------------------------------------------------------------
+  # To use:
+  #   1. Create tunnel: cloudflared tunnel create serialmemory
+  #   2. Copy credentials.json to ops/cloudflared/
+  #   3. Update tunnel ID in ops/cloudflared/config.yml
+  #   4. Route DNS: cloudflared tunnel route dns serialmemory serialmemory.serialcoder.com
+  #   5. Route DNS: cloudflared tunnel route dns serialmemory memory.serialcoder.com
+  # ---------------------------------------------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: serialmemory-cloudflared
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./ops/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./ops/cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      - api
+      - web-admin
+    profiles:
+      - tunnel  # Only start with: docker compose --profile tunnel up -d
+    restart: unless-stopped
 
 volumes:
   postgres_data:

@@ -1,0 +1,46 @@
+# Cloudflare Tunnel Configuration for SerialMemory
+#
+# To use:
+# 1. Create a tunnel: cloudflared tunnel create serialmemory
+# 2. Copy your tunnel credentials to ops/cloudflared/credentials.json
+# 3. Update the tunnel ID below
+# 4. Add DNS: cloudflared tunnel route dns serialmemory serialmemory.serialcoder.com
+# 5. Add DNS: cloudflared tunnel route dns serialmemory memory.serialcoder.com
+
+tunnel: YOUR_TUNNEL_ID_HERE
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # SignalR WebSocket connections (must come before catch-all)
+  - hostname: serialmemory.serialcoder.com
+    path: /hubs/*
+    service: http://api:8080
+    originRequest:
+      noTLSVerify: true
+
+  # API endpoints
+  - hostname: serialmemory.serialcoder.com
+    path: /api/*
+    service: http://api:8080
+    originRequest:
+      noTLSVerify: true
+
+  # Health check
+  - hostname: serialmemory.serialcoder.com
+    path: /health
+    service: http://api:8080
+
+  # Web admin dashboard (catch-all for serialmemory.*)
+  - hostname: serialmemory.serialcoder.com
+    service: http://web-admin:8080
+    originRequest:
+      noTLSVerify: true
+
+  # MCP API for memory.* subdomain (Claude/Cursor connections)
+  - hostname: memory.serialcoder.com
+    service: http://api:8080
+    originRequest:
+      noTLSVerify: true
+
+  # Catch-all 404
+  - service: http_status:404
