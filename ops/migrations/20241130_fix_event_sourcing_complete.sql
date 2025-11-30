@@ -419,7 +419,7 @@ BEGIN
 
     RETURN v_event_id;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- STEP 12: Create emit_system_event() function for non-memory events
@@ -461,7 +461,7 @@ BEGIN
 
     RETURN v_event_id;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- STEP 13: Create create_timeline_snapshot() function
@@ -505,7 +505,7 @@ BEGIN
 
     RETURN v_snapshot_id;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- STEP 14: Create compute_mind_health() function
@@ -629,7 +629,7 @@ BEGIN
 
     RETURN v_health_id;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- STEP 15: Create get_recent_events() function for dashboard
@@ -768,7 +768,7 @@ BEGIN
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Drop existing trigger if any
 DROP TRIGGER IF EXISTS tr_memory_events ON memories;
@@ -824,6 +824,18 @@ DO $$ BEGIN
     GRANT EXECUTE ON FUNCTION compute_mind_health TO serialmemory_service;
     GRANT EXECUTE ON FUNCTION get_recent_events TO serialmemory_service;
     GRANT EXECUTE ON FUNCTION get_memory_timeline TO serialmemory_service;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+-- Grant execute on functions to contextdb_app (API user)
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION emit_memory_event TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION emit_system_event TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION create_timeline_snapshot TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION compute_mind_health TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION get_recent_events TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION get_memory_timeline TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION trigger_memory_event TO contextdb_app;
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 
