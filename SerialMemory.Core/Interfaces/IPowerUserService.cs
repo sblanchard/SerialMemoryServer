@@ -97,6 +97,11 @@ public interface IPowerUserService
         Guid memoryId,
         CancellationToken ct = default);
 
+    /// <summary>Get comprehensive trace detail including memory content, events, and lineage.</summary>
+    Task<FullTraceDetail> GetFullTraceAsync(
+        Guid memoryId,
+        CancellationToken ct = default);
+
     /// <summary>Get raw events by type.</summary>
     Task<List<RawEvent>> GetRawEventsByTypeAsync(
         string eventType,
@@ -253,6 +258,75 @@ public sealed class ConflictResolution
     public bool Success { get; init; }
     public string? Error { get; init; }
     public DateTimeOffset ResolvedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+// ==========================================
+// FULL TRACE DETAIL MODEL
+// ==========================================
+
+/// <summary>
+/// Comprehensive trace detail for the dashboard.
+/// Includes memory metadata, events, timeline, and lineage.
+/// </summary>
+public sealed class FullTraceDetail
+{
+    public Guid MemoryId { get; init; }
+    public string Content { get; init; } = "";
+    public string Layer { get; init; } = "";
+    public double Confidence { get; init; }
+    public bool IsActive { get; init; } = true;
+    public string? ContentHash { get; init; }
+    public string? Source { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset? UpdatedAt { get; init; }
+
+    /// <summary>Events from memory_events table.</summary>
+    public List<TraceEventDetail> Events { get; init; } = [];
+
+    /// <summary>Parent memory IDs (causal parents).</summary>
+    public List<Guid> CausalParents { get; init; } = [];
+
+    /// <summary>Child memory IDs that reference this memory as parent.</summary>
+    public List<Guid> Descendants { get; init; } = [];
+
+    /// <summary>Timeline snapshots from memory_timeline.</summary>
+    public List<TimelineSnapshot> Timeline { get; init; } = [];
+
+    /// <summary>Conflicts involving this memory.</summary>
+    public List<ConflictSummary> Conflicts { get; init; } = [];
+
+    /// <summary>Raw JSON representation of the memory.</summary>
+    public string RawJson { get; init; } = "{}";
+}
+
+public sealed class TraceEventDetail
+{
+    public Guid EventId { get; init; }
+    public long SequenceNumber { get; init; }
+    public string EventType { get; init; } = "";
+    public DateTimeOffset Timestamp { get; init; }
+    public string? ActorId { get; init; }
+    public string? Reason { get; init; }
+    public string PayloadJson { get; init; } = "{}";
+}
+
+public sealed class TimelineSnapshot
+{
+    public Guid Id { get; init; }
+    public DateTimeOffset SnapshotAt { get; init; }
+    public string EventType { get; init; } = "";
+    public string Layer { get; init; } = "";
+    public decimal Confidence { get; init; }
+    public string? ContentPreview { get; init; }
+}
+
+public sealed class ConflictSummary
+{
+    public Guid ConflictId { get; init; }
+    public Guid OtherMemoryId { get; init; }
+    public float Severity { get; init; }
+    public string ConflictType { get; init; } = "";
+    public bool IsResolved { get; init; }
 }
 
 // ==========================================
