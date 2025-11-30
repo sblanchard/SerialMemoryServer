@@ -33,7 +33,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/performance/threshold", new { operation, thresholdMs });
             SuccessMessage = response.IsSuccessStatusCode ? $"Threshold set for {operation}" : "Failed to set threshold";
         }
@@ -49,7 +49,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/performance/reset", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Metrics reset successfully" : "Failed to reset metrics";
         }
@@ -65,7 +65,7 @@ public sealed class PerformanceModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var metricsTask = client.GetFromJsonAsync<MetricsSnapshot>("/api/performance/metrics");
             var slowTask = client.GetFromJsonAsync<SlowOpsResponse>("/api/performance/slow?limit=20");

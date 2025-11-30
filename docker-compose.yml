@@ -44,6 +44,7 @@ services:
       - ./ops/telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
       - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
       - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
+      - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
       - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/99-rls-fix.sql:ro
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -78,9 +79,13 @@ services:
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+      # OpenAI Configuration (primary if set, fallback to Ollama)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
       - ConnectionStrings__Redis=redis:6379
       - RabbitMq__Host=rabbitmq
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
+      - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
       # Internal token key for dashboard-to-API communication (base64 64-byte key)
@@ -88,16 +93,22 @@ services:
       - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
       # Deployment Mode: PublicSaaS (default) or SelfHosted
-      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
       - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:-stephan@serialcoder.com}
       - SERIALMEMORY_LICENSE_KEY=${SERIALMEMORY_LICENSE_KEY:-}
+      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:-stephan@serialcoder.com}
+      # Dashboard API URL for auth forwarding
+      - DASHBOARD_API_URL=http://dashboard-api:8080
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
       rabbitmq:
+        condition: service_started
+      dashboard-api:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -113,7 +124,7 @@ services:
     build:
       context: .
       dockerfile: SerialMemory.Api.Dashboard/Dockerfile
-    container_name: serialmemory-dashboard
+    container_name: serialmemory-dashboard-api
     ports:
       - "5001:8080"
     environment:
@@ -125,20 +136,20 @@ services:
       - POSTGRES_DB=contextdb
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-32chars}
+      - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_your_test_key_here}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
-      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_pro_monthly}
-      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_enterprise_monthly}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_1SYsGUGmpXjmqv9HuNjnYAWA}
+      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_1SYsIAGmpXjmqv9HGeNnWSMZ}
       # Azure Communication Services for email
       - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
       - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
-      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.serialcoder.com}
+      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.dev}
       # Deployment Mode
-      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
     depends_on:
       postgres:
@@ -158,18 +169,20 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - API_BASE_URL=http://api:8080
       - DASHBOARD_API_URL=http://dashboard-api:8080
-      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:5000}  # Set to https://serialmemory.serialcoder.com for production
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-https://api.serialmemory.dev}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
-      # Internal token key for dashboard-to-API communication (must match API)
-      # WARNING: Change this in production! Must match the API service key
-      - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
+      # JWT settings (must match dashboard-api)
+      - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
+      - JWT_ISSUER=serialmemory
+      - JWT_AUDIENCE=serialmemory-api
       # Data Protection keys path (persisted across container restarts)
       - DATA_PROTECTION_PATH=/app/keys
       # Deployment Mode
-      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-SelfHosted}
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
       - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:-stephan@serialcoder.com}
     volumes:
       - web_admin_keys:/app/keys
     depends_on:
@@ -230,6 +243,35 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
+
+  # ---------------------------------------------------------------------------
+  # Worker (Background processing, maintenance, projections)
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: SerialMemory.Worker/Dockerfile
+    container_name: serialmemory-worker
+    ports:
+      - "8081:8081"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
+      - ConnectionStrings__Redis=redis:6379
+      - RabbitMq__Host=rabbitmq
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # MCP Client (Docker-first STDIO proxy for Claude Desktop)

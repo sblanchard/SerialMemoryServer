@@ -461,6 +461,67 @@ public abstract class TenantIsolationTestBase : IAsyncLifetime
                     ELSE require_tenant_context() AND tenant_id = current_setting('app.tenant_id', true)::uuid
                 END
             );
+
+        -- Cross-tenant FK protection triggers (FK constraints bypass RLS, so we need triggers)
+        CREATE OR REPLACE FUNCTION check_entity_relationship_tenant()
+        RETURNS TRIGGER AS $$
+        DECLARE
+            source_tenant UUID;
+            target_tenant UUID;
+        BEGIN
+            SELECT tenant_id INTO source_tenant FROM entities WHERE id = NEW.source_entity_id;
+            SELECT tenant_id INTO target_tenant FROM entities WHERE id = NEW.target_entity_id;
+
+            IF source_tenant IS NULL THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: source_entity_id % does not exist or is not visible', NEW.source_entity_id;
+            END IF;
+
+            IF target_tenant IS NULL THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: target_entity_id % does not exist or is not visible', NEW.target_entity_id;
+            END IF;
+
+            IF source_tenant != NEW.tenant_id THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: source_entity belongs to different tenant';
+            END IF;
+
+            IF target_tenant != NEW.tenant_id THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: target_entity belongs to different tenant';
+            END IF;
+
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        CREATE OR REPLACE FUNCTION check_memory_entity_tenant()
+        RETURNS TRIGGER AS $$
+        DECLARE
+            memory_tenant UUID;
+            entity_tenant UUID;
+        BEGIN
+            SELECT tenant_id INTO memory_tenant FROM memories WHERE id = NEW.memory_id;
+            SELECT tenant_id INTO entity_tenant FROM entities WHERE id = NEW.entity_id;
+
+            IF memory_tenant IS NULL OR entity_tenant IS NULL THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: Referenced memory or entity does not exist or is not visible';
+            END IF;
+
+            IF memory_tenant != NEW.tenant_id OR entity_tenant != NEW.tenant_id THEN
+                RAISE EXCEPTION 'SECURITY VIOLATION: Cross-tenant memory-entity link attempted';
+            END IF;
+
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS trg_entity_relationship_tenant_check ON entity_relationships;
+        CREATE TRIGGER trg_entity_relationship_tenant_check
+            BEFORE INSERT OR UPDATE ON entity_relationships
+            FOR EACH ROW EXECUTE FUNCTION check_entity_relationship_tenant();
+
+        DROP TRIGGER IF EXISTS trg_memory_entity_tenant_check ON memory_entities;
+        CREATE TRIGGER trg_memory_entity_tenant_check
+            BEFORE INSERT OR UPDATE ON memory_entities
+            FOR EACH ROW EXECUTE FUNCTION check_memory_entity_tenant();
     ";
 
     /// <summary>

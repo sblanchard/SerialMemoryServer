@@ -37,7 +37,8 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/mind/recalibrate", null);
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Recalibration started"
@@ -56,7 +57,8 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/mind/alerts/dismiss", new { alertId });
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Alert dismissed"
@@ -75,8 +77,9 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/mind/hallucinations/acknowledge", new { memoryId, confirm });
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsync($"/api/mind/hallucinations/flag/{memoryId}", null);
             SuccessMessage = response.IsSuccessStatusCode
                 ? (confirm ? "Hallucination confirmed and memory invalidated" : "Hallucination dismissed")
                 : "Failed to process hallucination";
@@ -94,7 +97,8 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/mind/contradictions/resolve", new { contradictionId, resolution });
             SuccessMessage = response.IsSuccessStatusCode
                 ? "Contradiction resolved"
@@ -113,20 +117,19 @@ public sealed class MindModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
 
             var healthTask = client.GetFromJsonAsync<MindHealthScore>("/api/mind/health");
-            var alertsTask = client.GetFromJsonAsync<AlertsResponse>("/api/mind/alerts?limit=20");
-            var trendTask = client.GetFromJsonAsync<TrendResponse>("/api/mind/trend?days=30");
-            var driftTask = client.GetFromJsonAsync<DriftResponse>("/api/mind/drift");
+            var trendTask = client.GetFromJsonAsync<TrendResponse>("/api/mind/trends?days=30");
+            var driftTask = client.GetFromJsonAsync<DriftResponse>("/api/mind/confidence?days=30");
             var hallucinationsTask = client.GetFromJsonAsync<HallucinationsListResponse>("/api/mind/hallucinations/list?limit=20");
             var contradictionsTask = client.GetFromJsonAsync<ContradictionsListResponse>("/api/mind/contradictions/unresolved?limit=20");
-            var statsTask = client.GetFromJsonAsync<MindStats>("/api/mind/stats");
 
-            await Task.WhenAll(healthTask, alertsTask, trendTask, driftTask, hallucinationsTask, contradictionsTask, statsTask);
+            await Task.WhenAll(healthTask, trendTask, driftTask, hallucinationsTask, contradictionsTask);
 
             HealthScore = await healthTask;
-            ActiveAlerts = (await alertsTask)?.Items ?? [];
+            ActiveAlerts = []; // Alerts not currently supported in main API
             DailyTrend = (await trendTask)?.Points ?? [];
             DriftCalibration = (await driftTask)?.Points ?? [];
 
@@ -158,7 +161,16 @@ public sealed class MindModel : PageModel
                 IsResolved = c.Status == "Resolved"
             }).ToList();
 
-            Stats = await statsTask;
+            // Build stats from health response
+            Stats = new MindStats
+            {
+                TotalMemories = HealthScore?.TotalMemories ?? 0,
+                ActiveMemories = HealthScore?.ActiveMemories ?? 0,
+                ArchivedMemories = HealthScore?.ArchivedMemories ?? 0,
+                AvgConfidence = HealthScore?.AvgConfidence ?? 0,
+                HallucinationCount = Hallucinations.Count,
+                ContradictionCount = Contradictions.Count
+            };
         }
         catch (HttpRequestException ex)
         {
@@ -215,6 +227,10 @@ public sealed class MindModel : PageModel
         public double FreshnessScore { get; init; }
         public string Status { get; init; } = "";
         public DateTimeOffset CalculatedAt { get; init; }
+        public long TotalMemories { get; init; }
+        public long ActiveMemories { get; init; }
+        public long ArchivedMemories { get; init; }
+        public double AvgConfidence { get; init; }
     }
 
     public sealed class AlertItem

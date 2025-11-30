@@ -518,9 +518,12 @@
 
     async function initLiveUpdates() {
         const apiBaseUrl = '@Model.ApiBaseUrl';
+        const signalRToken = '@Model.SignalRToken';
 
         signalRConnection = new signalR.HubConnectionBuilder()
-            .withUrl(apiBaseUrl + "/hubs/live")
+            .withUrl(apiBaseUrl + "/hubs/live", {
+                accessTokenFactory: () => signalRToken
+            })
             .withAutomaticReconnect()
             .configureLogging(signalR.LogLevel.Information)
             .build();

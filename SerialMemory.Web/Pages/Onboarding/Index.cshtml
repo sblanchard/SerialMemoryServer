@@ -101,7 +101,18 @@
                     <span class="text-green-400">All set! Your workspace is ready.</span>
                 </div>
                 <h2 class="text-xl font-semibold text-soft-white mb-4">Step 3: Configure Your MCP Client</h2>
-                <p class="text-graphite mb-6">Add this configuration to your Claude Desktop or MCP client:</p>
+
+                <!-- Show API Key -->
+                <div class="bg-slate/30 rounded-lg p-4 mb-6">
+                    <label class="block text-sm font-medium text-soft-white mb-2">Your API Key</label>
+                    <div class="flex items-center gap-2">
+                        <code class="flex-1 bg-slate border border-gray-700 px-4 py-2 rounded font-mono text-soft-white">@(Model.ApiKeys.FirstOrDefault()?.MaskedKey ?? "No key found")</code>
+                        <a href="/dashboard/api-keys" class="text-electric hover:underline text-sm">View Full Key</a>
+                    </div>
+                    <p class="text-xs text-graphite mt-2">For security, full keys are only shown once at creation. Create a new key to see the full value.</p>
+                </div>
+
+                <p class="text-graphite mb-4">Add this configuration to your Claude Desktop or MCP client:</p>
 
                 <div class="bg-slate/50 rounded-lg p-4 mb-6">
                     <div class="flex justify-between items-center mb-2">
@@ -112,9 +123,9 @@
   "mcpServers": {
     "serialmemory-memory": {
       "command": "npx",
-      "args": ["-y", "@@anthropic/mcp-remote", "https://api.serialmemory.com/mcp"],
+      "args": ["-y", "@@anthropic/mcp-remote", "https://api.serialmemory.dev/mcp"],
       "env": {
-        "API_KEY": "your-api-key-here"
+        "API_KEY": "@(Model.ApiKeys.FirstOrDefault()?.MaskedKey ?? "YOUR_API_KEY")"
       }
     }
   }

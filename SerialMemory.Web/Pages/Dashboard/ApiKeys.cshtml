@@ -42,7 +42,7 @@
                     <th class="px-6 py-3 text-right text-xs font-medium text-graphite uppercase tracking-wider">Actions</th>
                 </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
+            <tbody class="divide-y divide-gray-700">
                 @if (Model.ApiKeys.Count == 0)
                 {
                     <tr>
@@ -59,7 +59,15 @@
                             <div class="text-sm text-graphite">@key.Description</div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
-                            <code class="text-sm bg-slate/50 px-2 py-1 rounded">@key.KeyPrefix...</code>
+                            <div class="flex items-center gap-2">
+                                <code class="text-sm bg-slate/50 px-2 py-1 rounded">@key.KeyPrefix...</code>
+                                <button onclick="copyToClipboard('@key.KeyPrefix')"
+                                    class="text-graphite hover:text-soft-white" title="Copy prefix">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                </button>
+                            </div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-graphite">
                             @key.CreatedAt.ToString("MMM dd, yyyy")
@@ -81,9 +89,17 @@
                                 <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-300">Active</span>
                             }
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-3">
                             @if (!key.IsRevoked)
                             {
+                                <form method="post" asp-page-handler="Rotate" class="inline">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="keyId" value="@key.Id" />
+                                    <button type="submit" class="text-indigo-400 hover:text-indigo-300"
+                                        onclick="return confirm('This will generate a new API key and revoke the current one. Continue?')">
+                                        Rotate
+                                    </button>
+                                </form>
                                 <form method="post" asp-page-handler="Revoke" class="inline">
                                     @Html.AntiForgeryToken()
                                     <input type="hidden" name="keyId" value="@key.Id" />
@@ -120,28 +136,28 @@
 
 <!-- Create Key Modal -->
 <div id="createModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+    <div class="bg-slate rounded-lg shadow-xl max-w-md w-full mx-4 border border-gray-700">
         <form method="post" asp-page-handler="Create">
             @Html.AntiForgeryToken()
-            <div class="px-6 py-4 border-b">
-                <h3 class="text-lg font-semibold">Create API Key</h3>
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-soft-white">Create API Key</h3>
             </div>
             <div class="px-6 py-4 space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-soft-white mb-1">Name</label>
                     <input type="text" name="name" required
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                        class="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-800 text-soft-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                         placeholder="Production Key">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-soft-white mb-1">Description (optional)</label>
                     <input type="text" name="description"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                        class="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-800 text-soft-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                         placeholder="Used for...">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-soft-white mb-1">Expires (optional)</label>
-                    <select name="expiresIn" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    <select name="expiresIn" class="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-800 text-soft-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="">Never</option>
                         <option value="30">30 days</option>
                         <option value="90">90 days</option>
@@ -149,8 +165,8 @@
                     </select>
                 </div>
             </div>
-            <div class="px-6 py-4 border-t flex justify-end gap-3">
-                <button type="button" onclick="hideCreateModal()" class="px-4 py-2 text-soft-white hover:text-soft-white">Cancel</button>
+            <div class="px-6 py-4 border-t border-gray-700 flex justify-end gap-3">
+                <button type="button" onclick="hideCreateModal()" class="px-4 py-2 text-graphite hover:text-soft-white">Cancel</button>
                 <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md">Create Key</button>
             </div>
         </form>

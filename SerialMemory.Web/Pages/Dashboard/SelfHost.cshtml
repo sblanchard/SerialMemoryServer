@@ -4,12 +4,12 @@
     ViewData["Title"] = "Self-Host Control Room";
 }
 
-@if (!Model.IsSelfHosted)
+@if (!Model.CanAccessSelfHostedFeatures)
 {
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div class="bg-red-900/50 border border-red-500 text-red-200 px-6 py-4 rounded-lg">
             <h2 class="text-xl font-bold mb-2">Access Denied</h2>
-            <p>This page is only available in self-hosted deployment mode.</p>
+            <p>This page is only available in self-hosted deployment mode or to root administrators.</p>
         </div>
     </div>
     return;
@@ -601,8 +601,11 @@
         const statusText = document.getElementById('signalrStatus');
 
         const apiBaseUrl = getApiBaseUrl();
+        const signalRToken = '@Model.SignalRToken';
         connection = new signalR.HubConnectionBuilder()
-            .withUrl(apiBaseUrl + "/hubs/live")
+            .withUrl(apiBaseUrl + "/hubs/live", {
+                accessTokenFactory: () => signalRToken
+            })
             .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
             .configureLogging(signalR.LogLevel.Warning)
             .build();

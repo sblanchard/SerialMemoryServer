@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
@@ -12,14 +13,37 @@ public sealed class SelfHostModel : PageModel
     private readonly ApiClientService _apiClient;
     private readonly AppConfig _appConfig;
 
-    public SelfHostModel(ApiClientService apiClient, AppConfig appConfig)
+    private readonly ILogger<SelfHostModel> _logger;
+
+    public SelfHostModel(ApiClientService apiClient, AppConfig appConfig, ILogger<SelfHostModel> logger)
     {
         _apiClient = apiClient;
         _appConfig = appConfig;
+        _logger = logger;
     }
 
     public bool IsSelfHosted => _appConfig.IsSelfHosted;
+    public bool CanAccessSelfHostedFeatures
+    {
+        get
+        {
+            var isSelfHosted = _appConfig.IsSelfHosted;
+            var isRootAdmin = HttpContext.IsRootAdmin();
+            var isRootAdminClaim = HttpContext.User?.FindFirst("is_root_admin")?.Value;
+            var emailClaim = HttpContext.User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+
+            _logger.LogInformation(
+                "SELFHOST_ACCESS_CHECK: IsSelfHosted={IsSelfHosted}, IsRootAdmin={IsRootAdmin}, " +
+                "is_root_admin_claim={Claim}, email={Email}",
+                isSelfHosted, isRootAdmin, isRootAdminClaim ?? "(null)", emailClaim ?? "(null)");
+
+            return isSelfHosted || isRootAdmin;
+        }
+    }
     public string ApiBaseUrl => _appConfig.ApiBaseUrl;
+
+    // SignalR access token (from InternalTokenMiddleware)
+    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
 
     // Status Panel
     public SelfHostStatus? Status { get; set; }
@@ -36,7 +60,7 @@ public sealed class SelfHostModel : PageModel
 
     public async Task OnGetAsync()
     {
-        if (!IsSelfHosted)
+        if (!CanAccessSelfHostedFeatures)
         {
             ErrorMessage = "This page is only available in self-hosted mode.";
             return;
@@ -47,14 +71,14 @@ public sealed class SelfHostModel : PageModel
 
     public async Task<IActionResult> OnPostRunIntegrityCheckAsync()
     {
-        if (!IsSelfHosted)
+        if (!CanAccessSelfHostedFeatures)
         {
             return RedirectToPage();
         }
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/integrity", null);
 
             if (response.IsSuccessStatusCode)
@@ -78,14 +102,14 @@ public sealed class SelfHostModel : PageModel
 
     public async Task<IActionResult> OnPostCompactStorageAsync()
     {
-        if (!IsSelfHosted)
+        if (!CanAccessSelfHostedFeatures)
         {
             return RedirectToPage();
         }
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/vacuum", null);
 
             if (response.IsSuccessStatusCode)
@@ -109,14 +133,14 @@ public sealed class SelfHostModel : PageModel
 
     public async Task<IActionResult> OnPostRebuildIndexesAsync()
     {
-        if (!IsSelfHosted)
+        if (!CanAccessSelfHostedFeatures)
         {
             return RedirectToPage();
         }
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/reindex", null);
 
             if (response.IsSuccessStatusCode)
@@ -142,7 +166,7 @@ public sealed class SelfHostModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var statusTask = client.GetAsync("/api/selfhost/status");
             var configTask = client.GetAsync("/api/selfhost/config");

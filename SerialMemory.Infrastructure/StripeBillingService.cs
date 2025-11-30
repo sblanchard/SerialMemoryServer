@@ -525,17 +525,20 @@ public sealed class StripeBillingService : IBillingService, IMockableBillingServ
             "SELECT stripe_price_id FROM stripe_price_mapping WHERE plan_name = @PlanName AND is_active = true",
             new { PlanName = planName.ToLowerInvariant() });
 
-        if (priceId != null)
+        if (!string.IsNullOrEmpty(priceId))
             return priceId;
 
-        // Fall back to config
-        return planName.ToLowerInvariant() switch
+        // Fall back to config - return null if empty or not configured
+        var configPriceId = planName.ToLowerInvariant() switch
         {
             "free" => _config.FreePriceId,
             "pro" => _config.ProPriceId,
             "enterprise" => _config.EnterprisePriceId,
             _ => null
         };
+
+        // Return null if empty (not configured)
+        return string.IsNullOrEmpty(configPriceId) ? null : configPriceId;
     }
 
     private async Task<string> GetOrCreateStripeCustomerAsync(string tenantId, CancellationToken cancellationToken)
@@ -939,6 +942,55 @@ public sealed class StripeBillingService : IBillingService, IMockableBillingServ
             WHERE tenant_id = @TenantId AND status = 'past_due'
             """,
             new { TenantId = tenantId });
+
+        // Grant credits for the new billing cycle
+        if (planName != null && invoice.PeriodStart != null && invoice.PeriodEnd != null)
+        {
+            // Get credit allocation for this plan
+            var creditsPerCycle = await conn.QuerySingleOrDefaultAsync<decimal?>(
+                """
+                SELECT credits_per_cycle FROM tenant_plans
+                WHERE plan_name = @PlanName AND is_active = true
+                """,
+                new { PlanName = planName });
+
+            if (creditsPerCycle.HasValue && creditsPerCycle > 0)
+            {
+                // Create or update billing cycle with new credit allocation
+                await conn.ExecuteAsync(
+                    """
+                    INSERT INTO billing_cycles (id, tenant_id, workspace_id, cycle_start, cycle_end, credits_allocated, credits_used, is_current, created_at)
+                    VALUES (@Id, @TenantId, 'default', @CycleStart, @CycleEnd, @CreditsAllocated, 0, true, NOW())
+                    ON CONFLICT (tenant_id, workspace_id, cycle_start) DO UPDATE SET
+                        credits_allocated = EXCLUDED.credits_allocated,
+                        cycle_end = EXCLUDED.cycle_end,
+                        is_current = true,
+                        updated_at = NOW()
+                    """,
+                    new
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = tenantId,
+                        CycleStart = invoice.PeriodStart,
+                        CycleEnd = invoice.PeriodEnd,
+                        CreditsAllocated = creditsPerCycle.Value
+                    });
+
+                // Mark previous cycles as not current
+                await conn.ExecuteAsync(
+                    """
+                    UPDATE billing_cycles
+                    SET is_current = false, updated_at = NOW()
+                    WHERE tenant_id = @TenantId AND workspace_id = 'default'
+                      AND cycle_start < @CycleStart AND is_current = true
+                    """,
+                    new { TenantId = tenantId, CycleStart = invoice.PeriodStart });
+
+                _logger.LogInformation(
+                    "Granted {Credits} credits to tenant {TenantId} for billing cycle {Start} - {End}",
+                    creditsPerCycle, tenantId, invoice.PeriodStart, invoice.PeriodEnd);
+            }
+        }
 
         _logger.LogInformation("Processed invoice.payment_succeeded for tenant {TenantId}", tenantId);
 

@@ -131,11 +131,16 @@ public sealed class AnomalyDetectionService(
         if (relationshipCount == 0)
             baseSeverity += 0.3;
 
-        // Lower severity for recent nodes
-        if (ageDays < 14)
-            baseSeverity *= 0.5;
-        else if (ageDays > 30)
-            baseSeverity += 0.2;
+        switch (ageDays)
+        {
+            // Lower severity for recent nodes
+            case < 14:
+                baseSeverity *= 0.5;
+                break;
+            case > 30:
+                baseSeverity += 0.2;
+                break;
+        }
 
         return Math.Min(1.0, baseSeverity);
     }
@@ -253,7 +258,7 @@ public sealed class AnomalyDetectionService(
         catch
         {
             // Table might not exist or be empty
-            return Array.Empty<AnomalyFinding>();
+            return [];
         }
     }
 
@@ -318,7 +323,7 @@ public sealed class AnomalyDetectionService(
         }
         catch
         {
-            return Array.Empty<AnomalyFinding>();
+            return [];
         }
     }
 
@@ -376,7 +381,7 @@ public sealed class AnomalyDetectionService(
         }
         catch
         {
-            return Array.Empty<AnomalyFinding>();
+            return [];
         }
     }
 
@@ -420,7 +425,7 @@ public sealed class AnomalyDetectionService(
         }
         catch
         {
-            return Array.Empty<AnomalyFinding>();
+            return [];
         }
     }
 
@@ -464,7 +469,7 @@ public sealed class AnomalyDetectionService(
         }
         catch
         {
-            return Array.Empty<AnomalyFinding>();
+            return [];
         }
     }
 

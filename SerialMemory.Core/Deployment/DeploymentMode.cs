@@ -58,6 +58,19 @@ public interface IDeploymentContext
     /// Instance identifier for telemetry/support.
     /// </summary>
     string InstanceId { get; }
+
+    /// <summary>
+    /// Root admin email for PublicSaaS deployments.
+    /// Only this user can see self-host admin panels and power mode.
+    /// </summary>
+    string? RootAdminEmail { get; }
+
+    /// <summary>
+    /// Checks if the given email is the root admin.
+    /// </summary>
+    bool IsRootAdmin(string? email) =>
+        !string.IsNullOrEmpty(RootAdminEmail) &&
+        string.Equals(email, RootAdminEmail, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -73,6 +86,7 @@ public sealed class DeploymentContext : IDeploymentContext
     public bool PowerModeGloballyDisabled { get; }
     public string? LicenseKey { get; }
     public string InstanceId { get; }
+    public string? RootAdminEmail { get; }
 
     public DeploymentContext()
     {
@@ -103,10 +117,17 @@ public sealed class DeploymentContext : IDeploymentContext
         // License key for self-hosted
         LicenseKey = Environment.GetEnvironmentVariable("SERIALMEMORY_LICENSE_KEY");
 
+        // Root admin email - only this user has god-mode in PublicSaaS
+        RootAdminEmail = Environment.GetEnvironmentVariable("SERIALMEMORY_ROOT_ADMIN_EMAIL");
+
         // Generate or read instance ID
         InstanceId = Environment.GetEnvironmentVariable("SERIALMEMORY_INSTANCE_ID")
             ?? GenerateInstanceId();
     }
+
+    public bool IsRootAdmin(string? email) =>
+        !string.IsNullOrEmpty(RootAdminEmail) &&
+        string.Equals(email, RootAdminEmail, StringComparison.OrdinalIgnoreCase);
 
     private static string GenerateInstanceId()
     {

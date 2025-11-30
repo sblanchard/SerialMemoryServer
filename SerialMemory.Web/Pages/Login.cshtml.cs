@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages;
@@ -13,15 +14,18 @@ public sealed class LoginModel : PageModel
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly InternalTokenService _internalTokenService;
     private readonly ILogger<LoginModel> _logger;
+    private readonly IDeploymentContext _deploymentContext;
 
     public LoginModel(
         IHttpClientFactory httpClientFactory,
         InternalTokenService internalTokenService,
-        ILogger<LoginModel> logger)
+        ILogger<LoginModel> logger,
+        IDeploymentContext deploymentContext)
     {
         _httpClientFactory = httpClientFactory;
         _internalTokenService = internalTokenService;
         _logger = logger;
+        _deploymentContext = deploymentContext;
     }
 
     [BindProperty]
@@ -34,17 +38,25 @@ public sealed class LoginModel : PageModel
 
     public string? ReturnUrl { get; set; }
 
-    public void OnGet([FromQuery] string? returnUrl)
+    public async Task OnGetAsync([FromQuery] string? returnUrl)
     {
         ReturnUrl = returnUrl;
+
+        // SECURITY: Always clear any existing session on login page GET
+        // This prevents session inheritance attacks where a new user
+        // could accidentally inherit an old session's tenant claims
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        Response.Cookies.Delete("auth_token");
+        HttpContext.Session.Clear();
     }
 
     public async Task<IActionResult> OnPostAsync([FromQuery] string? returnUrl)
     {
         // SECURITY: Always clear old auth tokens before processing new login
         // This prevents cross-tenant data leakage from stale cookies
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         Response.Cookies.Delete("auth_token");
-        HttpContext.Session.Remove("internal_token");
+        HttpContext.Session.Clear();
 
         if (string.IsNullOrWhiteSpace(ApiKey))
         {
@@ -78,8 +90,14 @@ public sealed class LoginModel : PageModel
             }
 
             _logger.LogInformation(
-                "User {UserId} authenticated for tenant {TenantId}",
-                result.UserId, result.TenantId);
+                "LOGIN_DEBUG: UserId={UserId}, TenantId={TenantId}, Email={Email}, Role={Role}",
+                result.UserId, result.TenantId, result.Email ?? "(null)", result.Role);
+
+            // Determine if user is root admin
+            var isRootAdmin = _deploymentContext.IsRootAdmin(result.Email);
+            _logger.LogInformation(
+                "LOGIN_DEBUG: IsRootAdmin={IsRootAdmin}, ConfiguredRootEmail={ConfiguredRoot}",
+                isRootAdmin, _deploymentContext.RootAdminEmail ?? "(not set)");
 
             // Sign in with claims - DO NOT store api_key in claims
             var claims = new List<Claim>
@@ -88,7 +106,8 @@ public sealed class LoginModel : PageModel
                 new(ClaimTypes.Email, result.Email ?? result.UserId),
                 new(ClaimTypes.Name, result.TenantName ?? result.UserId),
                 new("tenant_id", result.TenantId),
-                new("role", result.Role)
+                new("role", result.Role),
+                new("is_root_admin", isRootAdmin.ToString().ToLowerInvariant())
                 // NOTE: api_key intentionally NOT stored in cookie claims
             };
 
@@ -113,7 +132,8 @@ public sealed class LoginModel : PageModel
                 UserId = result.UserId,
                 WorkspaceId = "default",
                 Role = result.Role,
-                Email = result.Email
+                Email = result.Email,
+                IsRootAdmin = isRootAdmin
             });
 
             // Store internal token in session (server-side, not in cookie)
@@ -146,10 +166,19 @@ public sealed class LoginModel : PageModel
 
     private sealed class MeResult
     {
+        [System.Text.Json.Serialization.JsonPropertyName("tenantId")]
         public string TenantId { get; init; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("tenantName")]
         public string? TenantName { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("userId")]
         public string UserId { get; init; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("email")]
         public string? Email { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("role")]
         public string Role { get; init; } = "";
     }
 }

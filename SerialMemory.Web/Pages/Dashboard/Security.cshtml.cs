@@ -19,6 +19,9 @@ public sealed class SecurityModel : PageModel
 
     public string ApiBaseUrl => _appConfig.ApiBaseUrl;
 
+    // SignalR access token (from InternalTokenMiddleware)
+    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
+
     // Tenant Isolation
     public Guid TenantId { get; set; }
     public string RlsStatus { get; set; } = "Unknown";
@@ -53,7 +56,7 @@ public sealed class SecurityModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var response = await client.PostAsJsonAsync("/api/proof/verify", new { action });
 
@@ -80,7 +83,7 @@ public sealed class SecurityModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var isolationTask = client.GetAsync("/api/proof/isolation");
             var integrityTask = client.GetAsync("/api/proof/integrity");

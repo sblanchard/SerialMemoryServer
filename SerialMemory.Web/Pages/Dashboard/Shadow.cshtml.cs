@@ -52,7 +52,7 @@ public sealed class ShadowModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/shadow/branches", new
             {
                 name = BranchName,
@@ -91,7 +91,7 @@ public sealed class ShadowModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync($"/api/shadow/branches/{branchId}/memories", new
             {
                 content = MemoryContent
@@ -113,7 +113,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync($"/api/shadow/branches/{branchId}/promote", new { });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -132,7 +132,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync($"/api/shadow/branches/{branchId}/discard", new { reason = "User requested discard" });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -151,7 +151,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync($"/api/shadow/branches/{branchId}/freeze", new { });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -170,7 +170,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync($"/api/shadow/branches/{branchId}/unfreeze", new { });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -189,7 +189,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.GetFromJsonAsync<BranchesResponse>("/api/shadow/branches");
             Branches = response?.Items ?? [];
         }
@@ -203,7 +203,7 @@ public sealed class ShadowModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var branchTask = client.GetFromJsonAsync<ShadowBranch>($"/api/shadow/branches/{branchId}");
             var memoriesTask = client.GetFromJsonAsync<BranchMemoriesResponse>($"/api/shadow/branches/{branchId}/memories");

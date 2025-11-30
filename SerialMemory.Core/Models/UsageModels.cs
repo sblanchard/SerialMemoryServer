@@ -59,7 +59,12 @@ public enum UsageEventType
     // Engineering reasoning operations
     EngineeringAnalyze,
     EngineeringVisualize,
-    EngineeringReason
+    EngineeringReason,
+
+    // LLM operations
+    LlmChat,
+    Embedding,
+    EntityExtraction
 }
 
 /// <summary>
@@ -128,7 +133,12 @@ public static class UsageCreditCosts
         // Engineering reasoning operations (compute intensive)
         [UsageEventType.EngineeringAnalyze] = 3.0m,     // Graph analysis
         [UsageEventType.EngineeringVisualize] = 2.0m,   // Visualization data
-        [UsageEventType.EngineeringReason] = 5.0m       // Multi-model reasoning
+        [UsageEventType.EngineeringReason] = 5.0m,      // Multi-model reasoning
+
+        // LLM operations
+        [UsageEventType.LlmChat] = 2.0m,                // Chat completion
+        [UsageEventType.Embedding] = 0.5m,              // Single embedding
+        [UsageEventType.EntityExtraction] = 1.5m        // Entity extraction
     };
 
     public static decimal GetCost(UsageEventType eventType) =>
@@ -176,6 +186,9 @@ public static class UsageCreditCosts
         UsageEventType.EngineeringAnalyze => "engineering_analyze",
         UsageEventType.EngineeringVisualize => "engineering_visualize",
         UsageEventType.EngineeringReason => "engineering_reason",
+        UsageEventType.LlmChat => "llm_chat",
+        UsageEventType.Embedding => "embedding",
+        UsageEventType.EntityExtraction => "entity_extraction",
         _ => eventType.ToString().ToLowerInvariant()
     };
 
@@ -216,6 +229,9 @@ public static class UsageCreditCosts
         "engineering_analyze" => UsageEventType.EngineeringAnalyze,
         "engineering_visualize" => UsageEventType.EngineeringVisualize,
         "engineering_reason" => UsageEventType.EngineeringReason,
+        "llm_chat" => UsageEventType.LlmChat,
+        "embedding" => UsageEventType.Embedding,
+        "entity_extraction" => UsageEventType.EntityExtraction,
         _ => null
     };
 }

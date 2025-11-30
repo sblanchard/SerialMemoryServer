@@ -88,7 +88,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/timeline/restore", new { memoryId, sequence });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -107,7 +107,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/timeline/replay", new { memoryId, fromSequence, toSequence });
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -126,7 +126,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             // Use the correct API endpoints
             var timelineResponse = await client.GetFromJsonAsync<GlobalTimelineResponse>("/api/memory/timeline?limit=100");
@@ -183,7 +183,7 @@ public sealed class TimelineModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             // Use correct API endpoints
             var timelineTask = client.GetFromJsonAsync<MemoryTimelineResponse>($"/api/memory/{memoryId}/timeline");

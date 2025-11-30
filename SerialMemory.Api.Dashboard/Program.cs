@@ -107,6 +107,8 @@ builder.Services.AddAuthentication(options =>
     })
     .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
     {
+        // Disable claim type mapping - keep "role" as "role", not mapped to ClaimTypes.Role URI
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -425,7 +427,7 @@ app.MapPost("/signup", async (
         var result = await apiKeyService.SignupAsync(request, ct);
         Metrics.TenantSignupTotal.Add(1);
 
-        // Send verification email (non-blocking - don't fail signup if email fails)
+        // Send verification email with API key (non-blocking - don't fail signup if email fails)
         try
         {
             var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
@@ -436,6 +438,7 @@ app.MapPost("/signup", async (
                 request.Email,
                 ipAddress,
                 userAgent,
+                result.ApiKey.Key, // Include API key in email - this is the only time user sees it!
                 ct);
         }
         catch (Exception ex)
@@ -704,6 +707,47 @@ app.MapDelete("/api-keys/{id:guid}", async (
 .Produces(StatusCodes.Status404NotFound);
 
 // =============================================================================
+// POST /api-keys/{id}/rotate - Rotate API key (create new, revoke old)
+// =============================================================================
+app.MapPost("/api-keys/{id:guid}/rotate", async (
+    Guid id,
+    ClaimsPrincipal user,
+    IApiKeyService apiKeyService,
+    CancellationToken ct) =>
+{
+    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
+
+    // Get the existing key to copy its name
+    var existingKey = await apiKeyService.GetApiKeyAsync(tenantId, id, ct);
+    if (existingKey == null)
+        return Results.NotFound(new { error = "not_found", message = "API key not found" });
+
+    // Create a new key with the same name
+    var newKeyName = $"{existingKey.Name} (rotated)";
+    var createRequest = new CreateApiKeyRequest
+    {
+        Name = newKeyName
+    };
+    var createResult = await apiKeyService.CreateApiKeyAsync(tenantId, userId, createRequest, ct);
+
+    // Revoke the old key
+    await apiKeyService.RevokeApiKeyAsync(tenantId, id, userId, ct);
+
+    return Results.Ok(new
+    {
+        id = createResult.Id,
+        key = createResult.Key,
+        message = "API key rotated successfully. The old key has been revoked."
+    });
+})
+.WithName("RotateApiKey")
+.WithDescription("Rotates an API key - creates a new one and revokes the old one")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.Produces(StatusCodes.Status404NotFound);
+
+// =============================================================================
 // GET /tenant/limits - Get tenant limits for SDK error messages
 // =============================================================================
 app.MapGet("/tenant/limits", async (
@@ -796,7 +840,7 @@ app.MapPost("/billing/checkout", async (
 })
 .WithName("CreateCheckoutSession")
 .WithDescription("Creates a Stripe checkout session for upgrading to a paid plan")
-.RequireAuthorization("Admin")
+.RequireAuthorization("Member")
 .Produces(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status401Unauthorized);
@@ -826,7 +870,7 @@ app.MapPost("/billing/portal", async (
 })
 .WithName("CreatePortalSession")
 .WithDescription("Creates a Stripe customer portal session for managing billing")
-.RequireAuthorization("Admin")
+.RequireAuthorization("Member")
 .Produces(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status401Unauthorized);

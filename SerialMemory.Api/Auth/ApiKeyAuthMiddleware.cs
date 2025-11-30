@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Api.Auth;
@@ -22,19 +23,40 @@ public sealed class ApiKeyAuthMiddleware
     private readonly byte[]? _internalTokenKey;
     private readonly string? _serviceApiKey;
 
-    private const string InternalTokenIssuer = "serialmemory-web";
-    private const string InternalTokenAudience = "serialmemory-internal";
+    // Must match InternalTokenService in SerialMemory.Web
+    // Reads from JWT_ISSUER/JWT_AUDIENCE (defaults: serialmemory / serialmemory-api)
+    private readonly string _internalTokenIssuer;
+    private readonly string _internalTokenAudience;
 
     public ApiKeyAuthMiddleware(RequestDelegate next, ILogger<ApiKeyAuthMiddleware> logger, IConfiguration configuration)
     {
         _next = next;
         _logger = logger;
 
+        // JWT issuer/audience must match InternalTokenService in SerialMemory.Web
+        _internalTokenIssuer = configuration["JWT_ISSUER"] ?? "serialmemory";
+        _internalTokenAudience = configuration["JWT_AUDIENCE"] ?? "serialmemory-api";
+
         // Load internal token signing key (must match SerialMemory.Web)
-        var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
-        if (!string.IsNullOrEmpty(keyBase64))
+        // First try JWT_SECRET (UTF8 string), then INTERNAL_TOKEN_KEY (base64)
+        var jwtSecret = configuration["JWT_SECRET"];
+        if (!string.IsNullOrEmpty(jwtSecret))
         {
-            _internalTokenKey = Convert.FromBase64String(keyBase64);
+            _internalTokenKey = System.Text.Encoding.UTF8.GetBytes(jwtSecret);
+        }
+        else
+        {
+            var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
+            if (!string.IsNullOrEmpty(keyBase64))
+            {
+                _internalTokenKey = Convert.FromBase64String(keyBase64);
+            }
+            else
+            {
+                // Use default development key matching InternalTokenService default
+                _internalTokenKey = System.Text.Encoding.UTF8.GetBytes("default-development-secret-32chars!!");
+                logger.LogWarning("JWT_SECRET not configured. Using default development key for internal tokens.");
+            }
         }
 
         // Load service API key for trusted dashboard communication
@@ -60,7 +82,8 @@ public sealed class ApiKeyAuthMiddleware
     public async Task InvokeAsync(
         HttpContext context,
         IApiKeyService apiKeyService,
-        IMutableTenantContext tenantContext)
+        IMutableTenantContext tenantContext,
+        IDeploymentContext deploymentContext)
     {
         var path = context.Request.Path.Value ?? "";
 
@@ -78,7 +101,7 @@ public sealed class ApiKeyAuthMiddleware
         // Check if this is a trusted dashboard request (service API key + tenant headers)
         if (!string.IsNullOrEmpty(_serviceApiKey) && xApiKey == _serviceApiKey)
         {
-            if (await TryAuthenticateInternalRequest(context, tenantContext, bearerToken))
+            if (await TryAuthenticateInternalRequest(context, tenantContext, deploymentContext, bearerToken))
             {
                 try
                 {
@@ -170,6 +193,7 @@ public sealed class ApiKeyAuthMiddleware
     private async Task<bool> TryAuthenticateInternalRequest(
         HttpContext context,
         IMutableTenantContext tenantContext,
+        IDeploymentContext deploymentContext,
         string? bearerToken)
     {
         // Try to validate internal JWT token
@@ -198,20 +222,45 @@ public sealed class ApiKeyAuthMiddleware
                     return false;
                 }
 
+                // Validate isRootAdmin server-side (don't just trust the token claim)
+                // The token claim is a hint, but we verify against configured root admin email
+                var tokenClaimIsRootAdmin = claims.IsRootAdmin;
+                var serverSideIsRootAdmin = deploymentContext.IsRootAdmin(claims.Email);
+                var isRootAdmin = tokenClaimIsRootAdmin && serverSideIsRootAdmin;
+
+                // DEBUG: Log root admin check details
+                _logger.LogInformation(
+                    "ROOT_ADMIN_CHECK: email={Email}, tokenClaim={TokenClaim}, serverCheck={ServerCheck}, " +
+                    "configuredRootEmail={ConfiguredRoot}, isSaaS={IsSaaS}, finalResult={FinalResult}",
+                    claims.Email ?? "(null)",
+                    tokenClaimIsRootAdmin,
+                    serverSideIsRootAdmin,
+                    deploymentContext.RootAdminEmail ?? "(not set)",
+                    deploymentContext.IsSaaS,
+                    isRootAdmin);
+
+                // In SelfHosted mode, owners get AllowPowerMode by default
+                var allowPowerMode = deploymentContext.IsSelfHosted && claims.Role == "owner";
+
                 tenantContext.SetContext(
                     tenantId: claims.TenantId,
                     workspaceId: claims.WorkspaceId,
                     userId: claims.UserId,
+                    userEmail: claims.Email,
+                    userRole: claims.Role,
                     sessionId: null,
                     isLabMode: false,
+                    allowPowerMode: allowPowerMode || isRootAdmin,
+                    isRootAdmin: isRootAdmin,
                     scopes: new[] { "dashboard" });
 
                 context.Items["TenantId"] = Guid.TryParse(claims.TenantId, out var tid) ? tid : Guid.Empty;
                 context.Items["IsInternalAuth"] = true;
+                context.Items["IsRootAdmin"] = isRootAdmin;
 
                 _logger.LogDebug(
-                    "Authenticated internal request for tenant {TenantId}, user {UserId}",
-                    claims.TenantId, claims.UserId);
+                    "Authenticated internal request for tenant {TenantId}, user {UserId}, role={Role}, isRootAdmin={IsRootAdmin}",
+                    claims.TenantId, claims.UserId, claims.Role, isRootAdmin);
 
                 return true;
             }
@@ -220,6 +269,8 @@ public sealed class ApiKeyAuthMiddleware
         // Fallback: trust headers if service key is valid (for legacy compatibility)
         var tenantId = context.Request.Headers["X-Tenant-Id"].FirstOrDefault();
         var userId = context.Request.Headers["X-User-Id"].FirstOrDefault();
+        var userRole = context.Request.Headers["X-User-Role"].FirstOrDefault();
+        var userEmail = context.Request.Headers["X-User-Email"].FirstOrDefault();
 
         if (!string.IsNullOrEmpty(tenantId) && !string.IsNullOrEmpty(userId))
         {
@@ -228,16 +279,25 @@ public sealed class ApiKeyAuthMiddleware
                 "Consider updating dashboard to use internal tokens.",
                 tenantId);
 
+            // Validate isRootAdmin server-side
+            var isRootAdmin = deploymentContext.IsRootAdmin(userEmail);
+            var allowPowerMode = deploymentContext.IsSelfHosted && userRole == "owner";
+
             tenantContext.SetContext(
                 tenantId: tenantId,
                 workspaceId: "default",
                 userId: userId,
+                userEmail: userEmail,
+                userRole: userRole,
                 sessionId: null,
                 isLabMode: false,
+                allowPowerMode: allowPowerMode || isRootAdmin,
+                isRootAdmin: isRootAdmin,
                 scopes: new[] { "dashboard" });
 
             context.Items["TenantId"] = Guid.TryParse(tenantId, out var tid) ? tid : Guid.Empty;
             context.Items["IsInternalAuth"] = true;
+            context.Items["IsRootAdmin"] = isRootAdmin;
 
             return true;
         }
@@ -255,16 +315,20 @@ public sealed class ApiKeyAuthMiddleware
 
         try
         {
-            var tokenHandler = new JwtSecurityTokenHandler();
+            var tokenHandler = new JwtSecurityTokenHandler
+            {
+                // Must match InternalTokenService in SerialMemory.Web
+                MapInboundClaims = false
+            };
             var securityKey = new SymmetricSecurityKey(_internalTokenKey);
             var validationParameters = new TokenValidationParameters
             {
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKey = securityKey,
                 ValidateIssuer = true,
-                ValidIssuer = InternalTokenIssuer,
+                ValidIssuer = _internalTokenIssuer,
                 ValidateAudience = true,
-                ValidAudience = InternalTokenAudience,
+                ValidAudience = _internalTokenAudience,
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30)
             };
@@ -279,6 +343,10 @@ public sealed class ApiKeyAuthMiddleware
                 return null;
             }
 
+            // Extract is_root_admin claim (bool stored as "true"/"false" string)
+            var isRootAdminClaim = principal.FindFirst("is_root_admin")?.Value;
+            var isRootAdmin = string.Equals(isRootAdminClaim, "true", StringComparison.OrdinalIgnoreCase);
+
             return new InternalTokenClaims
             {
                 UserId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
@@ -286,7 +354,9 @@ public sealed class ApiKeyAuthMiddleware
                     ?? "",
                 TenantId = principal.FindFirst("tenant_id")?.Value ?? "",
                 WorkspaceId = principal.FindFirst("workspace_id")?.Value ?? "default",
-                Role = principal.FindFirst("role")?.Value ?? ""
+                Role = principal.FindFirst("role")?.Value ?? "",
+                Email = principal.FindFirst("email")?.Value,
+                IsRootAdmin = isRootAdmin
             };
         }
         catch (SecurityTokenException ex)
@@ -302,6 +372,8 @@ public sealed class ApiKeyAuthMiddleware
         public required string UserId { get; init; }
         public string WorkspaceId { get; init; } = "default";
         public required string Role { get; init; }
+        public string? Email { get; init; }
+        public bool IsRootAdmin { get; init; }
     }
 
     private bool IsAllowedAnonymous(string path)

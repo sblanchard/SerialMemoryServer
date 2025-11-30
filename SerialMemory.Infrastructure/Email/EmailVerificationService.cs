@@ -127,19 +127,30 @@ public sealed class EmailVerificationService(
                 new { Id = tokenRecord.id },
                 tx);
 
-            // Update user's email verification status
-            await conn.ExecuteAsync(
+            // Update user's email verification status (use LOWER for case-insensitive matching)
+            var rowsUpdated = await conn.ExecuteAsync(
                 """
                 UPDATE tenant_users
                 SET email_verified = TRUE, email_verified_at = NOW()
-                WHERE tenant_id = @TenantId AND user_id = @UserId
+                WHERE tenant_id = @TenantId AND LOWER(user_id) = LOWER(@UserId)
                 """,
                 new { TenantId = tokenRecord.tenant_id, UserId = tokenRecord.user_id },
                 tx);
 
-            await tx.CommitAsync(cancellationToken);
+            if (rowsUpdated == 0)
+            {
+                logger.LogWarning(
+                    "No rows updated for email verification! TenantId={TenantId}, UserId={UserId}",
+                    tokenRecord.tenant_id, tokenRecord.user_id);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Email verified: updated {RowsUpdated} row(s) for {Email}",
+                    rowsUpdated, tokenRecord.email);
+            }
 
-            logger.LogInformation("Email verified for {Email}", tokenRecord.email);
+            await tx.CommitAsync(cancellationToken);
 
             // Provision tenant if onboarding service is available
             OnboardingResult? onboardingResult = null;
@@ -332,6 +343,16 @@ public sealed class EmailVerificationService(
                 new { Email = tokenRecord.email, IpAddress = ipAddress },
                 tx);
 
+            // Mark email as verified - clicking magic link proves email ownership
+            await conn.ExecuteAsync(
+                """
+                UPDATE tenant_users
+                SET email_verified = TRUE, email_verified_at = COALESCE(email_verified_at, NOW())
+                WHERE tenant_id = @TenantId AND user_id = @UserId AND email_verified = FALSE
+                """,
+                new { TenantId = tokenRecord.tenant_id, UserId = tokenRecord.user_id },
+                tx);
+
             // Get user info for JWT
             var userInfo = await conn.QueryFirstOrDefaultAsync<UserInfo>(
                 """
@@ -371,12 +392,13 @@ public sealed class EmailVerificationService(
         string email,
         string? ipAddress = null,
         string? userAgent = null,
+        string? apiKey = null,
         CancellationToken cancellationToken = default)
     {
         var token = await CreateVerificationTokenAsync(tenantId, userId, email, ipAddress, userAgent, cancellationToken);
         var verificationUrl = $"{_baseUrl}/verify-email?token={Uri.EscapeDataString(token)}";
 
-        await emailService.SendVerificationEmailAsync(email, verificationUrl, cancellationToken);
+        await emailService.SendVerificationEmailAsync(email, verificationUrl, apiKey, cancellationToken);
         await LogEmailAsync(tenantId, email, "verification", "Verify your email - SerialMemory", null, cancellationToken);
     }
 

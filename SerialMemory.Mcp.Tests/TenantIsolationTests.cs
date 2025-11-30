@@ -434,5 +434,9 @@ public class TenantIsolationTests : IAsyncLifetime
         public bool IsLabMode { get; }
         public bool AllowPowerMode { get; }
         public IReadOnlyList<string> Scopes { get; }
+        public string? UserEmail => null;
+        public string? UserRole => null;
+        public bool IsRootAdmin => false;
+        public bool IsOwner => false;
     }
 }

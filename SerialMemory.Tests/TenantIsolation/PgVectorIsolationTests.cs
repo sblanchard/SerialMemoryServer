@@ -313,8 +313,29 @@ public sealed class PgVectorIsolationTests : TenantIsolationTestBase
     // HELPER TYPES
     // ==========================================
 
-    private sealed record VectorSearchResult(Guid id, Guid tenant_id, string content)
+    /// <summary>
+    /// Result type for vector search queries. Uses class with explicit parameterless constructor
+    /// for Dapper compatibility with varying column sets.
+    /// </summary>
+    private sealed class VectorSearchResult
     {
+        // Explicit parameterless constructor for Dapper
+        public VectorSearchResult() { }
+
+        public Guid id { get; set; }
+        public Guid tenant_id { get; set; }
+        public string content { get; set; } = "";
+
+        // Optional columns that may or may not be returned by queries
+        public double distance { get; set; }
+        public double l2_distance { get; set; }
+        public double similarity { get; set; }
+        public double inner_product { get; set; }
+        public double vector_distance { get; set; }
+        public float text_rank { get; set; }
+        public bool has_embedding { get; set; }
+
+        // Alias properties for cleaner test code
         public Guid Id => id;
         public Guid TenantId => tenant_id;
     }

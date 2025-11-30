@@ -15,29 +15,45 @@ public sealed class InternalTokenService
     private readonly byte[] _signingKey;
     private readonly JwtSecurityTokenHandler _tokenHandler;
     private readonly ILogger<InternalTokenService> _logger;
+    private readonly string _issuer;
+    private readonly string _audience;
 
-    private const string Issuer = "serialmemory-web";
-    private const string Audience = "serialmemory-internal";
     private static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
 
     public InternalTokenService(ILogger<InternalTokenService> logger, IConfiguration configuration)
     {
         _logger = logger;
-        _tokenHandler = new JwtSecurityTokenHandler();
-
-        // Get or generate signing key
-        var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
-        if (string.IsNullOrEmpty(keyBase64))
+        _tokenHandler = new JwtSecurityTokenHandler
         {
-            // Generate a secure key if not configured (development mode)
-            // In production, this should be a stable key from configuration
-            _signingKey = RandomNumberGenerator.GetBytes(64);
-            _logger.LogWarning(
-                "INTERNAL_TOKEN_KEY not configured. Using ephemeral key - tokens will not survive restart.");
+            // Disable claim type mapping - keep "role" as "role", not mapped to ClaimTypes.Role URI
+            MapInboundClaims = false
+        };
+
+        // Use same issuer/audience as dashboard-api expects
+        _issuer = configuration["JWT_ISSUER"] ?? "serialmemory";
+        _audience = configuration["JWT_AUDIENCE"] ?? "serialmemory-api";
+
+        // Get signing key - must match dashboard-api's JWT_SECRET
+        var jwtSecret = configuration["JWT_SECRET"];
+        if (!string.IsNullOrEmpty(jwtSecret))
+        {
+            _signingKey = System.Text.Encoding.UTF8.GetBytes(jwtSecret);
         }
         else
         {
-            _signingKey = Convert.FromBase64String(keyBase64);
+            // Fallback to INTERNAL_TOKEN_KEY for backwards compatibility
+            var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
+            if (string.IsNullOrEmpty(keyBase64))
+            {
+                // Use default development key matching dashboard-api default
+                _signingKey = System.Text.Encoding.UTF8.GetBytes("default-development-secret-32chars!!");
+                _logger.LogWarning(
+                    "JWT_SECRET not configured. Using default development key.");
+            }
+            else
+            {
+                _signingKey = Convert.FromBase64String(keyBase64);
+            }
         }
     }
 
@@ -59,11 +75,12 @@ public sealed class InternalTokenService
                 new Claim("workspace_id", claims.WorkspaceId),
                 new Claim("role", claims.Role),
                 new Claim("email", claims.Email ?? ""),
-                new Claim("token_type", "internal")
+                new Claim("token_type", "internal"),
+                new Claim("is_root_admin", claims.IsRootAdmin.ToString().ToLowerInvariant())
             }),
             Expires = DateTime.UtcNow.Add(TokenLifetime),
-            Issuer = Issuer,
-            Audience = Audience,
+            Issuer = _issuer,
+            Audience = _audience,
             SigningCredentials = credentials
         };
 
@@ -84,9 +101,9 @@ public sealed class InternalTokenService
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKey = securityKey,
                 ValidateIssuer = true,
-                ValidIssuer = Issuer,
+                ValidIssuer = _issuer,
                 ValidateAudience = true,
-                ValidAudience = Audience,
+                ValidAudience = _audience,
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30)
             };
@@ -101,6 +118,12 @@ public sealed class InternalTokenService
                 return null;
             }
 
+            // Try multiple claim types for role (JWT might map "role" to ClaimTypes.Role)
+            var role = principal.FindFirst("role")?.Value
+                ?? principal.FindFirst(ClaimTypes.Role)?.Value
+                ?? principal.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value
+                ?? "";
+
             return new InternalTokenClaims
             {
                 UserId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
@@ -108,8 +131,9 @@ public sealed class InternalTokenService
                     ?? "",
                 TenantId = principal.FindFirst("tenant_id")?.Value ?? "",
                 WorkspaceId = principal.FindFirst("workspace_id")?.Value ?? "default",
-                Role = principal.FindFirst("role")?.Value ?? "",
-                Email = principal.FindFirst("email")?.Value
+                Role = role,
+                Email = principal.FindFirst("email")?.Value,
+                IsRootAdmin = string.Equals(principal.FindFirst("is_root_admin")?.Value, "true", StringComparison.OrdinalIgnoreCase)
             };
         }
         catch (SecurityTokenException ex)
@@ -152,6 +176,78 @@ public sealed class InternalTokenService
 
         return true;
     }
+
+    private static readonly TimeSpan RefreshThreshold = TimeSpan.FromMinutes(1);
+
+    public Task<string> CreateForUserAsync(
+        string userId,
+        string tenantId,
+        string workspaceId,
+        IEnumerable<string> roles,
+        string? email = null,
+        bool isRootAdmin = false)
+    {
+        var primaryRole = roles.FirstOrDefault() ?? "user";
+        var claims = new InternalTokenClaims
+        {
+            UserId = userId,
+            TenantId = tenantId,
+            WorkspaceId = workspaceId,
+            Role = primaryRole,
+            Email = email,
+            IsRootAdmin = isRootAdmin
+        };
+
+        var token = GenerateToken(claims);
+        _logger.LogDebug(
+            "Created internal token for user {UserId} in tenant {TenantId}",
+            userId, tenantId);
+
+        return Task.FromResult(token);
+    }
+
+    public Task<bool> IsExpiringSoonAsync(string token)
+    {
+        try
+        {
+            var jwtToken = _tokenHandler.ReadJwtToken(token);
+            var expiresAt = jwtToken.ValidTo;
+            var timeRemaining = expiresAt - DateTime.UtcNow;
+
+            var isExpiringSoon = timeRemaining <= RefreshThreshold;
+
+            if (isExpiringSoon)
+            {
+                _logger.LogDebug(
+                    "Token expiring soon. Expires at {ExpiresAt}, time remaining: {TimeRemaining}",
+                    expiresAt, timeRemaining);
+            }
+
+            return Task.FromResult(isExpiringSoon);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check token expiration");
+            return Task.FromResult(true);
+        }
+    }
+
+    public Task<string?> RefreshAsync(string oldToken)
+    {
+        var claims = ValidateToken(oldToken);
+        if (claims == null)
+        {
+            _logger.LogWarning("Cannot refresh invalid or expired token");
+            return Task.FromResult<string?>(null);
+        }
+
+        var newToken = GenerateToken(claims);
+        _logger.LogDebug(
+            "Refreshed token for user {UserId} in tenant {TenantId}",
+            claims.UserId, claims.TenantId);
+
+        return Task.FromResult<string?>(newToken);
+    }
 }
 
 /// <summary>
@@ -164,4 +260,5 @@ public sealed class InternalTokenClaims
     public string WorkspaceId { get; init; } = "default";
     public required string Role { get; init; }
     public string? Email { get; init; }
+    public bool IsRootAdmin { get; init; }
 }

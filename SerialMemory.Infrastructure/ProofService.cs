@@ -576,10 +576,8 @@ public sealed class ProofService : IProofService
     {
         try
         {
-            // Set tenant context
-            await conn.ExecuteAsync(
-                "SET app.current_tenant_id = @TenantId",
-                new { TenantId = tenantId });
+            // Set tenant context (SET doesn't support parameters, but GUID is safe)
+            await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
             // Try to access memories from another tenant
             var otherTenantCount = await conn.QueryFirstOrDefaultAsync<long>(

@@ -15,9 +15,9 @@ public sealed class NoOpEmailService(ILogger<NoOpEmailService> logger) : IEmailS
         return Task.CompletedTask;
     }
 
-    public Task SendVerificationEmailAsync(string to, string verificationUrl, CancellationToken cancellationToken = default)
+    public Task SendVerificationEmailAsync(string to, string verificationUrl, string? apiKey = null, CancellationToken cancellationToken = default)
     {
-        logger.LogWarning("[DEV MODE] Verification email not sent (ACS not configured). To: {To}, URL: {Url}", to, verificationUrl);
+        logger.LogWarning("[DEV MODE] Verification email not sent (ACS not configured). To: {To}, URL: {Url}, HasApiKey: {HasApiKey}", to, verificationUrl, !string.IsNullOrEmpty(apiKey));
         return Task.CompletedTask;
     }
 

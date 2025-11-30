@@ -52,7 +52,7 @@ public sealed class BillingModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var request = new
             {
                 PlanName = plan,
@@ -69,10 +69,31 @@ public sealed class BillingModel : PageModel
                 {
                     return Redirect(result.CheckoutUrl);
                 }
+                ErrorMessage = "No checkout URL returned";
             }
-
-            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-            ErrorMessage = error?.Message ?? "Failed to create checkout session";
+            else
+            {
+                // Handle non-success responses
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrEmpty(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = response.StatusCode == System.Net.HttpStatusCode.Forbidden
+                        ? "You don't have permission to upgrade. Please contact support."
+                        : $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                }
+            }
         }
         catch (HttpRequestException)
         {
@@ -87,7 +108,7 @@ public sealed class BillingModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var request = new
             {
                 ReturnUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing"
@@ -120,7 +141,7 @@ public sealed class BillingModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/billing/cancel", null);
 
             if (response.IsSuccessStatusCode)
@@ -146,7 +167,7 @@ public sealed class BillingModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/billing/resume", null);
 
             if (response.IsSuccessStatusCode)
@@ -172,7 +193,7 @@ public sealed class BillingModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             // Get billing summary
             var billingResponse = await client.GetAsync("/billing");
@@ -204,30 +225,27 @@ public sealed class BillingModel : PageModel
                 }
             }
 
-            // If API returned empty data, show sample data
+            // If API returned empty data, show Free plan defaults
             if (string.IsNullOrEmpty(CurrentPlan) || CurrentPlan == "Free")
             {
                 if (!CurrentPeriodStart.HasValue && !CurrentPeriodEnd.HasValue)
                 {
-                    LoadSampleData();
+                    // Set default billing period for Free plan
+                    CurrentPeriodStart = DateTimeOffset.UtcNow;
+                    CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(30);
+                    CreditsIncluded = 1000; // Free plan default
                 }
             }
         }
         catch (HttpRequestException)
         {
-            // API unavailable - use sample data
-            LoadSampleData();
+            // API unavailable - show defaults, not sample data
+            CurrentPlan = "Free";
+            CurrentPeriodStart = DateTimeOffset.UtcNow;
+            CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(30);
+            CreditsIncluded = 1000;
+            PaymentHistory = [];
         }
-    }
-
-    private void LoadSampleData()
-    {
-        IsSampleData = true;
-        CurrentPlan = "Free";
-        CurrentPeriodStart = DateTimeOffset.UtcNow.AddDays(-15);
-        CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(15);
-        CreditsIncluded = 100;
-        PaymentHistory = [];
     }
 
     public sealed class PaymentRecord
