@@ -10,24 +10,14 @@ namespace SerialMemory.Infrastructure.Billing;
 /// Service for forecasting usage patterns and generating cost optimization recommendations.
 /// Uses linear regression with confidence intervals for prediction.
 /// </summary>
-public sealed class UsageForecastingService
+public sealed class UsageForecastingService(
+    IConfiguration configuration,
+    ILogger<UsageForecastingService> logger)
 {
-    private readonly ILogger<UsageForecastingService> _logger;
-    private readonly string _connectionString;
-    private readonly int _defaultTrainingWindowDays;
-    private readonly double _defaultConfidenceLevel;
-
-    public UsageForecastingService(
-        IConfiguration configuration,
-        ILogger<UsageForecastingService> logger)
-    {
-        _logger = logger;
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
-
-        _defaultTrainingWindowDays = configuration.GetValue("UsageForecasting:TrainingWindowDays", 30);
-        _defaultConfidenceLevel = configuration.GetValue("UsageForecasting:ConfidenceLevel", 0.95);
-    }
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
+    private readonly int _defaultTrainingWindowDays = configuration.GetValue("UsageForecasting:TrainingWindowDays", 30);
+    private readonly double _defaultConfidenceLevel = configuration.GetValue("UsageForecasting:ConfidenceLevel", 0.95);
 
     private static string BuildConnectionString()
     {
@@ -51,7 +41,7 @@ public sealed class UsageForecastingService
     {
         var trainingDays = trainingWindowDays ?? _defaultTrainingWindowDays;
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Generating {Days}-day forecast for tenant {TenantId} using {TrainingDays}-day training window",
             daysAhead, tenantId, trainingDays);
 
@@ -63,7 +53,7 @@ public sealed class UsageForecastingService
 
         if (historicalUsage.Count < 7)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Insufficient data for forecasting: only {Count} days available, minimum 7 required",
                 historicalUsage.Count);
 
@@ -114,7 +104,7 @@ public sealed class UsageForecastingService
             TrainingDataPoints: historicalUsage.Count,
             TrainingWindowDays: trainingDays);
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Generated {Count} forecasts with R² = {RSquared:F4}",
             forecasts.Count, regression.RSquared);
 
@@ -213,7 +203,7 @@ public sealed class UsageForecastingService
 
         if (updated > 0)
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Updated {Count} forecasts with actual values for tenant {TenantId}",
                 updated, tenantId);
         }
@@ -376,7 +366,7 @@ public sealed class UsageForecastingService
                 ct: ct));
         }
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Generated {Count} cost recommendations for tenant {TenantId}",
             recommendations.Count, tenantId);
 

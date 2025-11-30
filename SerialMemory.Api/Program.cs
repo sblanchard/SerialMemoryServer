@@ -7,6 +7,7 @@ using SerialMemory.Core.Telemetry;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Infrastructure;
+using SerialMemory.Infrastructure.DependencyInjection;
 using SerialMemory.Infrastructure.Services;
 using SerialMemory.Infrastructure.Email;
 using SerialMemory.ML;
@@ -81,6 +82,12 @@ var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
        $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
        $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
        $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
+
+// Create shared NpgsqlDataSource with vector extension - required for endpoints and infrastructure engines
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(pgConnectionString);
+dataSourceBuilder.UseVector();
+var pgDataSource = dataSourceBuilder.Build();
+builder.Services.AddSingleton(pgDataSource);
 
 // LLM Configuration - OpenAI is primary if configured, fallback to Ollama
 var openAiApiKey = builder.Configuration["OpenAI:ApiKey"]
@@ -295,6 +302,9 @@ builder.Services.AddScoped<IKnowledgeGraphStore>(sp =>
         sp.GetRequiredService<ILiveEventEmitter>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstrumentedKnowledgeGraphStore>());
 });
+
+// Register optional infrastructure engines (feature flag controlled via environment)
+builder.Services.AddInfrastructureEngines(SystemFeatureFlags.FromEnvironment());
 
 // Background job workers - move heavy work off request threads
 builder.Services.AddSingleton<SerialMemory.Infrastructure.Jobs.AnalysisJobWorker>(sp =>
@@ -2832,17 +2842,17 @@ app.MapGet("/api/memory/timeline", async (
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
     var events = await conn.QueryAsync<dynamic>(@"
-        SELECT e.id as event_id, e.stream_id as memory_id, e.event_type, e.timestamp,
-               COALESCE(e.payload->>'summary', SUBSTRING(m.content, 1, 100)) as summary,
-               e.actor_id,
-               (e.payload->>'confidence_before')::float as confidence_before,
-               (e.payload->>'confidence_after')::float as confidence_after,
-               e.sequence_number
+        SELECT e.event_id, e.stream_id as memory_id, e.event_type, e.created_at as timestamp,
+               COALESCE(e.event_data->>'summary', SUBSTRING(m.content, 1, 100)) as summary,
+               e.created_by as actor_id,
+               (e.event_data->>'confidence_before')::float as confidence_before,
+               (e.event_data->>'confidence_after')::float as confidence_after,
+               e.global_sequence as sequence_number
         FROM memory_events e
         LEFT JOIN memories m ON e.stream_id = m.id
-        WHERE (@From IS NULL OR e.timestamp >= @From)
-          AND (@To IS NULL OR e.timestamp <= @To)
-        ORDER BY e.timestamp DESC
+        WHERE (@From IS NULL OR e.created_at >= @From)
+          AND (@To IS NULL OR e.created_at <= @To)
+        ORDER BY e.created_at DESC
         LIMIT @Limit",
         new { From = from, To = to, Limit = limit ?? 100 });
 
@@ -3663,6 +3673,25 @@ app.MapGet("/api/graph/stats", async (IKnowledgeGraphStore store) =>
     });
 });
 
+// GET /api/graph/projects - Get distinct project names from the graph
+app.MapGet("/api/graph/projects", async (IKnowledgeGraphStore store) =>
+{
+    var entities = await store.GetAllEntitiesAsync(1000);
+
+    // Get projects from entities with type PROJECT or from entity names that look like projects
+    var projects = entities
+        .Where(e => e.EntityType.Equals("PROJECT", StringComparison.OrdinalIgnoreCase)
+                    || e.EntityType.Equals("SOFTWARE", StringComparison.OrdinalIgnoreCase)
+                    || e.EntityType.Equals("APPLICATION", StringComparison.OrdinalIgnoreCase)
+                    || e.EntityType.Equals("SERVICE", StringComparison.OrdinalIgnoreCase))
+        .Select(e => e.Name)
+        .Distinct()
+        .OrderBy(p => p)
+        .ToList();
+
+    return Results.Ok(new { projects });
+});
+
 // ============================================
 // REAL GRAPH EVENTS API ENDPOINTS
 // ============================================
@@ -3881,8 +3910,9 @@ app.MapGet("/api/power/recent", async (
     var tenantId = Guid.Parse(tenantContext.TenantId);
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
+    // Note: memories table has no confidence or is_active columns - use defaults
     var memories = await conn.QueryAsync<dynamic>(@"
-        SELECT id, content, confidence, created_at, is_active, updated_at
+        SELECT id, content, created_at, updated_at
         FROM memories
         ORDER BY created_at DESC
         LIMIT @Limit", new { Limit = limit ?? 50 });
@@ -3894,10 +3924,10 @@ app.MapGet("/api/power/recent", async (
             id = (Guid)m.id,
             content = ((string)m.content).Length > 200 ? ((string)m.content)[..200] + "..." : (string)m.content,
             layer = "L3_KNOWLEDGE",
-            confidence = (decimal?)m.confidence ?? 0.8m,
+            confidence = 0.8m,
             createdAt = (DateTimeOffset)m.created_at,
             updatedAt = (DateTimeOffset?)m.updated_at,
-            isActive = (bool)m.is_active
+            isActive = true
         })
     });
 });
@@ -4156,11 +4186,11 @@ app.MapGet("/api/power/events/stream", async (
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
     var events = await conn.QueryAsync<dynamic>(@"
-        SELECT id as event_id, sequence_number, event_type, stream_id as memory_id,
-               timestamp, payload as raw_payload, actor_id
+        SELECT event_id, global_sequence, event_type, stream_id,
+               created_at, event_data, created_by
         FROM memory_events
-        WHERE sequence_number >= @FromSequence
-        ORDER BY sequence_number
+        WHERE global_sequence >= @FromSequence
+        ORDER BY global_sequence
         LIMIT @Limit",
         new { FromSequence = fromSequence ?? 0, Limit = limit ?? 1000 });
 
@@ -4169,15 +4199,15 @@ app.MapGet("/api/power/events/stream", async (
     return Results.Ok(new
     {
         fromSequence = fromSequence ?? 0,
-        toSequence = eventsList.LastOrDefault()?.sequence_number ?? 0L,
+        toSequence = eventsList.LastOrDefault()?.global_sequence ?? 0L,
         items = eventsList.Select(e => new
         {
             eventId = (Guid)e.event_id,
-            sequenceNumber = (long)e.sequence_number,
+            sequenceNumber = (long)e.global_sequence,
             eventType = (string)e.event_type,
-            streamId = (Guid)e.memory_id,
-            timestamp = (DateTimeOffset)e.timestamp,
-            actorId = (string?)e.actor_id
+            streamId = (Guid)e.stream_id,
+            timestamp = (DateTimeOffset)e.created_at,
+            actorId = (string?)e.created_by
         }),
         total = eventsList.Count
     });
@@ -4294,12 +4324,13 @@ app.MapGet("/api/mind/health", async (
     var tenantId = Guid.Parse(tenantContext.TenantId);
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
+    // Note: memories table has no is_active or confidence columns - count all as active
     var stats = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
         SELECT
             COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE is_active = true) AS active,
-            COUNT(*) FILTER (WHERE is_active = false) AS archived,
-            COALESCE(AVG(confidence), 0) AS avg_confidence
+            COUNT(*) AS active,
+            0 AS archived,
+            0.0 AS avg_confidence
         FROM memories");
 
     // Convert to dashboard-expected format with string status

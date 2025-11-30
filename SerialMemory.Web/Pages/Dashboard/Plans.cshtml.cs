@@ -141,7 +141,27 @@ public sealed class PlansModel : PageModel
             MaxMemories = 50000,
             RateLimitPerMinute = 120,
             Features = new PlanFeatures { ApiAccess = true, AdvancedAnalytics = true },
-            Pricing = new PlanPricing { Monthly = 29, Quarterly = 78.30m, Annual = 278.40m }
+            Pricing = new PlanPricing { Monthly = 19, Quarterly = 51.30m, Annual = 182.40m }  // €19/month
+        },
+        new PlanInfo
+        {
+            Id = Guid.Empty,
+            Name = "pro_plus",
+            DisplayName = "Pro Plus",
+            CreditsPerMonth = 20000,
+            MaxMemories = 200000,
+            RateLimitPerMinute = 200,
+            Features = new PlanFeatures
+            {
+                ApiAccess = true,
+                AdvancedAnalytics = true,
+                PrioritySupport = true,
+                TeamCollaboration = true,
+                SharedWorkspace = true,
+                CreditPooling = true,
+                SeatsIncluded = 5
+            },
+            Pricing = new PlanPricing { Monthly = 79, Quarterly = 213.30m, Annual = 758.40m }  // €79/month
         },
         new PlanInfo
         {
@@ -152,7 +172,7 @@ public sealed class PlansModel : PageModel
             MaxMemories = null,
             RateLimitPerMinute = 600,
             Features = new PlanFeatures { ApiAccess = true, AdvancedAnalytics = true, PrioritySupport = true, CustomIntegrations = true },
-            Pricing = new PlanPricing { Monthly = 299, Quarterly = 807.30m, Annual = 2870.40m }
+            Pricing = new PlanPricing { Monthly = 299, Quarterly = 807.30m, Annual = 2870.40m }  // €299/month
         }
     ];
 
@@ -182,6 +202,10 @@ public sealed class PlansModel : PageModel
         public bool CustomIntegrations { get; set; }
         public bool AdvancedAnalytics { get; set; }
         public bool ApiAccess { get; set; }
+        public bool TeamCollaboration { get; set; }
+        public bool SharedWorkspace { get; set; }
+        public bool CreditPooling { get; set; }
+        public int SeatsIncluded { get; set; }
     }
 
     public sealed class PlanPricing

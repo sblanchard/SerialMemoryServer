@@ -142,10 +142,7 @@ public sealed class KillSwitchMiddleware
         }
 
         // MCP memory_ingest tool
-        if (path.Contains("memory_ingest", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return false;
+        return path.Contains("memory_ingest", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WriteErrorResponseAsync(

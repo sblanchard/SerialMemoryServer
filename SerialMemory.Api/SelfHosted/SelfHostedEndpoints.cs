@@ -7,13 +7,13 @@ using SerialMemory.Core.Interfaces;
 namespace SerialMemory.Api.SelfHosted;
 
 /// <summary>
-/// Self-hosted admin endpoints only available in SelfHosted deployment mode.
+/// Self-hosted admin endpoints only available in SelfHosted deployment mode or for root admins.
 /// </summary>
 public static class SelfHostedEndpoints
 {
     /// <summary>
     /// Maps all self-hosted admin endpoints.
-    /// These endpoints are only available when SERIALMEMORY_DEPLOYMENT_MODE=SelfHosted.
+    /// These endpoints are available when SERIALMEMORY_DEPLOYMENT_MODE=SelfHosted or for root admins.
     /// </summary>
     public static IEndpointRouteBuilder MapSelfHostedEndpoints(this IEndpointRouteBuilder app)
     {
@@ -21,11 +21,11 @@ public static class SelfHostedEndpoints
             .WithTags("Self-Hosted Admin");
 
         // GET /api/selfhost/status - Self-hosted deployment status
-        group.MapGet("/status", (IDeploymentContext deployment, IKnowledgeGraphStore store) =>
+        group.MapGet("/status", (IDeploymentContext deployment, IKnowledgeGraphStore store, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             return Results.Ok(new
@@ -41,11 +41,11 @@ public static class SelfHostedEndpoints
         });
 
         // GET /api/selfhost/config - Current configuration
-        group.MapGet("/config", (IDeploymentContext deployment) =>
+        group.MapGet("/config", (IDeploymentContext deployment, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             return Results.Ok(new
@@ -79,11 +79,11 @@ public static class SelfHostedEndpoints
         });
 
         // GET /api/selfhost/license - License information (stub)
-        group.MapGet("/license", (IDeploymentContext deployment) =>
+        group.MapGet("/license", (IDeploymentContext deployment, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             return Results.Ok(new
@@ -118,11 +118,11 @@ public static class SelfHostedEndpoints
         });
 
         // POST /api/selfhost/maintenance/reindex - Trigger re-indexing
-        group.MapPost("/maintenance/reindex", async (IDeploymentContext deployment, IKnowledgeGraphStore store) =>
+        group.MapPost("/maintenance/reindex", async (IDeploymentContext deployment, IKnowledgeGraphStore store, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             // This is a placeholder - actual implementation would trigger background reindexing
@@ -135,11 +135,11 @@ public static class SelfHostedEndpoints
         });
 
         // POST /api/selfhost/maintenance/vacuum - Trigger database vacuum
-        group.MapPost("/maintenance/vacuum", async (IDeploymentContext deployment) =>
+        group.MapPost("/maintenance/vacuum", async (IDeploymentContext deployment, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             return Results.Accepted(value: new
@@ -151,11 +151,11 @@ public static class SelfHostedEndpoints
         });
 
         // GET /api/selfhost/diagnostics - System diagnostics
-        group.MapGet("/diagnostics", async (IDeploymentContext deployment, IKnowledgeGraphStore store) =>
+        group.MapGet("/diagnostics", async (IDeploymentContext deployment, IKnowledgeGraphStore store, HttpContext http) =>
         {
-            if (!deployment.IsSelfHosted)
+            if (!CanAccessSelfHostFeatures(deployment, http))
             {
-                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode." });
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
             }
 
             var memoryCount = await store.GetMemoryCountAsync();
@@ -186,6 +186,21 @@ public static class SelfHostedEndpoints
         });
 
         return app;
+    }
+
+    /// <summary>
+    /// Checks if the current user can access self-host features.
+    /// Returns true if running in self-hosted mode or if the user is a root admin.
+    /// </summary>
+    private static bool CanAccessSelfHostFeatures(IDeploymentContext deployment, HttpContext http)
+    {
+        // Always allow in self-hosted mode
+        if (deployment.IsSelfHosted)
+            return true;
+
+        // In SaaS mode, allow root admins
+        var isRootAdmin = http.User?.HasClaim("is_root_admin", "true") == true;
+        return isRootAdmin;
     }
 
     private static string GetVersion()

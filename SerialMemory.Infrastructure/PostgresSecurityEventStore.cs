@@ -20,6 +20,9 @@ public class PostgresSecurityEventStore(string connectionString) : ISecurityEven
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
+        // Set internal_admin role to bypass RLS WITH CHECK policy for security_events
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+
         var sql = """
             INSERT INTO security_events (
                 event_id, event_type, severity, memory_id, entity_id,
@@ -66,6 +69,9 @@ public class PostgresSecurityEventStore(string connectionString) : ISecurityEven
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
         await using var transaction = await conn.BeginTransactionAsync(ct);
+
+        // Set internal_admin role to bypass RLS WITH CHECK policy for security_events
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)", transaction: transaction);
 
         try
         {

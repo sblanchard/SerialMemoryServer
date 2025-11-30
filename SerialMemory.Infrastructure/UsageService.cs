@@ -125,6 +125,11 @@ public sealed class UsageService : IUsageService, IDisposable
 
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
+
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycle>(
             """
             SELECT id, tenant_id AS TenantId, workspace_id AS WorkspaceId, plan_id AS PlanId,
@@ -153,6 +158,11 @@ public sealed class UsageService : IUsageService, IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
 
         var rollups = await conn.QueryAsync<UsageDailyRollupDto>(
             """
@@ -188,6 +198,11 @@ public sealed class UsageService : IUsageService, IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
 
         var events = await conn.QueryAsync<UsageEventDto>(
             """
@@ -263,6 +278,14 @@ public sealed class UsageService : IUsageService, IDisposable
         try
         {
             await using var conn = await _dataSource.OpenConnectionAsync();
+
+            // Set tenant context for RLS
+            await conn.ExecuteAsync(
+                """
+                SELECT set_config('app.tenant_id', @TenantId, false);
+                SELECT set_config('app.current_tenant_id', @TenantId, false);
+                """,
+                new { TenantId = _tenantId });
 
             // Ensure we have a billing cycle
             var cycleId = await EnsureBillingCycleAsync(conn);

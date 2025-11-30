@@ -23,7 +23,7 @@ public sealed class EmailVerificationService(
 
     private readonly string _baseUrl = configuration["App:BaseUrl"]
                                        ?? Environment.GetEnvironmentVariable("SERIALMEMORY_BASE_URL")
-                                       ?? "https://serialmemory.serialcoder.com";
+                                       ?? "https://api.serialmemory.dev";
 
     private static string BuildConnectionString()
     {

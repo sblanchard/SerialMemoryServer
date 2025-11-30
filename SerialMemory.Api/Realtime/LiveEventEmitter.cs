@@ -5,10 +5,89 @@ namespace SerialMemory.Api.Realtime;
 
 /// <summary>
 /// SignalR implementation of ILiveEventEmitter for real-time event broadcasting.
+/// Supports memory events, reasoning events, security events, and graph changes.
 /// </summary>
 public sealed class LiveEventEmitter(IHubContext<LiveHub> hubContext, ILogger<LiveEventEmitter> logger)
     : ILiveEventEmitter
 {
+    // ==========================================
+    // MEMORY EVENTS (NEW)
+    // ==========================================
+
+    public async Task EmitMemoryEventAsync(MemoryEventBroadcast evt)
+    {
+        try
+        {
+            // Broadcast to tenant-specific group
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.events").SendAsync("MemoryEvent", evt);
+
+            // Also broadcast to the general events group
+            await hubContext.Clients.Group("events.all").SendAsync("MemoryEvent", evt);
+
+            logger.LogDebug("Emitted memory event: {EventType} for memory {MemoryId}",
+                evt.EventType, evt.MemoryId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit memory event");
+        }
+    }
+
+    public async Task EmitRecentEventAsync(RecentEventBroadcast evt)
+    {
+        try
+        {
+            // Broadcast to tenant-specific recent events group
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.recent").SendAsync("RecentEvent", evt);
+
+            logger.LogDebug("Emitted recent event: {EventType} seq {Seq}", evt.EventType, evt.Seq);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit recent event");
+        }
+    }
+
+    public async Task EmitTimelineUpdateAsync(TimelineUpdateBroadcast evt)
+    {
+        try
+        {
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.timeline").SendAsync("TimelineUpdate", evt);
+            logger.LogDebug("Emitted timeline update for memory {MemoryId}", evt.MemoryId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit timeline update");
+        }
+    }
+
+    public async Task EmitMindHealthUpdateAsync(MindHealthBroadcast evt)
+    {
+        try
+        {
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.health").SendAsync("MindHealthUpdate", evt);
+            logger.LogDebug("Emitted mind health update: score {Score}", evt.HealthScore);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit mind health update");
+        }
+    }
+
+    public async Task EmitConflictDetectedAsync(ConflictBroadcast evt)
+    {
+        try
+        {
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.conflicts").SendAsync("ConflictDetected", evt);
+            logger.LogDebug("Emitted conflict detected between {MemoryA} and {MemoryB}",
+                evt.MemoryAId, evt.MemoryBId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit conflict detected");
+        }
+    }
+
     public async Task EmitReasoningProgressAsync(ReasoningProgressEvent evt)
     {
         try

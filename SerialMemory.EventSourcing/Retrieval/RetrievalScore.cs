@@ -1,3 +1,5 @@
+using SerialMemory.Core.Interfaces;
+
 namespace SerialMemory.EventSourcing.Retrieval;
 
 /// <summary>
@@ -111,7 +113,7 @@ public sealed record RetrievalQuery
     public float MinScore { get; init; } = 0.0f;
 
     /// <summary>Filter by memory layers</summary>
-    public Events.MemoryLayer[]? LayerFilter { get; init; }
+    public MemoryLayer[]? LayerFilter { get; init; }
 
     /// <summary>Only include active memories</summary>
     public bool ActiveOnly { get; init; } = true;
@@ -130,7 +132,7 @@ public sealed record RetrievalResult
 {
     public required Guid MemoryId { get; init; }
     public required string Content { get; init; }
-    public required Events.MemoryLayer Layer { get; init; }
+    public required MemoryLayer Layer { get; init; }
     public required RetrievalScore Score { get; init; }
     public required float FinalScore { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }

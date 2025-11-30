@@ -105,9 +105,9 @@ public sealed class MemorySchemaValidator : ISchemaValidator<MemorySchema>
         // Embedding validation
         if (memory.Embedding != null)
         {
-            if (memory.Embedding.Length != 384 && memory.Embedding.Length != 768 && memory.Embedding.Length != 1024)
+            if (memory.Embedding.Length != 384 && memory.Embedding.Length != 768 && memory.Embedding.Length != 1024 && memory.Embedding.Length != 1536)
             {
-                errors.Add(new ValidationError { Field = "Embedding", Message = "Embedding must be 384, 768, or 1024 dimensions", Code = "INVALID_EMBEDDING_DIM", AttemptedValue = memory.Embedding.Length });
+                errors.Add(new ValidationError { Field = "Embedding", Message = "Embedding must be 384, 768, 1024, or 1536 dimensions", Code = "INVALID_EMBEDDING_DIM", AttemptedValue = memory.Embedding.Length });
             }
 
             if (memory.Embedding.Any(float.IsNaN) || memory.Embedding.Any(float.IsInfinity))

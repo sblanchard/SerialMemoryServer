@@ -10,25 +10,19 @@ namespace SerialMemory.ML;
 /// LLM service using Ollama for chat completions.
 /// Pure C#, no Python required - just needs Ollama running locally.
 /// </summary>
-public sealed class OllamaLlmService : ILlmService, IDisposable
+public sealed class OllamaLlmService(
+    string baseUrl = "http://localhost:11434",
+    string model = "qwen2.5:7b")
+    : ILlmService, IDisposable
 {
-    private readonly HttpClient _httpClient;
-    private readonly string _model;
+    private readonly HttpClient _httpClient = new()
+    {
+        BaseAddress = new Uri(baseUrl),
+        Timeout = TimeSpan.FromSeconds(120)
+    };
 
     public string ProviderName => "Ollama";
-    public string ModelName => _model;
-
-    public OllamaLlmService(
-        string baseUrl = "http://localhost:11434",
-        string model = "qwen2.5:7b")
-    {
-        _model = model;
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(baseUrl),
-            Timeout = TimeSpan.FromSeconds(120)
-        };
-    }
+    public string ModelName => model;
 
     public async Task<string> ChatAsync(
         string userMessage,
@@ -48,7 +42,7 @@ public sealed class OllamaLlmService : ILlmService, IDisposable
 
         var request = new OllamaChatRequest
         {
-            Model = _model,
+            Model = model,
             Messages = messages,
             Stream = false,
             Options = new OllamaOptions
@@ -84,7 +78,7 @@ public sealed class OllamaLlmService : ILlmService, IDisposable
 
         var request = new OllamaChatRequest
         {
-            Model = _model,
+            Model = model,
             Messages = messages,
             Stream = true,
             Options = new OllamaOptions

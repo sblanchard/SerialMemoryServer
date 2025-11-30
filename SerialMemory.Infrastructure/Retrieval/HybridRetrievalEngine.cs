@@ -35,10 +35,10 @@ public sealed class HybridRetrievalEngine(
         var semanticTask = GetSemanticMatchesAsync(queryEmbedding, query.Limit * 2, query.SemanticThreshold, cancellationToken);
         var rulesTask = query.UseSymbolicRules
             ? GetSymbolicMatchesAsync(query.QueryText, query.FilterCriteria, cancellationToken)
-            : Task.FromResult(new SymbolicMatchResult(new List<MemoryScore>(), new List<string>()));
+            : Task.FromResult(new SymbolicMatchResult([], []));
         var graphTask = query.UseGraphTraversal
             ? GetGraphMatchesAsync(queryEmbedding, query.Limit, cancellationToken)
-            : Task.FromResult(new GraphMatchResult(new List<MemoryScore>(), new List<Guid>()));
+            : Task.FromResult(new GraphMatchResult([], []));
 
         await Task.WhenAll(semanticTask, rulesTask, graphTask);
 

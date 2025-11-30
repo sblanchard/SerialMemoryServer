@@ -103,15 +103,13 @@ public sealed class SystemFeatureFlags
         if (isBasic) return IsFeatureEnabled(featureName);
 
         // Advanced features require minimum tier
-        if (tenantTier < MinimumTierForAdvancedFeatures) return false;
-
-        return IsFeatureEnabled(featureName);
+        return tenantTier >= MinimumTierForAdvancedFeatures && IsFeatureEnabled(featureName);
     }
 
     /// <summary>
     /// Checks if a specific feature is enabled by name.
     /// </summary>
-    public bool IsFeatureEnabled(string featureName)
+    private bool IsFeatureEnabled(string featureName)
     {
         return featureName.ToLowerInvariant() switch
         {
@@ -130,7 +128,7 @@ public sealed class SystemFeatureFlags
     /// <summary>
     /// Returns list of all enabled features.
     /// </summary>
-    public IReadOnlyList<string> GetEnabledFeatures()
+    private IReadOnlyList<string> GetEnabledFeatures()
     {
         var enabled = new List<string>();
         if (EmbeddingCacheEnabled) enabled.Add("EmbeddingCache");
@@ -161,6 +159,14 @@ public sealed class SystemFeatureFlags
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrEmpty(value)) return defaultValue;
+
+        // Check for explicit false values first
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("0", StringComparison.Ordinal) ||
+            value.Equals("no", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Then check for true values
         return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
                value.Equals("1", StringComparison.Ordinal) ||
                value.Equals("yes", StringComparison.OrdinalIgnoreCase);
