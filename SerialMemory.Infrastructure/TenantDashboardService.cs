@@ -34,6 +34,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
+
         // Get tenant info
         var tenant = await conn.QueryFirstOrDefaultAsync<TenantDto>(
             "SELECT id, name, slug FROM tenants WHERE id = @TenantId AND status = 'active'",
@@ -90,6 +98,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
 
         // Get current billing cycle
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycleDto>(
@@ -183,6 +199,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
+
         // Get tenant settings
         var settings = await conn.QueryFirstOrDefaultAsync<TenantSettingsDto>(
             """
@@ -263,6 +287,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
+
         var exportId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
 
@@ -315,6 +347,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
+
         var export = await conn.QueryFirstOrDefaultAsync<ExportRequestDto>(
             """
             SELECT id, status, requested_at, completed_at, download_url, download_expires_at,
@@ -347,6 +387,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
 
         // Verify user is owner
         var role = await conn.QueryFirstOrDefaultAsync<string>(
@@ -435,6 +483,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
+
         var deletion = await conn.QueryFirstOrDefaultAsync<DeletionRequestDto>(
             """
             SELECT id, status, requested_at, scheduled_for, cancelled_at, completed_at, cancellation_reason
@@ -466,6 +522,14 @@ public sealed class TenantDashboardService : ITenantDashboardService
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, true);
+            SELECT set_config('app.current_tenant_id', @TenantId, true);
+            """,
+            new { TenantId = tenantId.ToString() });
 
         // Verify user is owner or admin
         var role = await conn.QueryFirstOrDefaultAsync<string>(

@@ -65,7 +65,8 @@ builder.Services.AddAuthorization(options =>
             context.User.IsInRole("owner") ||
             context.User.IsInRole("admin") ||
             context.User.HasClaim("role", "owner") ||
-            context.User.HasClaim("role", "admin")));
+            context.User.HasClaim("role", "admin") ||
+            context.User.HasClaim("is_root_admin", "true")));
 });
 
 // Add session for storing internal tokens (server-side, not in cookies)

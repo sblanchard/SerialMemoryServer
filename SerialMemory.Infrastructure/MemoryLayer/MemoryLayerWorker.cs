@@ -676,5 +676,5 @@ public sealed class MemoryLayerWorkerConfig
     public bool EnableL0ToL1 { get; set; } = true;
     public bool EnableL1ToL2 { get; set; } = true;
     public bool EnableL2ToL3 { get; set; } = true;
-    public bool EnableL3ToL4 { get; set; } = false;
+    public bool EnableL3ToL4 { get; set; } = true;
 }

@@ -8,6 +8,7 @@ using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Telemetry;
+using SerialMemory.EventSourcing.Store;
 using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Email;
@@ -41,26 +42,35 @@ builder.Services.AddSingleton<IAdminService>(sp =>
 // Deployment context
 builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
 
+// Shared NpgsqlDataSource for connection pooling
+var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
+builder.Services.AddSingleton(dataSource);
+
+// Internal connection factory for RLS bypass
+builder.Services.AddSingleton<IInternalDbConnectionFactory>(sp =>
+    new InternalDbConnectionFactory(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<InternalDbConnectionFactory>>()));
+
+// Event writer for event sourcing
+builder.Services.AddSingleton<IEventWriter>(sp =>
+    new EventWriter(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<EventWriter>>()));
+
 // Kill switch service
-builder.Services.AddSingleton<IKillSwitchService>(sp =>
-{
-    var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
-    return new KillSwitchService(
-        dataSource,
-        sp.GetRequiredService<IDeploymentContext>(),
-        sp.GetRequiredService<ILogger<KillSwitchService>>());
-});
+builder.Services.AddSingleton<IKillSwitchService>(sp => new KillSwitchService(
+    sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+    sp.GetRequiredService<IDeploymentContext>(),
+    sp.GetRequiredService<ILogger<KillSwitchService>>()));
 
 // Quota enforcement service (uses full billing integration)
 builder.Services.AddSingleton<SerialMemory.Core.Interfaces.IQuotaEnforcementService>(sp =>
-{
-    var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
-    return new SerialMemory.Infrastructure.Billing.QuotaEnforcementService(
-        dataSource,
+    new SerialMemory.Infrastructure.Billing.QuotaEnforcementService(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
         sp.GetRequiredService<IKillSwitchService>(),
         sp.GetRequiredService<IDeploymentContext>(),
-        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Billing.QuotaEnforcementService>>());
-});
+        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Billing.QuotaEnforcementService>>()));
 
 // Email and onboarding services - use NoOp if ACS not configured
 // Check multiple config key patterns for backward compatibility
@@ -146,9 +156,21 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("Owner", policy => policy.RequireClaim("role", "owner"));
-    options.AddPolicy("Admin", policy => policy.RequireClaim("role", "owner", "admin"));
-    options.AddPolicy("Member", policy => policy.RequireClaim("role", "owner", "admin", "member"));
+    options.AddPolicy("Owner", policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim("role", "owner") ||
+            context.User.HasClaim("is_root_admin", "true")));
+    options.AddPolicy("Admin", policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim("role", "owner") ||
+            context.User.HasClaim("role", "admin") ||
+            context.User.HasClaim("is_root_admin", "true")));
+    options.AddPolicy("Member", policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim("role", "owner") ||
+            context.User.HasClaim("role", "admin") ||
+            context.User.HasClaim("role", "member") ||
+            context.User.HasClaim("is_root_admin", "true")));
 });
 
 builder.Services.AddOpenApi();

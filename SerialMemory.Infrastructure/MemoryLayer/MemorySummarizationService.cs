@@ -12,30 +12,16 @@ namespace SerialMemory.Infrastructure.MemoryLayer;
 /// Service for summarizing related L1 memories into L2 summaries.
 /// Uses OpenAI to generate concise, coherent summaries from memory clusters.
 /// </summary>
-public sealed class MemorySummarizationService
+public sealed class MemorySummarizationService(
+    OpenAiClient llm,
+    IEmbeddingService embeddings,
+    IConfiguration configuration,
+    ILogger<MemorySummarizationService> logger)
 {
-    private readonly OpenAiClient _llm;
-    private readonly IEmbeddingService _embeddings;
-    private readonly ILogger<MemorySummarizationService> _logger;
-    private readonly string _connectionString;
-    private readonly int _minClusterSize;
-    private readonly float _similarityThreshold;
-
-    public MemorySummarizationService(
-        OpenAiClient llm,
-        IEmbeddingService embeddings,
-        IConfiguration configuration,
-        ILogger<MemorySummarizationService> logger)
-    {
-        _llm = llm;
-        _embeddings = embeddings;
-        _logger = logger;
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
-
-        _minClusterSize = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinClusterSize", 3);
-        _similarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f);
-    }
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
+    private readonly int _minClusterSize = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinClusterSize", 3);
+    private readonly float _similarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f);
 
     private static string BuildConnectionString()
     {
@@ -128,7 +114,7 @@ public sealed class MemorySummarizationService
                 SourceMemoryIds: cluster.Memories.Select(m => m.MemoryId).ToArray());
         }
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Summarizing cluster of {Count} memories with shared entities: {Entities}",
             cluster.Memories.Count, string.Join(", ", cluster.SharedEntities.Take(5)));
 
@@ -162,7 +148,7 @@ public sealed class MemorySummarizationService
 
         try
         {
-            var result = await _llm.ChatStructuredAsync<SummarizationResponse>(
+            var result = await llm.ChatStructuredAsync<SummarizationResponse>(
                 memoriesContent, systemPrompt, 0.3f, ct);
 
             if (result == null || string.IsNullOrEmpty(result.Summary))
@@ -189,7 +175,7 @@ public sealed class MemorySummarizationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to summarize memory cluster");
+            logger.LogError(ex, "Failed to summarize memory cluster");
             return new SummarizationResult(
                 Success: false,
                 Error: ex.Message,
@@ -217,7 +203,7 @@ public sealed class MemorySummarizationService
         await conn.OpenAsync(ct);
 
         // Generate embedding for the summary
-        var embedding = await _embeddings.EmbedTextAsync(result.Summary, ct);
+        var embedding = await embeddings.EmbedTextAsync(result.Summary, ct);
 
         var memoryId = Guid.CreateVersion7();
         var metadata = new
@@ -246,7 +232,7 @@ public sealed class MemorySummarizationService
                 Metadata = JsonSerializer.Serialize(metadata)
             });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Created L2 summary memory {MemoryId} from {SourceCount} source memories",
             memoryId, result.SourceMemoryIds?.Length ?? 0);
 
@@ -288,14 +274,14 @@ public sealed class MemorySummarizationService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to create summary memory");
+                    logger.LogError(ex, "Failed to create summary memory");
                     failed++;
                 }
             }
             else
             {
                 failed++;
-                _logger.LogWarning("Summarization failed: {Error}", result.Error);
+                logger.LogWarning("Summarization failed: {Error}", result.Error);
             }
         }
 

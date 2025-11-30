@@ -28,11 +28,37 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
         _logger = logger;
     }
 
+    /// <summary>
+    /// Opens a connection with internal admin role to bypass RLS for shadow operations.
+    /// Shadow memory operations are trusted internal operations.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
+    /// <summary>
+    /// Opens a connection with tenant context for RLS.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenTenantConnectionAsync(string tenantId, CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, false);
+            SELECT set_config('app.current_tenant_id', @TenantId, false);
+            """,
+            new { TenantId = tenantId });
+        return conn;
+    }
+
     #region Branch Operations
 
     public async Task<Guid> CreateBranchAsync(ShadowBranch branch, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(branch.TenantId, ct);
 
         await conn.ExecuteAsync(
             """
@@ -78,7 +104,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<ShadowBranch?> GetBranchAsync(Guid branchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var row = await conn.QueryFirstOrDefaultAsync<dynamic>(
             """
@@ -96,7 +122,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowBranch>> GetActiveBranchesAsync(string tenantId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(tenantId, ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -115,7 +141,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowBranch>> GetChildBranchesAsync(Guid parentBranchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -134,7 +160,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task UpdateBranchStatusAsync(Guid branchId, ShadowBranchStatus status, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var timestampColumn = status switch
         {
@@ -153,7 +179,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task UpdateBranchConfidenceAsync(Guid branchId, float confidence, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             "UPDATE shadow_branches SET confidence = @Confidence WHERE id = @BranchId",
@@ -167,7 +193,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<ShadowBranchStats> GetBranchStatsAsync(Guid branchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var row = await conn.QueryFirstOrDefaultAsync<dynamic>(
             "SELECT * FROM get_shadow_branch_stats(@BranchId)",
@@ -192,7 +218,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<Guid> CreateShadowMemoryAsync(ShadowMemory memory, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(memory.TenantId, ct);
 
         // Verify branch is active
         var branchStatus = await conn.QueryFirstOrDefaultAsync<string>(
@@ -242,7 +268,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<ShadowMemory?> GetShadowMemoryAsync(Guid memoryId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var row = await conn.QueryFirstOrDefaultAsync<dynamic>(
             """
@@ -259,7 +285,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowMemory>> GetBranchMemoriesAsync(Guid branchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -282,7 +308,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
         float threshold = 0.7f,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var embeddingString = "[" + string.Join(",", queryEmbedding) + "]";
 
@@ -306,7 +332,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task UpdateShadowMemoryConfidenceAsync(Guid memoryId, float confidence, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             "UPDATE shadow_memories SET confidence = @Confidence WHERE id = @MemoryId",
@@ -319,7 +345,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<Guid> CreateShadowEntityAsync(ShadowEntity entity, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(entity.TenantId, ct);
 
         await conn.ExecuteAsync(
             """
@@ -349,7 +375,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowEntity>> GetBranchEntitiesAsync(Guid branchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -380,7 +406,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<Guid> CreateShadowRelationshipAsync(ShadowRelationship relationship, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(relationship.TenantId, ct);
 
         await conn.ExecuteAsync(
             """
@@ -409,7 +435,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowRelationship>> GetBranchRelationshipsAsync(Guid branchId, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -462,7 +488,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
         var promotedRelationshipIds = new List<Guid>();
         var entityIdMap = new Dictionary<Guid, Guid>(); // Shadow ID -> Main ID
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(branch.TenantId, ct);
 
         try
         {
@@ -564,7 +590,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
         }
 
         var promotedMemoryIds = new List<Guid>();
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenTenantConnectionAsync(branch.TenantId, ct);
 
         foreach (var shadowMemoryId in memoryIds)
         {
@@ -619,7 +645,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task DiscardMemoriesAsync(Guid branchId, List<Guid> memoryIds, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             "DELETE FROM shadow_memories WHERE branch_id = @BranchId AND id = ANY(@MemoryIds)",
@@ -632,7 +658,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowBranch>> GetExpiredBranchesAsync(CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -649,7 +675,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<List<ShadowBranch>> GetLowConfidenceBranchesAsync(CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var rows = await conn.QueryAsync<dynamic>(
             """
@@ -668,7 +694,7 @@ public sealed class PostgresShadowMemoryStore : IShadowMemoryStore
 
     public async Task<int> CleanupDiscardedBranchesAsync(int olderThanDays = 7, CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var result = await conn.ExecuteAsync(
             """

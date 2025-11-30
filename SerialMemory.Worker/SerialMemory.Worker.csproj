@@ -14,11 +14,13 @@
         <ProjectReference Include="..\SerialMemory.Contracts\SerialMemory.Contracts.csproj" />
         <ProjectReference Include="..\SerialMemory.Infrastructure\SerialMemory.Infrastructure.csproj" />
         <ProjectReference Include="..\SerialMemory.EventSourcing\SerialMemory.EventSourcing.csproj" />
+        <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
     </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="MassTransit" Version="8.5.6" />
         <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.6" />
+        <PackageReference Include="Pgvector" Version="0.3.2" />
         <PackageReference Include="RabbitMQ.Client" Version="7.2.0" />
         <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.14.0-beta.1" />
         <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />

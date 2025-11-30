@@ -19,13 +19,24 @@ public sealed class PostgresMindHealthService(
     private readonly ILogger<PostgresMindHealthService> _logger = logger;
     private readonly Guid _tenantId = Guid.Parse(tenantContext.TenantId);
 
+    /// <summary>
+    /// Opens a connection with tenant context for RLS.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenTenantConnectionAsync()
+    {
+        var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await conn.SetTenantContextAsync(_tenantId);
+        return conn;
+    }
+
     // ==========================================
     // CONFIDENCE DRIFT
     // ==========================================
 
     public async Task RecordConfidenceAsync(ConfidenceObservation observation, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         await conn.ExecuteAsync(@"
             INSERT INTO mind_confidence_observations
                 (id, tenant_id, operation_type, predicted_confidence, actual_accuracy, drift, timestamp, memory_id, context)
@@ -47,7 +58,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<ConfidenceDriftAnalysis> GetConfidenceDriftAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var observations = await conn.QueryAsync<ConfidenceObservationRow>(@"
@@ -100,7 +111,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<ConfidenceTrend> GetConfidenceTrendAsync(string operationType, int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var dailyDrift = await conn.QueryAsync<DriftPoint>(@"
@@ -144,7 +155,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task RecordHallucinationAsync(HallucinationEvent evt, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         await conn.ExecuteAsync(@"
             INSERT INTO mind_hallucination_events
                 (id, tenant_id, memory_id, type, severity, description, evidence, ground_truth, detected_at, source, resolved, resolution)
@@ -169,7 +180,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<HallucinationAnalysis> GetHallucinationAnalysisAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var events = await conn.QueryAsync<HallucinationEventRow>(@"
@@ -233,7 +244,7 @@ public sealed class PostgresMindHealthService(
         await RecordHallucinationAsync(evt, ct);
 
         // Also update memory confidence (tenant-scoped for safety)
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         await conn.ExecuteAsync(@"
             UPDATE memories
             SET confidence = confidence * (1 - @Severity),
@@ -244,7 +255,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<IReadOnlyList<HallucinationEvent>> GetRecentHallucinationEventsAsync(int limit = 20, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var rows = await conn.QueryAsync<HallucinationEventFullRow>(@"
             SELECT h.id, h.memory_id, h.type, h.severity, h.description, h.evidence, h.ground_truth,
                    h.detected_at, h.source, h.resolved, h.resolution,
@@ -294,7 +305,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task RecordContradictionAsync(ContradictionEvent evt, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         await conn.ExecuteAsync(@"
             INSERT INTO mind_contradiction_events
                 (id, tenant_id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status, resolution_strategy, resolution_rationale, winner_id, merged_into_id, resolved_at)
@@ -322,7 +333,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<ContradictionAnalysis> GetContradictionAnalysisAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var events = await conn.QueryAsync<ContradictionEventRow>(@"
@@ -379,7 +390,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<IReadOnlyList<ContradictionEvent>> GetUnresolvedContradictionsAsync(int limit = 100, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var rows = await conn.QueryAsync<ContradictionEventRow>(@"
             SELECT id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status
             FROM mind_contradiction_events
@@ -413,11 +424,8 @@ public sealed class PostgresMindHealthService(
         var contradictionAnalysis = await GetContradictionAnalysisAsync(7, ct);
 
         // Check if user has any data at all (tenant-scoped)
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(ct);
-
-        // Set RLS context for tenant isolation (SET doesn't support parameters, but GUID is safe)
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        // Note: OpenTenantConnectionAsync already opens the connection and sets tenant context
+        await using var conn = await OpenTenantConnectionAsync();
 
         // Debug: Log connection string database name and tenant ID before query
         _logger.LogInformation("MIND_HEALTH_QUERY: About to query with TenantId={TenantId} (type={Type}), ConnectionString={ConnDb}",
@@ -529,7 +537,7 @@ public sealed class PostgresMindHealthService(
 
     public async Task<IReadOnlyList<DailyHealthScore>> GetDailyScoresAsync(int days = 30, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
+        await using var conn = await OpenTenantConnectionAsync();
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
 
         var scores = await conn.QueryAsync<DailyHealthScoreRow>(@"

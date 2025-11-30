@@ -10,34 +10,26 @@ namespace SerialMemory.Infrastructure.MemoryLayer;
 /// Service responsible for promoting memories through the cognitive layer hierarchy.
 /// Layers: L0_RAW → L1_CONTEXT → L2_SUMMARY → L3_KNOWLEDGE → L4_HEURISTIC
 /// </summary>
-public sealed class LayerPromotionService
+public sealed class LayerPromotionService(
+    IConfiguration configuration,
+    ILogger<LayerPromotionService> logger)
 {
-    private readonly ILogger<LayerPromotionService> _logger;
-    private readonly string _connectionString;
-    private readonly LayerPromotionConfig _config;
-
-    public LayerPromotionService(
-        IConfiguration configuration,
-        ILogger<LayerPromotionService> logger)
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
+    private readonly LayerPromotionConfig _config = new()
     {
-        _logger = logger;
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
+        L0ToL1_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L0ToL1:MinAccessCount", 2),
+        L0ToL1_MinAgeDays = configuration.GetValue("MemoryLayerWorker:L0ToL1:MinAgeDays", 1),
+        L1ToL2_MinClusterSize = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinClusterSize", 3),
+        L1ToL2_SimilarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f),
+        L2ToL3_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinAccessCount", 5),
+        L2ToL3_MinConfidence = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinConfidence", 0.7f),
+        L3ToL4_MinSupportingFacts = configuration.GetValue("MemoryLayerWorker:L3ToL4:MinSupportingFacts", 5),
+        L3ToL4_MinPatternConfidence = configuration.GetValue("MemoryLayerWorker:L3ToL4:MinPatternConfidence", 0.8f),
+        BatchSize = configuration.GetValue("MemoryLayerWorker:BatchSize", 50)
+    };
 
-        // Load configuration with defaults
-        _config = new LayerPromotionConfig
-        {
-            L0ToL1_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L0ToL1:MinAccessCount", 2),
-            L0ToL1_MinAgeDays = configuration.GetValue("MemoryLayerWorker:L0ToL1:MinAgeDays", 1),
-            L1ToL2_MinClusterSize = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinClusterSize", 3),
-            L1ToL2_SimilarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f),
-            L2ToL3_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinAccessCount", 5),
-            L2ToL3_MinConfidence = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinConfidence", 0.7f),
-            L3ToL4_MinSupportingFacts = configuration.GetValue("MemoryLayerWorker:L3ToL4:MinSupportingFacts", 5),
-            L3ToL4_MinPatternConfidence = configuration.GetValue("MemoryLayerWorker:L3ToL4:MinPatternConfidence", 0.8f),
-            BatchSize = configuration.GetValue("MemoryLayerWorker:BatchSize", 50)
-        };
-    }
+    // Load configuration with defaults
 
     private static string BuildConnectionString()
     {
@@ -63,7 +55,7 @@ public sealed class LayerPromotionService
         var toLayer = GetNextLayer(fromLayer);
         if (toLayer == null)
         {
-            _logger.LogDebug("No promotion path from {FromLayer}", fromLayer);
+            logger.LogDebug("No promotion path from {FromLayer}", fromLayer);
             return [];
         }
 
@@ -160,7 +152,7 @@ public sealed class LayerPromotionService
                 Priority = priority
             });
 
-        _logger.LogDebug("Queued promotion {Id}: {MemoryId} from {From} to {To}",
+        logger.LogDebug("Queued promotion {Id}: {MemoryId} from {From} to {To}",
             id, memoryId, fromLayer, toLayer);
 
         return id;
@@ -255,7 +247,7 @@ public sealed class LayerPromotionService
                 new { TransitionId = transitionId, ErrorMessage = errorMessage });
         }
 
-        _logger.LogDebug("Completed transition {TransitionId}: success={Success}", transitionId, success);
+        logger.LogDebug("Completed transition {TransitionId}: success={Success}", transitionId, success);
     }
 
     /// <summary>

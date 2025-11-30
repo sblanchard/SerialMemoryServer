@@ -11,7 +11,7 @@ namespace SerialMemory.Infrastructure.Billing;
 /// Service for enforcing usage quotas and billing limits.
 /// Integrates with kill switch, plan limits, rate limits, and credit consumption.
 /// </summary>
-public sealed class QuotaEnforcementService : SerialMemory.Core.Interfaces.IQuotaEnforcementService
+public sealed class QuotaEnforcementService : Core.Interfaces.IQuotaEnforcementService
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IKillSwitchService _killSwitchService;

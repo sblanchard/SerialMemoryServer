@@ -1,8 +1,6 @@
-using Microsoft.Extensions.Logging;
 using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
-using Pgvector.Npgsql;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Telemetry;
 using SerialMemory.EventSourcing.CQRS;
@@ -12,7 +10,9 @@ using SerialMemory.EventSourcing.Retrieval;
 using SerialMemory.EventSourcing.Store;
 using SerialMemory.EventSourcing.Streaming;
 using SerialMemory.Infrastructure;
+using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Integrity;
+using SerialMemory.Infrastructure.MemoryLayer;
 using SerialMemory.ML;
 using SerialMemory.Worker;
 using SerialMemory.Worker.Consumers;
@@ -34,7 +34,11 @@ var dataSourceBuilder = new NpgsqlDataSourceBuilder(pgConnectionString);
 dataSourceBuilder.UseVector();
 var dataSource = dataSourceBuilder.Build();
 builder.Services.AddSingleton(dataSource);
-
+// Internal database connection factory (for RLS bypass in system operations)
+builder.Services.AddSingleton<IInternalDbConnectionFactory>(sp =>
+    new InternalDbConnectionFactory(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<InternalDbConnectionFactory>()));
 // Register configuration for dependency injection
 builder.Services.AddSingleton(_ => new WorkerConfiguration
 {
@@ -60,6 +64,7 @@ if (!string.IsNullOrEmpty(openAiApiKey))
         chatModel: "gpt-4.1-mini",
         embedModel: openAiEmbedModel,
         embeddingDimension: 1536);
+    builder.Services.AddSingleton(openAiClient); // Register OpenAiClient directly for MemorySummarizationService
     builder.Services.AddSingleton<IEmbeddingService>(openAiClient);
     builder.Services.AddSingleton<ILlmService>(openAiClient);
 }
@@ -120,6 +125,22 @@ builder.Services.AddSingleton<IProjection>(sp =>
     new MemoryProjection(
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryProjection>()));
+
+// ========================================================================
+// MEMORY LAYER SERVICES (previously unused - now registered)
+// ========================================================================
+
+// LayerPromotionService - manages memory layer promotion (L0→L1→L2→L3→L4)
+builder.Services.AddSingleton<LayerPromotionService>();
+
+// UsageForecastingService - generates usage forecasts and cost optimization recommendations
+builder.Services.AddSingleton<UsageForecastingService>();
+
+// MemorySummarizationService - summarizes related L1 memories into L2 summaries (requires OpenAI)
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    builder.Services.AddSingleton<MemorySummarizationService>();
+}
 
 // ========================================================================
 // BACKGROUND WORKERS

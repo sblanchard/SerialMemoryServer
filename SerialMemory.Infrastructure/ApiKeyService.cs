@@ -69,6 +69,12 @@ public sealed class ApiKeyService : IApiKeyService
 
         try
         {
+            // CRITICAL: Set internal_admin role to bypass RLS for signup operations.
+            // Use false to set for session - ensures RLS bypass works across statements
+            await conn.ExecuteAsync(
+                "SELECT set_config('app.role', 'internal_admin', false)",
+                transaction: tx);
+
             // Generate slug if not provided
             var slug = request.Slug ?? GenerateSlug(request.TenantName);
 
@@ -219,6 +225,9 @@ public sealed class ApiKeyService : IApiKeyService
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set internal admin role to bypass RLS for API key creation
+        await conn.SetInternalAdminWithTenantAsync(tenantId);
 
         // Check for duplicate name
         var existingKey = await conn.QueryFirstOrDefaultAsync<Guid?>(
@@ -390,6 +399,10 @@ public sealed class ApiKeyService : IApiKeyService
         var prefix = ApiKeyGenerator.ExtractPrefix(apiKey);
 
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // CRITICAL: Set internal_admin role to bypass RLS for API key lookup.
+        // We don't know the tenant yet - we're discovering it from the API key.
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
         // Find key by hash and verify it's valid
         var key = await conn.QueryFirstOrDefaultAsync<ApiKeyValidationDto>(

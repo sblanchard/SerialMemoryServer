@@ -119,19 +119,17 @@ public partial class PatternEntityExtractionService : IEntityExtractionService
         // Extract years
         foreach (Match match in YearRegex().Matches(text))
         {
-            if (!IsOverlapping(entities, match.Index, match.Index + match.Length))
+            if (IsOverlapping(entities, match.Index, match.Index + match.Length)) continue;
+            var year = int.Parse(match.Value);
+            if (year is >= 1900 and <= 2100) // Reasonable year range
             {
-                var year = int.Parse(match.Value);
-                if (year is >= 1900 and <= 2100) // Reasonable year range
-                {
-                    entities.Add(new ExtractedEntity(
-                        match.Value,
-                        "DATE",
-                        match.Index,
-                        match.Index + match.Length,
-                        0.9f
-                    ));
-                }
+                entities.Add(new ExtractedEntity(
+                    match.Value,
+                    "DATE",
+                    match.Index,
+                    match.Index + match.Length,
+                    0.9f
+                ));
             }
         }
 

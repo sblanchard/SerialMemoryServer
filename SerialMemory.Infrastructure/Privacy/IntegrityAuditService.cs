@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Infrastructure;
 
 namespace SerialMemory.Infrastructure.Privacy;
 
@@ -42,6 +43,9 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
 
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
+
+        // Set internal admin role to bypass RLS for audit log entries
+        await conn.SetInternalAdminWithTenantAsync(_tenantId);
 
         var detailsJson = entry.Details != null
             ? JsonSerializer.Serialize(entry.Details, JsonOptions)

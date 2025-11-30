@@ -360,7 +360,7 @@ public sealed class MergeMemoriesCommandHandler : ICommandHandler<MergeMemoriesC
             var aggregate = MemoryAggregate.Create(
                 content: command.MergedContent,
                 embedding: embedding,
-                layer: Events.MemoryLayer.L2_SUMMARY,
+                layer: MemoryLayer.L2_SUMMARY,
                 causalParents: command.SourceMemoryIds,
                 createdBy: command.ActorId);
 

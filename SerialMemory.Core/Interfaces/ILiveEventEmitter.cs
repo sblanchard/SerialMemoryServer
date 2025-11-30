@@ -6,6 +6,13 @@ namespace SerialMemory.Core.Interfaces;
 /// </summary>
 public interface ILiveEventEmitter
 {
+    // Memory events (NEW - for Recent Events dashboard)
+    Task EmitMemoryEventAsync(MemoryEventBroadcast evt);
+    Task EmitRecentEventAsync(RecentEventBroadcast evt);
+    Task EmitTimelineUpdateAsync(TimelineUpdateBroadcast evt);
+    Task EmitMindHealthUpdateAsync(MindHealthBroadcast evt);
+    Task EmitConflictDetectedAsync(ConflictBroadcast evt);
+
     // Reasoning events
     Task EmitReasoningProgressAsync(ReasoningProgressEvent evt);
     Task EmitReasoningResultAsync(ReasoningResultEvent evt);
@@ -26,6 +33,85 @@ public interface ILiveEventEmitter
     Task EmitActiveTracesAsync(ActiveTracesSnapshot traces);
     Task EmitSecurityScanStateAsync(SecurityScanSnapshot scan);
     Task EmitGraphMutationAsync(GraphMutationSnapshot mutation);
+}
+
+// ==========================================
+// MEMORY EVENT BROADCASTS (NEW)
+// ==========================================
+
+/// <summary>
+/// Broadcast for memory-specific events (MemoryCreated, LayerGenerated, etc.)
+/// </summary>
+public sealed record MemoryEventBroadcast
+{
+    public Guid EventId { get; init; }
+    public string TenantId { get; init; } = "";
+    public Guid MemoryId { get; init; }
+    public string EventType { get; init; } = "";
+    public string Actor { get; init; } = "system";
+    public object? Payload { get; init; }
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Broadcast for general recent events (for the Recent Events dashboard)
+/// </summary>
+public sealed record RecentEventBroadcast
+{
+    public Guid Id { get; init; }
+    public string TenantId { get; init; } = "";
+    public long Seq { get; init; }
+    public string EventType { get; init; } = "";
+    public Guid? MemoryId { get; init; }
+    public string Actor { get; init; } = "";
+    public string Category { get; init; } = "";
+    public string Severity { get; init; } = "info";
+    public object? Payload { get; init; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Broadcast for timeline updates (when a snapshot is created)
+/// </summary>
+public sealed record TimelineUpdateBroadcast
+{
+    public Guid SnapshotId { get; init; }
+    public string TenantId { get; init; } = "";
+    public Guid MemoryId { get; init; }
+    public string EventType { get; init; } = "";
+    public string Layer { get; init; } = "";
+    public decimal Confidence { get; init; }
+    public DateTimeOffset SnapshotAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Broadcast for mind health updates
+/// </summary>
+public sealed record MindHealthBroadcast
+{
+    public Guid HealthId { get; init; }
+    public string TenantId { get; init; } = "";
+    public int HealthScore { get; init; }
+    public string HealthStatus { get; init; } = "healthy";
+    public int TotalMemories { get; init; }
+    public int ActiveMemories { get; init; }
+    public int ContradictionsDetected { get; init; }
+    public DateTimeOffset ComputedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Broadcast when a conflict/contradiction is detected
+/// </summary>
+public sealed record ConflictBroadcast
+{
+    public Guid ConflictId { get; init; }
+    public string TenantId { get; init; } = "";
+    public Guid MemoryAId { get; init; }
+    public Guid MemoryBId { get; init; }
+    public decimal SimilarityScore { get; init; }
+    public string ContradictionType { get; init; } = "";
+    public string? Explanation { get; init; }
+    public DateTimeOffset DetectedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
 // Event DTOs - live streaming events

@@ -29,11 +29,21 @@ public sealed class ProofService : IProofService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Opens a connection with internal admin role for verification operations.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
     public async Task<TenantIsolationProof> VerifyTenantIsolationAsync(
         string tenantId,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
         var checks = new List<IsolationCheck>();
         var verifiedAt = DateTimeOffset.UtcNow;
 
@@ -121,7 +131,7 @@ public sealed class ProofService : IProofService
         DateTimeOffset? toDate = null,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
         var verifiedAt = DateTimeOffset.UtcNow;
 
         var whereClause = "WHERE 1=1";
@@ -225,7 +235,7 @@ public sealed class ProofService : IProofService
         string tenantId,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
         var verifiedAt = DateTimeOffset.UtcNow;
         var violations = new List<RetentionViolation>();
 
@@ -448,7 +458,7 @@ public sealed class ProofService : IProofService
         string tenantId,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
         var verifiedAt = DateTimeOffset.UtcNow;
         var violations = new List<IntegrityViolation>();
 

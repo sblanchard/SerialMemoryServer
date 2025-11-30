@@ -533,6 +533,7 @@ public sealed class StripeBillingService : IBillingService, IMockableBillingServ
         {
             "free" => _config.FreePriceId,
             "pro" => _config.ProPriceId,
+            "pro_plus" => _config.ProPlusPriceId,
             "enterprise" => _config.EnterprisePriceId,
             _ => null
         };

@@ -14,6 +14,16 @@ public sealed class TimeTravelDebugger(
     ILogger<TimeTravelDebugger> logger)
     : ITimeTravelDebugger
 {
+    /// <summary>
+    /// Opens a connection with internal admin role for time-travel operations.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
     public async Task<MemorySnapshot> CreateSnapshotAsync(
         string snapshotType,
         CancellationToken cancellationToken = default)
@@ -21,7 +31,7 @@ public sealed class TimeTravelDebugger(
         var snapshotId = Guid.CreateVersion7();
         var snapshotTimestamp = DateTime.UtcNow;
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Gather current state statistics
         const string countsSql = """
@@ -118,7 +128,7 @@ public sealed class TimeTravelDebugger(
         DateTime timestamp,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Use the stored function to get state at timestamp
         const string sql = """
@@ -191,7 +201,7 @@ public sealed class TimeTravelDebugger(
         int limit = 1000,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Get all active memory states at the given timestamp
         const string sql = """
@@ -249,7 +259,7 @@ public sealed class TimeTravelDebugger(
         string? snapshotType = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         var sql = """
 
@@ -302,7 +312,7 @@ public sealed class TimeTravelDebugger(
         DateTime? untilTimestamp = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         var sql = """
 
@@ -383,7 +393,7 @@ public sealed class TimeTravelDebugger(
             (snapshotA, snapshotB) = (snapshotB, snapshotA);
         }
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Find memories added between snapshots
         const string addedMemoriesSql = """
@@ -449,7 +459,7 @@ public sealed class TimeTravelDebugger(
             throw new InvalidOperationException($"Snapshot {snapshotId} not found");
         }
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Get state at snapshot time
         var stateAtSnapshot = await GetGraphStateAtAsync(
@@ -558,7 +568,7 @@ public sealed class TimeTravelDebugger(
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         // Get all timeline states for this memory
         const string timelineSql = """

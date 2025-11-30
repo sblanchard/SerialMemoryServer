@@ -45,7 +45,7 @@
     </div>
 
     <!-- Plan Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
         @foreach (var plan in Model.AvailablePlans)
         {
             var isCurrentPlan = plan.Name.Equals(Model.CurrentPlan, StringComparison.OrdinalIgnoreCase);
@@ -61,7 +61,8 @@
                 "annual" => plan.Pricing.Annual / 12,
                 _ => plan.Pricing.Monthly
             };
-            var isPopular = plan.Name.Equals("pro", StringComparison.OrdinalIgnoreCase);
+            var isPopular = plan.Name.Equals("pro_plus", StringComparison.OrdinalIgnoreCase);
+            var isTeamPlan = plan.Name.Equals("pro_plus", StringComparison.OrdinalIgnoreCase);
 
             <div class="card relative @(isPopular ? "ring-2 ring-indigo-500" : "") @(isCurrentPlan ? "ring-2 ring-green-500" : "")">
                 @if (isPopular && !isCurrentPlan)
@@ -79,6 +80,10 @@
 
                 <div class="text-center pt-4">
                     <h3 class="text-xl font-bold text-soft-white">@plan.DisplayName</h3>
+                    @if (isTeamPlan)
+                    {
+                        <p class="text-sm text-indigo-400 mt-1">5 seats included</p>
+                    }
                     <div class="mt-4">
                         @if (price == 0)
                         {
@@ -86,12 +91,19 @@
                         }
                         else
                         {
-                            <span class="text-4xl font-bold text-soft-white">$@pricePerMonth.ToString("0")</span>
+                            @if (plan.Name == "pro" || plan.Name == "pro_plus" || plan.Name == "enterprise")
+                            {
+                                <span class="text-4xl font-bold text-soft-white">€@pricePerMonth.ToString("0")</span>
+                            }
+                            else
+                            {
+                                <span class="text-4xl font-bold text-soft-white">$@pricePerMonth.ToString("0")</span>
+                            }
                             <span class="text-graphite">/month</span>
                             @if (Model.SelectedBillingInterval != "monthly")
                             {
                                 <div class="text-sm text-graphite mt-1">
-                                    Billed $@price.ToString("0.00") @(Model.SelectedBillingInterval == "quarterly" ? "quarterly" : "annually")
+                                    Billed @(plan.Name == "pro" || plan.Name == "pro_plus" || plan.Name == "enterprise" ? "€" : "$")@price.ToString("0.00") @(Model.SelectedBillingInterval == "quarterly" ? "quarterly" : "annually")
                                 </div>
                             }
                         }
@@ -176,6 +188,36 @@
                             </svg>
                         }
                         <span class="@(plan.Features.CustomIntegrations ? "text-soft-white" : "text-graphite")">Custom Integrations</span>
+                    </div>
+                    <div class="flex items-center">
+                        @if (plan.Features.TeamCollaboration)
+                        {
+                            <svg class="w-5 h-5 text-green-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg class="w-5 h-5 text-graphite mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                        }
+                        <span class="@(plan.Features.TeamCollaboration ? "text-soft-white" : "text-graphite")">Team Collaboration</span>
+                    </div>
+                    <div class="flex items-center">
+                        @if (plan.Features.CreditPooling)
+                        {
+                            <svg class="w-5 h-5 text-green-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg class="w-5 h-5 text-graphite mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                        }
+                        <span class="@(plan.Features.CreditPooling ? "text-soft-white" : "text-graphite")">Credit Pooling</span>
                     </div>
                 </div>
 
@@ -303,7 +345,7 @@
                             </td>
                         }
                     </tr>
-                    <tr>
+                    <tr class="border-b border-slate/50">
                         <td class="py-3 px-4 text-soft-white">Custom Integrations</td>
                         @foreach (var plan in Model.AvailablePlans)
                         {
@@ -317,6 +359,58 @@
                                 else
                                 {
                                     <span class="text-graphite">-</span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                    <tr class="border-b border-slate/50">
+                        <td class="py-3 px-4 text-soft-white">Team Collaboration</td>
+                        @foreach (var plan in Model.AvailablePlans)
+                        {
+                            <td class="text-center py-3 px-4">
+                                @if (plan.Features.TeamCollaboration)
+                                {
+                                    <svg class="w-5 h-5 text-green-500 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                    </svg>
+                                }
+                                else
+                                {
+                                    <span class="text-graphite">-</span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                    <tr class="border-b border-slate/50">
+                        <td class="py-3 px-4 text-soft-white">Credit Pooling</td>
+                        @foreach (var plan in Model.AvailablePlans)
+                        {
+                            <td class="text-center py-3 px-4">
+                                @if (plan.Features.CreditPooling)
+                                {
+                                    <svg class="w-5 h-5 text-green-500 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                    </svg>
+                                }
+                                else
+                                {
+                                    <span class="text-graphite">-</span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                    <tr>
+                        <td class="py-3 px-4 text-soft-white">Seats Included</td>
+                        @foreach (var plan in Model.AvailablePlans)
+                        {
+                            <td class="text-center py-3 px-4 text-soft-white">
+                                @if (plan.Features.SeatsIncluded > 0)
+                                {
+                                    @plan.Features.SeatsIncluded
+                                }
+                                else
+                                {
+                                    <span class="text-graphite">1</span>
                                 }
                             </td>
                         }

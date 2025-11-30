@@ -95,7 +95,7 @@ public sealed class KillSwitchService : IKillSwitchService
 
     private async Task<KillSwitchState> FetchGlobalStateAsync(CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         // Check for global emergency cutoff
         var globalCutoff = await conn.QueryFirstOrDefaultAsync<EmergencyCutoffDto>(
@@ -129,7 +129,7 @@ public sealed class KillSwitchService : IKillSwitchService
         string? apiKeyId,
         CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         // Check tenant emergency cutoff
         var tenantCutoff = await conn.QueryFirstOrDefaultAsync<EmergencyCutoffDto>(
@@ -329,7 +329,7 @@ public sealed class KillSwitchService : IKillSwitchService
         string disabledBy,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             """
@@ -355,7 +355,7 @@ public sealed class KillSwitchService : IKillSwitchService
         string enabledBy,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             """
@@ -377,7 +377,7 @@ public sealed class KillSwitchService : IKillSwitchService
 
     public async Task<KillSwitchDashboardState> GetDashboardStateAsync(CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         // Get global state
         var globalCutoff = await conn.QueryFirstOrDefaultAsync<EmergencyCutoffDto>(
@@ -464,7 +464,7 @@ public sealed class KillSwitchService : IKillSwitchService
         int limit = 50,
         CancellationToken ct = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var actions = await conn.QueryAsync<AdminActionDto>(
             """
@@ -509,6 +509,17 @@ public sealed class KillSwitchService : IKillSwitchService
     }
 
     #region Private Helpers
+    /// <summary>
+    /// Opens a connection with internal admin role for RLS bypass.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        // Use false to set for session (not just transaction) - ensures RLS bypass works across statements
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
 
     private async Task SetGlobalStateAsync(
         KillSwitchMode mode,
@@ -517,7 +528,7 @@ public sealed class KillSwitchService : IKillSwitchService
         TimeSpan? duration,
         CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var endsAt = duration.HasValue ? DateTimeOffset.UtcNow.Add(duration.Value) : (DateTimeOffset?)null;
         var metadata = System.Text.Json.JsonSerializer.Serialize(new { mode = mode.ToString() });
@@ -552,7 +563,7 @@ public sealed class KillSwitchService : IKillSwitchService
 
     private async Task LiftGlobalStateAsync(string reason, string liftedBy, CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             """
@@ -575,7 +586,7 @@ public sealed class KillSwitchService : IKillSwitchService
         TimeSpan? duration,
         CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         var endsAt = duration.HasValue ? DateTimeOffset.UtcNow.Add(duration.Value) : (DateTimeOffset?)null;
         var metadata = System.Text.Json.JsonSerializer.Serialize(new { mode = mode.ToString() });
@@ -612,7 +623,7 @@ public sealed class KillSwitchService : IKillSwitchService
 
     private async Task LiftTenantStateAsync(string tenantId, string reason, string liftedBy, CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await OpenInternalConnectionAsync(ct);
 
         await conn.ExecuteAsync(
             """

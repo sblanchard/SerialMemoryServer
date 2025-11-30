@@ -127,7 +127,16 @@ public sealed class StructuralReasoningModel(IKnowledgeGraphStore store, ILogger
                 .ToList();
 
             var highDegreeNodes = nodeDegrees.Where(n => n.Degree > 20).ToList();
-            if (highDegreeNodes.Count > 0)
+            if (highDegreeNodes.Count <= 0)
+                return new ModelResult
+                {
+                    ModelName = Name,
+                    Version = Version,
+                    Role = Role,
+                    Success = true,
+                    DurationMs = 0, // Will be set by orchestrator
+                    Insights = insights
+                };
             {
                 var highDegreeEntities = entities
                     .Where(e => highDegreeNodes.Select(h => h.Id).Contains(e.Id))

@@ -19,8 +19,9 @@ public sealed class LiveHub : Hub
     private readonly IMutableTenantContext? _mutableTenantContext;
     private readonly byte[]? _internalTokenKey;
 
-    private const string InternalTokenIssuer = "serialmemory-web";
-    private const string InternalTokenAudience = "serialmemory-internal";
+    // Must match InternalTokenService in SerialMemory.Web
+    private readonly string _internalTokenIssuer;
+    private readonly string _internalTokenAudience;
 
     public LiveHub(
         ILogger<LiveHub> logger,
@@ -33,11 +34,32 @@ public sealed class LiveHub : Hub
         _tenantContext = tenantContext;
         _mutableTenantContext = tenantContext as IMutableTenantContext;
 
-        // Load internal token signing key
-        var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
-        if (!string.IsNullOrEmpty(keyBase64))
+        // Load issuer/audience from config (same as InternalTokenService)
+        _internalTokenIssuer = configuration["JWT_ISSUER"] ?? "serialmemory";
+        _internalTokenAudience = configuration["JWT_AUDIENCE"] ?? "serialmemory-api";
+
+        // Load signing key - must match InternalTokenService order:
+        // 1. JWT_SECRET (UTF-8 bytes)
+        // 2. INTERNAL_TOKEN_KEY (base64)
+        // 3. Default dev key
+        var jwtSecret = configuration["JWT_SECRET"];
+        if (!string.IsNullOrEmpty(jwtSecret))
         {
-            _internalTokenKey = Convert.FromBase64String(keyBase64);
+            _internalTokenKey = System.Text.Encoding.UTF8.GetBytes(jwtSecret);
+        }
+        else
+        {
+            var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
+            if (!string.IsNullOrEmpty(keyBase64))
+            {
+                _internalTokenKey = Convert.FromBase64String(keyBase64);
+            }
+            else
+            {
+                // Use default development key matching InternalTokenService
+                _internalTokenKey = System.Text.Encoding.UTF8.GetBytes("default-development-secret-32chars!!");
+                _logger.LogWarning("JWT_SECRET not configured for SignalR hub. Using default development key.");
+            }
         }
     }
 
@@ -161,6 +183,56 @@ public sealed class LiveHub : Hub
     }
 
     /// <summary>
+    /// Subscribe to memory event streams (Recent Events, Timeline, Mind Health, Conflicts).
+    /// These are automatically tenant-scoped.
+    /// </summary>
+    public async Task SubscribeMemoryEvents()
+    {
+        var tenantId = Context.Items["TenantId"] as string ?? _tenantContext.TenantId;
+
+        var streams = new[]
+        {
+            $"tenant.{tenantId}.events",
+            $"tenant.{tenantId}.recent",
+            $"tenant.{tenantId}.timeline",
+            $"tenant.{tenantId}.health",
+            $"tenant.{tenantId}.conflicts"
+        };
+
+        foreach (var stream in streams)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+        }
+
+        _logger.LogDebug("Client {ConnectionId} subscribed to memory event streams for tenant {TenantId}",
+            Context.ConnectionId, tenantId);
+        await Clients.Caller.SendAsync("SubscribedMemoryEvents", streams);
+    }
+
+    /// <summary>
+    /// Subscribe to recent events stream only (for the Recent Events dashboard).
+    /// </summary>
+    public async Task SubscribeRecentEvents()
+    {
+        var tenantId = Context.Items["TenantId"] as string ?? _tenantContext.TenantId;
+        var stream = $"tenant.{tenantId}.recent";
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+
+        _logger.LogDebug("Client {ConnectionId} subscribed to recent events for tenant {TenantId}",
+            Context.ConnectionId, tenantId);
+        await Clients.Caller.SendAsync("SubscribedRecentEvents", stream);
+    }
+
+    /// <summary>
+    /// Ping method for connection health checks.
+    /// </summary>
+    public async Task Ping()
+    {
+        await Clients.Caller.SendAsync("Pong", DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
     /// Subscribe to global admin streams (SelfHosted only).
     /// In SaaS mode, this is not available and will return an error.
     /// </summary>
@@ -237,9 +309,9 @@ public sealed class LiveHub : Hub
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKey = securityKey,
                 ValidateIssuer = true,
-                ValidIssuer = InternalTokenIssuer,
+                ValidIssuer = _internalTokenIssuer,
                 ValidateAudience = true,
-                ValidAudience = InternalTokenAudience,
+                ValidAudience = _internalTokenAudience,
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30)
             };

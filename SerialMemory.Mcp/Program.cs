@@ -34,7 +34,11 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration - Ollama (local only)
+// Embedding service configuration - OpenAI or Ollama
+var openAiApiKey = configuration["OPENAI_API_KEY"] ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var openAiEmbedModel = configuration["OPENAI_EMBED_MODEL"] ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL") ?? "text-embedding-3-small";
+
+// Ollama fallback
 var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
 var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
@@ -129,9 +133,25 @@ IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, t
 DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
-// Create embedding service - local Ollama
-IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+// Create embedding service - OpenAI preferred, Ollama fallback
+IEmbeddingService embeddingService;
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    var openAiClient = new OpenAiClient(
+        apiKey: openAiApiKey,
+        chatModel: "gpt-4.1-mini",  // Not used for embeddings
+        embedModel: openAiEmbedModel,
+        embeddingDimension: 1536);
+    embeddingService = openAiClient;
+    logger.LogInformation("Using OpenAI embedding service: {Model} (dim=1536)", openAiEmbedModel);
+    DebugFileLogger.Log("MCP", $"Using OpenAI for embeddings: {openAiEmbedModel}");
+}
+else
+{
+    embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+    logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+    DebugFileLogger.Log("MCP", $"Using Ollama for embeddings: {ollamaModel} (dim={ollamaEmbeddingDim})");
+}
 
 // Create entity extraction service (Ollama > HTTP > Pattern-based)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
@@ -1151,30 +1171,39 @@ async Task<object> HandleGetGraphStatistics()
 
 object HandleGetModelInfo()
 {
+    var isOpenAi = !string.IsNullOrEmpty(openAiApiKey);
+
     var text = $"## Current Embedding Model\n\n" +
-               $"**Service:** Ollama\n" +
-               $"**Model:** {ollamaModel}\n" +
-               $"**URL:** {ollamaUrl}\n" +
+               $"**Service:** {(isOpenAi ? "OpenAI" : "Ollama")}\n" +
+               $"**Model:** {(isOpenAi ? openAiEmbedModel : ollamaModel)}\n" +
+               (isOpenAi ? "" : $"**URL:** {ollamaUrl}\n") +
                $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}\n\n" +
-               $"## Supported Ollama Models\n\n" +
-               $"| Model | Dimensions | Notes |\n" +
-               $"|-------|------------|-------|\n" +
-               $"| nomic-embed-text | 768 | Default, good quality |\n" +
-               $"| mxbai-embed-large | 1024 | Higher quality, slower |\n" +
-               $"| all-minilm | 384 | Fast, smaller vectors |\n\n" +
+               (isOpenAi
+                   ? $"## OpenAI Embedding Models\n\n" +
+                     $"| Model | Dimensions | Notes |\n" +
+                     $"|-------|------------|-------|\n" +
+                     $"| text-embedding-3-small | 1536 | Default, fast, good quality |\n" +
+                     $"| text-embedding-3-large | 3072 | Higher quality, slower |\n" +
+                     $"| text-embedding-ada-002 | 1536 | Legacy model |\n\n"
+                   : $"## Supported Ollama Models\n\n" +
+                     $"| Model | Dimensions | Notes |\n" +
+                     $"|-------|------------|-------|\n" +
+                     $"| nomic-embed-text | 768 | Default, good quality |\n" +
+                     $"| mxbai-embed-large | 1024 | Higher quality, slower |\n" +
+                     $"| all-minilm | 384 | Fast, smaller vectors |\n\n") +
                $"## How to Switch Models\n\n" +
-               $"1. Pull the new model: `ollama pull <model-name>`\n" +
-               $"2. Update environment variables:\n" +
-               $"   ```\n" +
-               $"   OLLAMA_MODEL=<model-name>\n" +
-               $"   OLLAMA_EMBEDDING_DIM=<dimension>\n" +
-               $"   ```\n" +
-               $"3. If dimension changed, migrate database:\n" +
-               $"   ```sql\n" +
-               $"   -- Set EMBEDDING_DIM in ops/migrate_embedding_dimension.sql\n" +
-               $"   psql -f ops/migrate_embedding_dimension.sql\n" +
-               $"   ```\n" +
-               $"4. Restart MCP server and run `reembed_memories` with `force_all: true`";
+               (isOpenAi
+                   ? $"Set environment variable: `OPENAI_EMBED_MODEL=<model-name>`\n" +
+                     $"Then restart MCP server.\n\n" +
+                     $"To switch to Ollama, unset OPENAI_API_KEY."
+                   : $"1. Pull the new model: `ollama pull <model-name>`\n" +
+                     $"2. Update environment variables:\n" +
+                     $"   ```\n" +
+                     $"   OLLAMA_MODEL=<model-name>\n" +
+                     $"   OLLAMA_EMBEDDING_DIM=<dimension>\n" +
+                     $"   ```\n" +
+                     $"3. If dimension changed, migrate database\n" +
+                     $"4. Restart MCP server and run `reembed_memories` with `force_all: true`");
 
     return CreateTextResponse(text);
 }
