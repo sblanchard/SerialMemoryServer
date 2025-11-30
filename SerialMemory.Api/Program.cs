@@ -4120,31 +4120,79 @@ app.MapPost("/api/power/conflicts/flag", async (
 
 // ---- RAW TRACE VIEWERS ----
 
-// GET /api/power/trace/{id} - Get raw event trace for memory
+// GET /api/power/trace/{id} - Get full trace detail for memory (for dashboard)
 app.MapGet("/api/power/trace/{memoryId:guid}", async (
     Guid memoryId,
+    bool? raw,
     IPowerUserService powerService) =>
 {
-    var trace = await powerService.GetRawTraceAsync(memoryId);
+    // If raw=true, return the raw event trace; otherwise return full trace detail
+    if (raw == true)
+    {
+        var rawTrace = await powerService.GetRawTraceAsync(memoryId);
+        return Results.Ok(new
+        {
+            rawTrace.MemoryId,
+            rawTrace.TotalEvents,
+            rawTrace.FirstEvent,
+            rawTrace.LastEvent,
+            rawTrace.EventTypeCounts,
+            events = rawTrace.Events.Select(e => new
+            {
+                e.EventId,
+                e.SequenceNumber,
+                e.EventType,
+                e.Timestamp,
+                e.RawPayload,
+                e.ParsedPayload,
+                e.ActorId,
+                e.CorrelationId
+            })
+        });
+    }
 
+    // Return full trace detail for dashboard (default)
+    var trace = await powerService.GetFullTraceAsync(memoryId);
     return Results.Ok(new
     {
         trace.MemoryId,
-        trace.TotalEvents,
-        trace.FirstEvent,
-        trace.LastEvent,
-        trace.EventTypeCounts,
-        events = trace.Events.Select(e => new
+        trace.Content,
+        trace.Layer,
+        trace.Confidence,
+        trace.IsActive,
+        trace.ContentHash,
+        trace.Source,
+        trace.CreatedAt,
+        trace.UpdatedAt,
+        Events = trace.Events.Select(e => new
         {
-            e.EventId,
             e.SequenceNumber,
             e.EventType,
             e.Timestamp,
-            e.RawPayload,
-            e.ParsedPayload,
             e.ActorId,
-            e.CorrelationId
-        })
+            e.Reason,
+            e.PayloadJson
+        }),
+        trace.CausalParents,
+        trace.Descendants,
+        Timeline = trace.Timeline.Select(t => new
+        {
+            t.Id,
+            t.SnapshotAt,
+            t.EventType,
+            t.Layer,
+            t.Confidence,
+            t.ContentPreview
+        }),
+        Conflicts = trace.Conflicts.Select(c => new
+        {
+            c.ConflictId,
+            c.OtherMemoryId,
+            c.Severity,
+            c.ConflictType,
+            c.IsResolved
+        }),
+        trace.RawJson
     });
 });
 
