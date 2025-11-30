@@ -1,4 +1,6 @@
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.IdentityModel.Tokens;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 
@@ -7,32 +9,80 @@ namespace SerialMemory.Api.Realtime;
 /// <summary>
 /// Real-time SignalR hub for live streaming of reasoning, security, and graph events.
 /// Deployment-aware: In SaaS mode, streams are tenant-scoped. In SelfHosted mode, global streams are available.
+/// Requires internal JWT token for authentication (passed via query string: ?access_token=xxx).
 /// </summary>
 public sealed class LiveHub : Hub
 {
     private readonly ILogger<LiveHub> _logger;
     private readonly IDeploymentContext _deploymentContext;
     private readonly ITenantContext _tenantContext;
+    private readonly IMutableTenantContext? _mutableTenantContext;
+    private readonly byte[]? _internalTokenKey;
+
+    private const string InternalTokenIssuer = "serialmemory-web";
+    private const string InternalTokenAudience = "serialmemory-internal";
 
     public LiveHub(
         ILogger<LiveHub> logger,
         IDeploymentContext deploymentContext,
-        ITenantContext tenantContext)
+        ITenantContext tenantContext,
+        IConfiguration configuration)
     {
         _logger = logger;
         _deploymentContext = deploymentContext;
         _tenantContext = tenantContext;
+        _mutableTenantContext = tenantContext as IMutableTenantContext;
+
+        // Load internal token signing key
+        var keyBase64 = configuration["INTERNAL_TOKEN_KEY"];
+        if (!string.IsNullOrEmpty(keyBase64))
+        {
+            _internalTokenKey = Convert.FromBase64String(keyBase64);
+        }
     }
 
     public override async Task OnConnectedAsync()
     {
-        _logger.LogInformation("Client connected: {ConnectionId} (Mode: {Mode})",
-            Context.ConnectionId, _deploymentContext.Mode);
+        // Get access token from query string (standard SignalR pattern)
+        var accessToken = Context.GetHttpContext()?.Request.Query["access_token"].FirstOrDefault();
+
+        // Validate internal token
+        var claims = ValidateInternalToken(accessToken);
+        if (claims == null && _deploymentContext.IsSaaS)
+        {
+            // SaaS mode requires authentication
+            _logger.LogWarning("SignalR connection rejected: Invalid or missing internal token");
+            Context.Abort();
+            return;
+        }
+
+        // Set tenant context from validated token
+        if (claims != null && _mutableTenantContext != null)
+        {
+            _mutableTenantContext.SetContext(
+                tenantId: claims.TenantId,
+                workspaceId: claims.WorkspaceId,
+                userId: claims.UserId,
+                sessionId: null,
+                isLabMode: false,
+                scopes: new[] { "dashboard" });
+
+            // Store claims in connection items for later use
+            Context.Items["TenantId"] = claims.TenantId;
+            Context.Items["UserId"] = claims.UserId;
+            Context.Items["WorkspaceId"] = claims.WorkspaceId;
+        }
+
+        _logger.LogInformation(
+            "Client connected: {ConnectionId} (Mode: {Mode}, Tenant: {TenantId})",
+            Context.ConnectionId,
+            _deploymentContext.Mode,
+            claims?.TenantId ?? "anonymous");
 
         // In SaaS mode, auto-subscribe to tenant-specific group
-        if (_deploymentContext.IsSaaS)
+        if (_deploymentContext.IsSaaS && claims != null)
         {
-            var tenantGroup = $"tenant:{_tenantContext.TenantId}";
+            var tenantGroup = $"tenant:{claims.TenantId}";
             await Groups.AddToGroupAsync(Context.ConnectionId, tenantGroup);
             _logger.LogDebug("Auto-subscribed {ConnectionId} to tenant group {TenantGroup}",
                 Context.ConnectionId, tenantGroup);
@@ -165,7 +215,67 @@ public sealed class LiveHub : Hub
             return stream; // Global stream
         }
 
-        // SaaS mode: tenant-scoped streams
-        return $"tenant:{_tenantContext.TenantId}:{stream}";
+        // SaaS mode: tenant-scoped streams (use validated tenant from connection items)
+        var tenantId = Context.Items["TenantId"] as string ?? _tenantContext.TenantId;
+        return $"tenant:{tenantId}:{stream}";
+    }
+
+    /// <summary>
+    /// Validates an internal JWT token and extracts claims.
+    /// </summary>
+    private SignalRTokenClaims? ValidateInternalToken(string? token)
+    {
+        if (string.IsNullOrEmpty(token) || _internalTokenKey == null)
+            return null;
+
+        try
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var securityKey = new SymmetricSecurityKey(_internalTokenKey);
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = securityKey,
+                ValidateIssuer = true,
+                ValidIssuer = InternalTokenIssuer,
+                ValidateAudience = true,
+                ValidAudience = InternalTokenAudience,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromSeconds(30)
+            };
+
+            var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+
+            // Verify token type
+            var tokenTypeClaim = principal.FindFirst("token_type")?.Value;
+            if (tokenTypeClaim != "internal")
+            {
+                _logger.LogWarning("SignalR token validation failed: Invalid token_type claim");
+                return null;
+            }
+
+            return new SignalRTokenClaims
+            {
+                UserId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                    ?? principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                    ?? "",
+                TenantId = principal.FindFirst("tenant_id")?.Value ?? "",
+                WorkspaceId = principal.FindFirst("workspace_id")?.Value ?? "default",
+                Role = principal.FindFirst("role")?.Value ?? ""
+            };
+        }
+        catch (SecurityTokenException ex)
+        {
+            _logger.LogDebug(ex, "SignalR internal token validation failed");
+            return null;
+        }
+    }
+
+    private sealed class SignalRTokenClaims
+    {
+        public required string TenantId { get; init; }
+        public required string UserId { get; init; }
+        public string WorkspaceId { get; init; } = "default";
+        public required string Role { get; init; }
     }
 }

@@ -52,6 +52,18 @@
         </div>
     }
 
+    @if (Model.PowerModeRequired)
+    {
+        <div class="mb-6 bg-amber-900/50 border border-amber-500 text-amber-200 px-4 py-3 rounded-lg">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span><strong>Power Mode Required</strong> — This page requires Power Mode access. Contact your administrator or enable Lab Mode in your subscription settings.</span>
+            </div>
+        </div>
+    }
+
     <!-- Stats Overview -->
     <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-8">
         <div class="card">

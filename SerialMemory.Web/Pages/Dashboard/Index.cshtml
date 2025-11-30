@@ -4,6 +4,7 @@
     ViewData["Title"] = "Dashboard";
 }
 
+@Html.AntiForgeryToken()
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
         <h1 class="text-3xl font-bold text-soft-white">Dashboard</h1>
@@ -18,9 +19,8 @@
                 <div>
                     <h2 class="text-xl font-semibold mb-2">Get Started with SerialMemory</h2>
                     <p class="text-indigo-100 mb-4">Follow these steps to integrate memory into your AI agent:</p>
-                    <ol class="list-decimal list-inside space-y-2 text-indigo-100">
-                        <li>Copy your API key below</li>
-                        <li>Configure your MCP client (Claude Desktop, Cursor, etc.)</li>
+                    <ol class="list-decimal list-inside space-y-2 text-indigo-100"> 
+                        <li>Configure your MCP client using your api key (Claude Desktop, Cursor, etc.)</li>
                         <li>Try ingesting and searching memories</li>
                     </ol>
                 </div>
@@ -29,21 +29,10 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
-            </div>
-
-            <div class="mt-6 bg-white/10 rounded-lg p-4">
-                <h3 class="font-semibold mb-2">Your API Key</h3>
-                <div class="flex items-center gap-2">
-                    <code class="flex-1 bg-black/20 px-3 py-2 rounded font-mono text-sm">@Model.ApiKey</code>
-                    <button onclick="copyToClipboard('@Model.ApiKey')" class="bg-white/20 hover:bg-white/30 px-3 py-2 rounded text-sm">
-                        Copy
-                    </button>
-                </div>
-            </div>
-
+            </div>  
             <div class="mt-4 bg-white/10 rounded-lg p-4">
                 <h3 class="font-semibold mb-2">Quick Test (curl)</h3>
-                <pre class="bg-black/20 px-3 py-2 rounded font-mono text-xs overflow-x-auto">curl -X POST @Model.ApiBaseUrl/memory_ingest \
+                <pre class="bg-black/20 px-3 py-2 rounded font-mono text-xs overflow-x-auto">curl -X POST https://api.serialmemory.dev/api/mcp/tools/memory_ingest \
   -H "Authorization: Bearer @Model.ApiKey" \
   -H "Content-Type: application/json" \
   -d '{"content": "Hello, SerialMemory!"}'</pre>
@@ -158,7 +147,6 @@
 @section Scripts {
 <script>
     const apiKey = '@Model.ApiKey';
-    const apiBaseUrl = '@Model.ApiBaseUrl';
 
     function copyToClipboard(text) {
         navigator.clipboard.writeText(text);
@@ -182,24 +170,25 @@
         resultDiv.innerHTML = '<span class="text-graphite">Ingesting...</span>';
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/memory/ingest`, {
+            // Use server-side proxy to avoid CORS and API key issues
+            const response = await fetch('/dashboard?handler=Ingest', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]')?.value || ''
                 },
                 body: JSON.stringify({ content })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                resultDiv.innerHTML = `<span class="text-green-600">Memory ingested! ID: ${data.memoryId}</span>`;
+            const result = await response.json();
+            if (result.success) {
+                const data = result.data;
+                resultDiv.innerHTML = `<span class="text-green-600">Memory ingested! ID: ${data?.id || data?.memoryId || 'Success'}</span>`;
             } else {
-                const error = await response.json();
-                resultDiv.innerHTML = `<span class="text-red-600">Error: ${error.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-600">Error: ${result.error}</span>`;
             }
         } catch (e) {
-            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message}</span>`;
+            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message || 'Network error'}</span>`;
         }
     }
 
@@ -215,30 +204,35 @@
         resultDiv.innerHTML = '<span class="text-graphite">Searching...</span>';
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/memory/search?query=${encodeURIComponent(query)}`, {
+            // Use server-side proxy to avoid CORS and API key issues
+            const response = await fetch('/dashboard?handler=Search', {
+                method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${apiKey}`
-                }
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]')?.value || ''
+                },
+                body: JSON.stringify({ query })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.memories && data.memories.length > 0) {
-                    resultDiv.innerHTML = data.memories.map(m =>
+            const result = await response.json();
+            if (result.success) {
+                const data = result.data;
+                const memories = data?.memories || data?.results || (Array.isArray(data) ? data : []);
+                if (memories.length > 0) {
+                    resultDiv.innerHTML = memories.map(m =>
                         `<div class="p-2 bg-slate/30 rounded mb-2">
                             <div class="text-soft-white">${m.content}</div>
-                            <div class="text-xs text-graphite">Score: ${(m.score * 100).toFixed(1)}%</div>
+                            <div class="text-xs text-graphite">Score: ${((m.score || m.similarity || 0) * 100).toFixed(1)}%</div>
                         </div>`
                     ).join('');
                 } else {
                     resultDiv.innerHTML = '<span class="text-graphite">No memories found</span>';
                 }
             } else {
-                const error = await response.json();
-                resultDiv.innerHTML = `<span class="text-red-600">Error: ${error.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-600">Error: ${result.error}</span>`;
             }
         } catch (e) {
-            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message}</span>`;
+            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message || 'Network error'}</span>`;
         }
     }
 

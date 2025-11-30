@@ -78,17 +78,16 @@ public sealed class ApiKeyAuthenticationHandler(
 
             // Map scopes to role claims for authorization policies
             // API keys with "admin" scope get admin role, otherwise member
+            // NOTE: "reader" role was causing 403 on billing - use "member" as minimum
             if (validationResult.Scopes.Contains("admin"))
             {
                 claims.Add(new Claim("role", "admin"));
             }
-            else if (validationResult.Scopes.Contains("write"))
-            {
-                claims.Add(new Claim("role", "member"));
-            }
             else
             {
-                claims.Add(new Claim("role", "reader"));
+                // All authenticated API key users get at least "member" role
+                // This allows access to billing, usage, and other dashboard features
+                claims.Add(new Claim("role", "member"));
             }
 
             var identity = new ClaimsIdentity(claims, SchemeName);

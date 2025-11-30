@@ -67,19 +67,30 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
 
             if (existingTenant.HasValue)
             {
+                // Update email_verified = TRUE for existing user (the whole point of verification!)
+                await conn.ExecuteAsync(
+                    """
+                    UPDATE tenant_users
+                    SET email_verified = TRUE, email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
+                    WHERE tenant_id = @TenantId AND user_id = @UserId
+                    """,
+                    new { TenantId = existingTenant.Value, UserId = normalizedEmail },
+                    tx);
+
+                await tx.CommitAsync(cancellationToken);
+
                 // Return existing tenant info
-                var existingKey = await GetExistingApiKeyAsync(conn, existingTenant.Value, tx);
-                await tx.RollbackAsync(cancellationToken);
+                var existingKey = await GetExistingApiKeyAsync(conn, existingTenant.Value);
 
                 return new OnboardingResult
                 {
                     Success = true,
                     TenantId = existingTenant.Value,
-                    TenantSlug = await GetTenantSlugAsync(conn, existingTenant.Value, tx) ?? "",
+                    TenantSlug = await GetTenantSlugAsync(conn, existingTenant.Value) ?? "",
                     UserId = normalizedEmail,
                     ApiKeyId = existingKey?.id ?? Guid.Empty,
                     ApiKeyPrefix = existingKey?.key_prefix ?? "",
-                    Error = "Tenant already exists"
+                    Error = null
                 };
             }
 
@@ -504,7 +515,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
     private static async Task<ApiKeyRow?> GetExistingApiKeyAsync(
         NpgsqlConnection conn,
         Guid tenantId,
-        NpgsqlTransaction tx)
+        NpgsqlTransaction? tx = null)
     {
         return await conn.QueryFirstOrDefaultAsync<ApiKeyRow>(
             """
@@ -521,7 +532,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
     private static async Task<string?> GetTenantSlugAsync(
         NpgsqlConnection conn,
         Guid tenantId,
-        NpgsqlTransaction tx)
+        NpgsqlTransaction? tx = null)
     {
         return await conn.QueryFirstOrDefaultAsync<string>(
             "SELECT slug FROM tenants WHERE id = @TenantId",

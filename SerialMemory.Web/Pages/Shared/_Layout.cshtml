@@ -42,6 +42,7 @@
         .btn-outline:hover { background-color: var(--cyan); color: var(--midnight); }
         .glow { box-shadow: 0 0 30px rgba(34, 211, 238, 0.2); }
         .nav-link { color: var(--graphite); transition: color 0.2s ease; }
+        .nav-link:visited { color: var(--graphite); }
         .nav-link:hover { color: var(--soft-white); }
     </style>
     @await RenderSectionAsync("Styles", required: false)
@@ -60,7 +61,6 @@
                             <a href="/dashboard" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Dashboard</a>
                             <a href="/dashboard/memories" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Memories</a>
                             <a href="/dashboard/graph" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Graph</a>
-                            <a href="/dashboard/performance" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Performance</a>
                             <a href="/dashboard/conflicts" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Conflicts</a>
                             <a href="/dashboard/traces" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Traces</a>
                             <a href="/dashboard/mutations" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Mutations</a>
@@ -72,10 +72,15 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                     </svg>
                                 </button>
+                                @{
+                                    var isRootAdmin = User.HasClaim("is_root_admin", "true");
+                                }
                                 <div id="more-dropdown" class="absolute left-0 top-full w-48 bg-navy border border-slate rounded-md shadow-lg hidden z-50">
-                                    @if (AppConfig.IsSelfHosted || AppConfig.PowerModeEnabled)
+                                    @* Power Mode & Performance: only for root admin OR self-hosted mode *@
+                                    @if (isRootAdmin || AppConfig.IsSelfHosted)
                                     {
                                         <a href="/dashboard/power" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Power Mode</a>
+                                        <a href="/dashboard/performance" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Performance</a>
                                     }
                                     <a href="/dashboard/privacy" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Privacy</a>
                                     <a href="/dashboard/timeline" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Timeline</a>
@@ -88,13 +93,15 @@
                                         <a href="/dashboard/usage" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Usage</a>
                                         <a href="/dashboard/billing" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Billing</a>
                                     }
-                                    <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
-                                    @if (User.IsInRole("owner") || User.IsInRole("admin") || User.HasClaim("role", "owner"))
+                                    @* Control Room & Security: only for root admin *@
+                                    @if (isRootAdmin)
                                     {
                                         <div class="border-t border-slate my-1"></div>
+                                        <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
                                         <a href="/dashboard/control-room" class="block px-4 py-2 text-sm text-red-400 hover:bg-slate">Control Room</a>
                                     }
-                                    @if (AppConfig.IsSelfHosted)
+                                    @* Self-Host Admin: only for root admin OR self-hosted mode *@
+                                    @if (isRootAdmin || AppConfig.IsSelfHosted)
                                     {
                                         <div class="border-t border-slate my-1"></div>
                                         <a href="/dashboard/selfhost" class="block px-4 py-2 text-sm text-cyan hover:bg-slate">Self-Host Admin</a>

@@ -5,6 +5,7 @@
 }
 
 @section Styles {
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <style>
         .memory-card {
             background-color: var(--navy);
@@ -20,6 +21,8 @@
         .memory-content {
             color: var(--soft-white);
             line-height: 1.6;
+        }
+        .memory-content.text-only {
             white-space: pre-wrap;
         }
         .memory-meta {
@@ -93,6 +96,91 @@
             margin: 0 auto 1rem;
             opacity: 0.5;
         }
+
+        /* Code block styling */
+        .code-block-wrapper {
+            position: relative;
+            margin: 0.5rem 0;
+        }
+        .code-block-wrapper pre {
+            margin: 0;
+            border-radius: 0.5rem;
+            max-height: 300px;
+            overflow: auto;
+        }
+        .code-block-wrapper.collapsed pre {
+            max-height: 150px;
+            overflow: hidden;
+        }
+        .code-block-wrapper pre code {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .code-block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--slate);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            font-size: 0.7rem;
+            color: var(--graphite);
+        }
+        .code-block-header + pre {
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+        .code-block-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .code-action-btn {
+            background: transparent;
+            border: none;
+            color: var(--graphite);
+            cursor: pointer;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-size: 0.65rem;
+            transition: all 0.2s;
+        }
+        .code-action-btn:hover {
+            background: var(--navy);
+            color: var(--cyan);
+        }
+        .code-action-btn.copied {
+            color: var(--success);
+        }
+        .expand-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: linear-gradient(transparent, var(--navy));
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 0.5rem;
+        }
+        .expand-btn {
+            background: var(--slate);
+            border: 1px solid var(--graphite);
+            color: var(--soft-white);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .expand-btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+        .language-badge {
+            text-transform: uppercase;
+            font-weight: 600;
+        }
     </style>
 }
 
@@ -153,14 +241,208 @@
 </div>
 
 @section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/csharp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
     <script>
         const API_BASE = '@Model.ApiBaseUrl';
         const AUTH_TOKEN = '@Model.AuthToken';
+        const COLLAPSE_THRESHOLD = 10; // Lines before collapsing
 
         let currentMode = 'hybrid';
         let currentQuery = '';
         let currentOffset = 0;
         const PAGE_SIZE = 20;
+        let blockIdCounter = 0;
+
+        // Detect language from content
+        function detectLanguage(content) {
+            if (!content || typeof content !== 'string') return 'text';
+            const trimmed = content.trim();
+
+            // Check for JSON
+            if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+                (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                try {
+                    JSON.parse(trimmed);
+                    return 'json';
+                } catch {}
+            }
+
+            // Check for XML/HTML
+            if (trimmed.startsWith('<') && /^<[a-zA-Z]/.test(trimmed)) {
+                if (trimmed.includes('<!DOCTYPE html') || trimmed.includes('<html')) return 'html';
+                return 'xml';
+            }
+
+            // Check for YAML
+            if (/^\s*[\w-]+\s*:\s*\S/m.test(trimmed) && !trimmed.includes(';') && !trimmed.includes('{')) {
+                return 'yaml';
+            }
+
+            // Check for SQL
+            if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|FROM|WHERE|JOIN|GROUP BY|ORDER BY)\b/i.test(trimmed)) {
+                return 'sql';
+            }
+
+            // Check for C#
+            const csharpIndicators = [
+                'builder.Services', 'IServiceCollection', 'AddScoped', 'AddSingleton', 'AddTransient',
+                'namespace ', 'using System', 'public class ', 'private class ', 'internal class ',
+                'public sealed class ', 'public interface ', 'async Task', '=> ', '.ConfigureAwait(',
+                'var ', 'ILogger<', 'IConfiguration', '[Authorize]', '[HttpGet]', '[HttpPost]',
+                'public record ', 'public enum '
+            ];
+            if (csharpIndicators.some(i => trimmed.includes(i))) return 'csharp';
+
+            // Semicolon-heavy with braces = C-style
+            const semicolonCount = (trimmed.match(/;/g) || []).length;
+            const lineCount = trimmed.split('\n').length;
+            if (lineCount > 2 && semicolonCount >= lineCount / 2 && trimmed.includes('{') && trimmed.includes('}')) {
+                return 'csharp';
+            }
+
+            // Check for JavaScript/TypeScript
+            if (/\b(function|const|let|var|=>|import|export|require\(|module\.exports)\b/.test(trimmed)) {
+                return 'javascript';
+            }
+
+            // Check for Python
+            if (/(^def |^class |^import |^from .+ import|if __name__|print\(|self\.|async def )/m.test(trimmed)) {
+                return 'python';
+            }
+
+            // Check for Bash
+            if (/(^#!\/bin\/|^\s*\$\s+|^echo |^export |^source |^alias |\|\s*grep|\|\s*awk|\|\s*sed)/m.test(trimmed)) {
+                return 'bash';
+            }
+
+            return 'text';
+        }
+
+        // Format JSON with pretty-printing
+        function formatJson(json) {
+            try {
+                return JSON.stringify(JSON.parse(json), null, 2);
+            } catch {
+                return json;
+            }
+        }
+
+        // Format memory content with code detection
+        function formatMemoryContent(content) {
+            if (!content) return { html: '', isCode: false };
+
+            // If already has fenced code blocks, parse and render them
+            if (content.includes('```')) {
+                return { html: renderMarkdownCodeBlocks(content), isCode: true };
+            }
+
+            const language = detectLanguage(content);
+
+            if (language === 'text') {
+                return { html: escapeHtml(content), isCode: false };
+            }
+
+            // Format JSON if detected
+            let code = content;
+            if (language === 'json') {
+                code = formatJson(content);
+            }
+
+            return { html: renderCodeBlock(code, language), isCode: true };
+        }
+
+        // Render markdown-style code blocks
+        function renderMarkdownCodeBlocks(content) {
+            const parts = [];
+            let lastIndex = 0;
+            const regex = /```(\w*)\n?([\s\S]*?)```/g;
+            let match;
+
+            while ((match = regex.exec(content)) !== null) {
+                // Add text before code block
+                if (match.index > lastIndex) {
+                    parts.push(escapeHtml(content.slice(lastIndex, match.index)));
+                }
+
+                const lang = match[1] || detectLanguage(match[2]);
+                parts.push(renderCodeBlock(match[2], lang));
+                lastIndex = match.index + match[0].length;
+            }
+
+            // Add remaining text
+            if (lastIndex < content.length) {
+                parts.push(escapeHtml(content.slice(lastIndex)));
+            }
+
+            return parts.join('');
+        }
+
+        // Render a single code block with header and actions
+        function renderCodeBlock(code, language) {
+            const blockId = `code-block-${++blockIdCounter}`;
+            const lineCount = code.split('\n').length;
+            const needsCollapse = lineCount > COLLAPSE_THRESHOLD;
+            const langDisplay = language === 'csharp' ? 'C#' : language.toUpperCase();
+
+            const escapedCode = escapeHtml(code.trim());
+            const highlightedCode = language !== 'text'
+                ? hljs.highlight(code.trim(), { language: language === 'csharp' ? 'csharp' : language }).value
+                : escapedCode;
+
+            return `
+                <div class="code-block-wrapper ${needsCollapse ? 'collapsed' : ''}" id="${blockId}" data-code="${encodeURIComponent(code.trim())}">
+                    <div class="code-block-header">
+                        <span class="language-badge">${langDisplay}</span>
+                        <div class="code-block-actions">
+                            <button class="code-action-btn" onclick="copyCode('${blockId}')" title="Copy code">Copy</button>
+                            ${needsCollapse ? `<button class="code-action-btn" onclick="toggleExpand('${blockId}')" title="Expand/collapse">Expand</button>` : ''}
+                        </div>
+                    </div>
+                    <pre><code class="hljs language-${language}">${highlightedCode}</code></pre>
+                    ${needsCollapse ? `
+                        <div class="expand-overlay">
+                            <button class="expand-btn" onclick="toggleExpand('${blockId}')">Show more (${lineCount} lines)</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Copy code to clipboard
+        async function copyCode(blockId) {
+            const block = document.getElementById(blockId);
+            const code = decodeURIComponent(block.dataset.code);
+            await navigator.clipboard.writeText(code);
+
+            const btn = block.querySelector('.code-action-btn');
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = 'Copy';
+                btn.classList.remove('copied');
+            }, 2000);
+        }
+
+        // Toggle expand/collapse
+        function toggleExpand(blockId) {
+            const block = document.getElementById(blockId);
+            const isCollapsed = block.classList.contains('collapsed');
+            block.classList.toggle('collapsed');
+
+            const overlay = block.querySelector('.expand-overlay');
+            const expandBtn = block.querySelector('.code-block-actions .code-action-btn:last-child');
+
+            if (isCollapsed) {
+                if (overlay) overlay.style.display = 'none';
+                if (expandBtn) expandBtn.textContent = 'Collapse';
+            } else {
+                if (overlay) overlay.style.display = 'flex';
+                if (expandBtn) expandBtn.textContent = 'Expand';
+            }
+        }
 
         // Format date
         function formatDate(dateStr) {
@@ -178,10 +460,11 @@
         function renderMemoryCard(memory) {
             const similarity = memory.similarity || memory.score || 0;
             const entities = memory.entities || [];
+            const formatted = formatMemoryContent(memory.content);
 
             return `
                 <div class="memory-card">
-                    <div class="memory-content mb-3">${escapeHtml(memory.content)}</div>
+                    <div class="memory-content mb-3 ${formatted.isCode ? '' : 'text-only'}">${formatted.html}</div>
                     <div class="flex justify-between items-end">
                         <div>
                             <div class="memory-meta mb-2">${formatDate(memory.createdAt)}</div>

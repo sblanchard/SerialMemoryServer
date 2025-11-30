@@ -19,6 +19,9 @@ public sealed class ReasoningModel : PageModel
 
     public string ApiBaseUrl => _appConfig.ApiBaseUrl;
 
+    // SignalR access token (from InternalTokenMiddleware)
+    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
+
     [BindProperty(SupportsGet = true)]
     public string? Project { get; set; }
 
@@ -65,7 +68,7 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.GetAsync("/api/reasoning/runs?limit=20");
             if (response.IsSuccessStatusCode)
             {
@@ -97,7 +100,7 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             var response = await client.GetAsync("/api/memories/recent?limit=10");
             if (response.IsSuccessStatusCode)
@@ -126,7 +129,7 @@ public sealed class ReasoningModel : PageModel
         try
         {
             IsLoading = true;
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             // Get recent traces to find the latest one with findings
             var tracesResponse = await client.GetAsync("/api/reasoning/traces?limit=10");

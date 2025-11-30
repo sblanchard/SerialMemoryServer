@@ -116,6 +116,49 @@ public sealed class ApiKeysModel : PageModel
         return Page();
     }
 
+    public async Task<IActionResult> OnPostRotateAsync(Guid keyId)
+    {
+        try
+        {
+            var client = _apiClient.CreateClient("DashboardApi");
+            var response = await client.PostAsync($"/api-keys/{keyId}/rotate", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<RotateApiKeyResult>();
+                NewApiKey = result?.Key;
+                SuccessMessage = "API key rotated successfully. The old key has been revoked.";
+            }
+            else
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? error?.Error ?? $"Failed to rotate API key ({response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to rotate API key: {content}";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = $"Failed to rotate API key ({response.StatusCode})";
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            ErrorMessage = $"Could not connect to the server: {ex.Message}";
+        }
+
+        await LoadApiKeysAsync();
+        return Page();
+    }
+
     private async Task LoadApiKeysAsync()
     {
         try
@@ -151,6 +194,13 @@ public sealed class ApiKeysModel : PageModel
     {
         public Guid Id { get; init; }
         public string Key { get; init; } = "";
+    }
+
+    private sealed class RotateApiKeyResult
+    {
+        public Guid Id { get; init; }
+        public string Key { get; init; } = "";
+        public string? Message { get; init; }
     }
 
     private sealed class ErrorResponse

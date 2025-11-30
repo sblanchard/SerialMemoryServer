@@ -31,10 +31,9 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/resolve", new
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsJsonAsync($"/api/power/conflicts/{conflictId}/resolve", new
             {
-                conflictId,
                 resolution,
                 winnerId
             });
@@ -56,8 +55,8 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/keep-winner", new { conflictId, winnerId });
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsJsonAsync($"/api/power/conflicts/{conflictId}/resolve", new { winnerId, resolution = "keep_winner" });
             SuccessMessage = response.IsSuccessStatusCode ? "Winner kept successfully" : "Failed to keep winner";
         }
         catch (HttpRequestException ex)
@@ -73,8 +72,8 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/merge-both", new { conflictId, mergedContent });
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsJsonAsync($"/api/power/conflicts/{conflictId}/resolve", new { resolution = "merge", mergedContent });
             SuccessMessage = response.IsSuccessStatusCode ? "Memories merged successfully" : "Failed to merge memories";
         }
         catch (HttpRequestException ex)
@@ -90,8 +89,8 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/discard-both", new { conflictId });
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsJsonAsync($"/api/power/conflicts/{conflictId}/resolve", new { resolution = "discard" });
             SuccessMessage = response.IsSuccessStatusCode ? "Both memories discarded" : "Failed to discard memories";
         }
         catch (HttpRequestException ex)
@@ -107,8 +106,9 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/dismiss-hallucination", new { memoryId });
+            var client = _apiClient.CreateClient("Api");
+            // Mark as dismissed by flagging with low priority
+            var response = await client.PostAsync($"/api/mind/hallucinations/flag/{memoryId}?action=dismiss", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Hallucination dismissed" : "Failed to dismiss hallucination";
         }
         catch (HttpRequestException ex)
@@ -124,8 +124,8 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/conflicts/flag-hallucination", new { memoryId });
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.PostAsync($"/api/mind/hallucinations/flag/{memoryId}", null);
             SuccessMessage = response.IsSuccessStatusCode ? "Memory flagged as hallucination" : "Failed to flag memory";
         }
         catch (HttpRequestException ex)
@@ -141,8 +141,9 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsync("/api/conflicts/run-detection", null);
+            var client = _apiClient.CreateClient("Api");
+            // Use the security scan endpoint to detect conflicts/contradictions
+            var response = await client.PostAsJsonAsync("/api/security/scan", new { scanType = "full" });
             SuccessMessage = response.IsSuccessStatusCode ? "Detection scan started" : "Failed to start detection";
         }
         catch (HttpRequestException ex)
@@ -158,16 +159,26 @@ public sealed class ConflictsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
-            var conflictsTask = client.GetFromJsonAsync<ConflictsResponse>("/api/conflicts/list?limit=50");
-            var contradictionsTask = client.GetFromJsonAsync<ContradictionsResponse>("/api/conflicts/contradictions?limit=50");
-            var hallucinationsTask = client.GetFromJsonAsync<HallucinationsResponse>("/api/conflicts/hallucinations?limit=50");
-            var statsTask = client.GetFromJsonAsync<ConflictStats>("/api/conflicts/stats");
+            // Use /api/mind/* endpoints available to all authenticated users
+            var contradictionsTask = client.GetFromJsonAsync<ContradictionsResponse>("/api/mind/contradictions/unresolved?limit=50");
+            var hallucinationsTask = client.GetFromJsonAsync<HallucinationsResponse>("/api/mind/hallucinations/list?limit=50");
+            var statsTask = LoadStatsAsync(client);
 
-            await Task.WhenAll(conflictsTask, contradictionsTask, hallucinationsTask, statsTask);
+            // Try power conflicts (gracefully handle 403)
+            ConflictsResponse? conflictsResult = null;
+            try
+            {
+                var resp = await client.GetAsync("/api/power/conflicts?limit=50");
+                if (resp.IsSuccessStatusCode)
+                    conflictsResult = await resp.Content.ReadFromJsonAsync<ConflictsResponse>();
+            }
+            catch { /* Power mode not available */ }
 
-            Conflicts = (await conflictsTask)?.Items ?? [];
+            await Task.WhenAll(contradictionsTask, hallucinationsTask, statsTask);
+
+            Conflicts = conflictsResult?.Items ?? [];
             Contradictions = (await contradictionsTask)?.Items ?? [];
             Hallucinations = (await hallucinationsTask)?.Items ?? [];
             Stats = await statsTask;
@@ -178,9 +189,32 @@ public sealed class ConflictsModel : PageModel
         }
     }
 
+    private static async Task<ConflictStats> LoadStatsAsync(HttpClient client)
+    {
+        // Aggregate stats from multiple endpoints
+        try
+        {
+            var contradictions = await client.GetFromJsonAsync<ContradictionsStatsResponse>("/api/mind/contradictions");
+            var hallucinations = await client.GetFromJsonAsync<HallucinationsStatsResponse>("/api/mind/hallucinations");
+
+            return new ConflictStats
+            {
+                TotalContradictions = contradictions?.TotalCount ?? 0,
+                PotentialHallucinations = hallucinations?.TotalCount ?? 0,
+                UnresolvedConflicts = contradictions?.UnresolvedCount ?? 0
+            };
+        }
+        catch
+        {
+            return new ConflictStats();
+        }
+    }
+
     public sealed class ConflictsResponse { public IReadOnlyList<ConflictItem>? Items { get; init; } }
     public sealed class ContradictionsResponse { public IReadOnlyList<ContradictionItem>? Items { get; init; } }
     public sealed class HallucinationsResponse { public IReadOnlyList<HallucinationItem>? Items { get; init; } }
+    public sealed class ContradictionsStatsResponse { public int TotalCount { get; init; } public int UnresolvedCount { get; init; } }
+    public sealed class HallucinationsStatsResponse { public int TotalCount { get; init; } }
 
     public sealed class ConflictItem
     {

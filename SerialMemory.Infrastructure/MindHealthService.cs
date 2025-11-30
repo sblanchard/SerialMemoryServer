@@ -8,11 +8,16 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL-backed mind health tracking service.
 /// Persists confidence drift, hallucination events, and contradiction frequency.
+/// All queries are tenant-scoped for multi-tenant isolation.
 /// </summary>
-public sealed class PostgresMindHealthService(string connectionString, ILogger<PostgresMindHealthService> logger)
+public sealed class PostgresMindHealthService(
+    string connectionString,
+    ITenantContext tenantContext,
+    ILogger<PostgresMindHealthService> logger)
     : IMindHealthService
 {
     private readonly ILogger<PostgresMindHealthService> _logger = logger;
+    private readonly Guid _tenantId = Guid.Parse(tenantContext.TenantId);
 
     // ==========================================
     // CONFIDENCE DRIFT
@@ -23,12 +28,13 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_confidence_observations
-                (id, operation_type, predicted_confidence, actual_accuracy, drift, timestamp, memory_id, context)
+                (id, tenant_id, operation_type, predicted_confidence, actual_accuracy, drift, timestamp, memory_id, context)
             VALUES
-                (@Id, @OperationType, @PredictedConfidence, @ActualAccuracy, @Drift, @Timestamp, @MemoryId, @Context)",
+                (@Id, @TenantId, @OperationType, @PredictedConfidence, @ActualAccuracy, @Drift, @Timestamp, @MemoryId, @Context)",
             new
             {
                 observation.Id,
+                TenantId = _tenantId,
                 observation.OperationType,
                 observation.PredictedConfidence,
                 observation.ActualAccuracy,
@@ -47,9 +53,9 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         var observations = await conn.QueryAsync<ConfidenceObservationRow>(@"
             SELECT operation_type, predicted_confidence, actual_accuracy, drift, timestamp
             FROM mind_confidence_observations
-            WHERE timestamp >= @Cutoff AND actual_accuracy IS NOT NULL
+            WHERE tenant_id = @TenantId AND timestamp >= @Cutoff AND actual_accuracy IS NOT NULL
             ORDER BY timestamp DESC",
-            new { Cutoff = cutoff });
+            new { TenantId = _tenantId, Cutoff = cutoff });
 
         var list = observations.ToList();
         if (list.Count == 0)
@@ -103,12 +109,13 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
                 AVG(drift) as drift,
                 COUNT(*) as observations
             FROM mind_confidence_observations
-            WHERE operation_type = @OperationType
+            WHERE tenant_id = @TenantId
+              AND operation_type = @OperationType
               AND timestamp >= @Cutoff
               AND actual_accuracy IS NOT NULL
             GROUP BY DATE(timestamp)
             ORDER BY DATE(timestamp)",
-            new { OperationType = operationType, Cutoff = cutoff });
+            new { TenantId = _tenantId, OperationType = operationType, Cutoff = cutoff });
 
         var history = dailyDrift.ToList();
         var currentDrift = history.Count > 0 ? history.Last().Drift : 0;
@@ -140,12 +147,13 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_hallucination_events
-                (id, memory_id, type, severity, description, evidence, ground_truth, detected_at, source, resolved, resolution)
+                (id, tenant_id, memory_id, type, severity, description, evidence, ground_truth, detected_at, source, resolved, resolution)
             VALUES
-                (@Id, @MemoryId, @Type, @Severity, @Description, @Evidence, @GroundTruth, @DetectedAt, @Source, @Resolved, @Resolution)",
+                (@Id, @TenantId, @MemoryId, @Type, @Severity, @Description, @Evidence, @GroundTruth, @DetectedAt, @Source, @Resolved, @Resolution)",
             new
             {
                 evt.Id,
+                TenantId = _tenantId,
                 evt.MemoryId,
                 Type = evt.Type.ToString(),
                 evt.Severity,
@@ -167,16 +175,16 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         var events = await conn.QueryAsync<HallucinationEventRow>(@"
             SELECT type, severity, source, resolved, detected_at
             FROM mind_hallucination_events
-            WHERE detected_at >= @Cutoff
+            WHERE tenant_id = @TenantId AND detected_at >= @Cutoff
             ORDER BY detected_at DESC",
-            new { Cutoff = cutoff });
+            new { TenantId = _tenantId, Cutoff = cutoff });
 
         var list = events.ToList();
 
-        // Get total memory count for rate calculation
+        // Get total memory count for rate calculation (tenant-scoped)
         var totalMemories = await conn.ExecuteScalarAsync<int>(@"
-            SELECT COUNT(*) FROM memories WHERE created_at >= @Cutoff",
-            new { Cutoff = cutoff });
+            SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND created_at >= @Cutoff",
+            new { TenantId = _tenantId, Cutoff = cutoff });
 
         var rate = totalMemories > 0 ? (float)list.Count / totalMemories : 0;
 
@@ -224,14 +232,14 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
 
         await RecordHallucinationAsync(evt, ct);
 
-        // Also update memory confidence
+        // Also update memory confidence (tenant-scoped for safety)
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             UPDATE memories
             SET confidence = confidence * (1 - @Severity),
                 metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('hallucination_flagged', true)
-            WHERE id = @MemoryId",
-            new { MemoryId = memoryId, Severity = severity });
+            WHERE id = @MemoryId AND tenant_id = @TenantId",
+            new { MemoryId = memoryId, TenantId = _tenantId, Severity = severity });
     }
 
     public async Task<IReadOnlyList<HallucinationEvent>> GetRecentHallucinationEventsAsync(int limit = 20, CancellationToken ct = default)
@@ -242,11 +250,11 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
                    h.detected_at, h.source, h.resolved, h.resolution,
                    COALESCE(SUBSTRING(m.content, 1, 200), '') as memory_content
             FROM mind_hallucination_events h
-            LEFT JOIN memories m ON h.memory_id = m.id
-            WHERE h.resolved = false
+            LEFT JOIN memories m ON h.memory_id = m.id AND m.tenant_id = @TenantId
+            WHERE h.tenant_id = @TenantId AND h.resolved = false
             ORDER BY h.severity DESC, h.detected_at DESC
             LIMIT @Limit",
-            new { Limit = limit });
+            new { TenantId = _tenantId, Limit = limit });
 
         return rows.Select(r => new HallucinationEvent
         {
@@ -289,12 +297,13 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.ExecuteAsync(@"
             INSERT INTO mind_contradiction_events
-                (id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status, resolution_strategy, resolution_rationale, winner_id, merged_into_id, resolved_at)
+                (id, tenant_id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status, resolution_strategy, resolution_rationale, winner_id, merged_into_id, resolved_at)
             VALUES
-                (@Id, @MemoryA, @MemoryB, @Type, @Severity, @Description, @SimilarityScore, @DetectedAt, @Status, @ResolutionStrategy, @ResolutionRationale, @WinnerId, @MergedIntoId, @ResolvedAt)",
+                (@Id, @TenantId, @MemoryA, @MemoryB, @Type, @Severity, @Description, @SimilarityScore, @DetectedAt, @Status, @ResolutionStrategy, @ResolutionRationale, @WinnerId, @MergedIntoId, @ResolvedAt)",
             new
             {
                 evt.Id,
+                TenantId = _tenantId,
                 evt.MemoryA,
                 evt.MemoryB,
                 Type = evt.Type.ToString(),
@@ -319,15 +328,15 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         var events = await conn.QueryAsync<ContradictionEventRow>(@"
             SELECT type, severity, status, detected_at, resolved_at
             FROM mind_contradiction_events
-            WHERE detected_at >= @Cutoff
+            WHERE tenant_id = @TenantId AND detected_at >= @Cutoff
             ORDER BY detected_at DESC",
-            new { Cutoff = cutoff });
+            new { TenantId = _tenantId, Cutoff = cutoff });
 
         var list = events.ToList();
 
         var totalMemories = await conn.ExecuteScalarAsync<int>(@"
-            SELECT COUNT(*) FROM memories WHERE created_at >= @Cutoff",
-            new { Cutoff = cutoff });
+            SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND created_at >= @Cutoff",
+            new { TenantId = _tenantId, Cutoff = cutoff });
 
         var rate = totalMemories > 0 ? (float)list.Count / totalMemories : 0;
         var resolved = list.Where(e => e.Status == "Resolved").ToList();
@@ -374,10 +383,10 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         var rows = await conn.QueryAsync<ContradictionEventRow>(@"
             SELECT id, memory_a, memory_b, type, severity, description, similarity_score, detected_at, status
             FROM mind_contradiction_events
-            WHERE status != 'Resolved'
+            WHERE tenant_id = @TenantId AND status != 'Resolved'
             ORDER BY severity DESC, detected_at DESC
             LIMIT @Limit",
-            new { Limit = limit });
+            new { TenantId = _tenantId, Limit = limit });
 
         return rows.Select(r => new ContradictionEvent
         {
@@ -403,8 +412,42 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
         var hallucinationAnalysis = await GetHallucinationAnalysisAsync(7, ct);
         var contradictionAnalysis = await GetContradictionAnalysisAsync(7, ct);
 
+        // Check if user has any data at all (tenant-scoped)
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        // Set RLS context for tenant isolation (SET doesn't support parameters, but GUID is safe)
+        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+
+        // Debug: Log connection string database name and tenant ID before query
+        _logger.LogInformation("MIND_HEALTH_QUERY: About to query with TenantId={TenantId} (type={Type}), ConnectionString={ConnDb}",
+            _tenantId, _tenantId.GetType().Name, connectionString.Contains("Database=") ? connectionString.Split("Database=")[1].Split(";")[0] : "unknown");
+
+        // Query with RLS context set (will filter by tenant automatically)
+        var totalMemories = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM memories");
+        _logger.LogInformation("MIND_HEALTH_CHECK: TenantId={TenantId}, TotalMemories={TotalMemories}",
+            _tenantId, totalMemories);
+
+        // For new users with no memories, return zeroes instead of artificial scores
+        if (totalMemories == 0)
+        {
+            return new MindHealthSnapshot
+            {
+                OverallScore = 0,
+                Status = HealthStatus.NoData,
+                ConfidenceCalibration = 0,
+                HallucinationRate = 0,
+                ContradictionRate = 0,
+                ActiveIssues = 0,
+                Alerts = []
+            };
+        }
+
         // Calculate component scores (0-1, higher is better)
-        var confidenceScore = confidenceAnalysis.CalibrationScore;
+        // Use 1.0 as default calibration score when no observations (perfect until proven otherwise)
+        var confidenceScore = confidenceAnalysis.TotalObservations > 0
+            ? confidenceAnalysis.CalibrationScore
+            : 1.0f;
         var hallucinationScore = 1.0f - Math.Min(hallucinationAnalysis.HallucinationRate * 10, 1.0f);
         var contradictionScore = 1.0f - Math.Min(contradictionAnalysis.ContradictionRate * 10, 1.0f);
 
@@ -498,9 +541,9 @@ public sealed class PostgresMindHealthService(string connectionString, ILogger<P
                 contradiction_score,
                 observations
             FROM mind_daily_scores
-            WHERE date >= @Cutoff
+            WHERE tenant_id = @TenantId AND date >= @Cutoff
             ORDER BY date",
-            new { Cutoff = cutoff.Date });
+            new { TenantId = _tenantId, Cutoff = cutoff.Date });
 
         return scores.Select(r => new DailyHealthScore
         {

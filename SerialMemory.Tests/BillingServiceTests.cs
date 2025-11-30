@@ -14,7 +14,7 @@ namespace SerialMemory.Tests;
 public sealed class BillingServiceTests
 {
     private readonly string _connectionString = Environment.GetEnvironmentVariable("TEST_CONNECTION_STRING")
-                                                ?? "Host=localhost;Port=5432;Database=contextdb_test;Username=postgres;Password=postgres";
+                                                ?? "Host=localhost;Port=5435;Database=contextdb;Username=postgres;Password=postgres";
     private readonly Mock<ILogger<StripeBillingService>> _loggerMock = new();
     private readonly StripeConfig _mockConfig = new()
     {

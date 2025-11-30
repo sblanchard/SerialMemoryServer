@@ -8,12 +8,12 @@
     <div class="mb-8 flex justify-between items-center">
         <div>
             <h1 class="text-3xl font-bold text-soft-white">Privacy & Integrity</h1>
-            <p class="mt-2 text-graphite">Hash verification, audit trails, and cryptographic proofs.</p>
+            <p class="mt-2 text-graphite">Tamper-evident hash verification, cryptographic proofs, and audit trails.</p>
         </div>
         <form method="post" asp-page-handler="RunIntegrityCheck">
             @Html.AntiForgeryToken()
             <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium">
-                Run Full Integrity Check
+                Run Full Chain Verification
             </button>
         </form>
     </div>
@@ -32,27 +32,72 @@
         </div>
     }
 
+    <!-- Chain Verification Result -->
+    @if (Model.LastChainVerification != null)
+    {
+        <div class="mb-6 card @(Model.LastChainVerification.IsValid ? "border-green-500" : "border-red-500") border">
+            <div class="flex items-center gap-3 mb-4">
+                @if (Model.LastChainVerification.IsValid)
+                {
+                    <svg class="w-8 h-8 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="text-xl font-semibold text-green-400">Chain Integrity Verified</span>
+                }
+                else
+                {
+                    <svg class="w-8 h-8 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="text-xl font-semibold text-red-400">Chain Integrity Issues Detected</span>
+                }
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                <div>
+                    <span class="text-graphite">Verified</span>
+                    <div class="text-lg font-semibold text-green-400">@Model.LastChainVerification.VerifiedCount</div>
+                </div>
+                <div>
+                    <span class="text-graphite">Invalid</span>
+                    <div class="text-lg font-semibold @(Model.LastChainVerification.InvalidCount > 0 ? "text-red-400" : "text-soft-white")">@Model.LastChainVerification.InvalidCount</div>
+                </div>
+                <div>
+                    <span class="text-graphite">Orphaned</span>
+                    <div class="text-lg font-semibold @(Model.LastChainVerification.OrphanCount > 0 ? "text-yellow-400" : "text-soft-white")">@Model.LastChainVerification.OrphanCount</div>
+                </div>
+                <div>
+                    <span class="text-graphite">Pending</span>
+                    <div class="text-lg font-semibold text-soft-white">@Model.LastChainVerification.PendingCount</div>
+                </div>
+                <div>
+                    <span class="text-graphite">Duration</span>
+                    <div class="text-lg font-semibold text-soft-white">@((Model.LastChainVerification.CompletedAt - Model.LastChainVerification.StartedAt).TotalSeconds.ToString("F2"))s</div>
+                </div>
+            </div>
+        </div>
+    }
+
     <!-- Stats Overview -->
     <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
         <div class="card">
             <div class="text-sm font-medium text-graphite">Total Memories</div>
-            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.TotalMemories.ToString("N0") ?? "—")</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.TotalMemories.ToString("N0") ?? "0")</div>
         </div>
         <div class="card">
             <div class="text-sm font-medium text-graphite">Verified</div>
-            <div class="mt-1 text-2xl font-semibold text-green-400">@(Model.Stats?.VerifiedCount.ToString("N0") ?? "—")</div>
+            <div class="mt-1 text-2xl font-semibold text-green-400">@(Model.Stats?.VerifiedCount.ToString("N0") ?? "0")</div>
         </div>
         <div class="card">
             <div class="text-sm font-medium text-graphite">Corrupted</div>
             <div class="mt-1 text-2xl font-semibold text-red-400">@(Model.Stats?.CorruptedCount ?? 0)</div>
         </div>
         <div class="card">
-            <div class="text-sm font-medium text-graphite">Unverified</div>
-            <div class="mt-1 text-2xl font-semibold text-yellow-400">@(Model.Stats?.UnverifiedCount.ToString("N0") ?? "—")</div>
+            <div class="text-sm font-medium text-graphite">Pending</div>
+            <div class="mt-1 text-2xl font-semibold text-yellow-400">@(Model.Stats?.UnverifiedCount.ToString("N0") ?? "0")</div>
         </div>
         <div class="card">
             <div class="text-sm font-medium text-graphite">Integrity Rate</div>
-            <div class="mt-1 text-2xl font-semibold text-cyan">@((Model.Stats?.IntegrityRate * 100 ?? 0).ToString("F1"))%</div>
+            <div class="mt-1 text-2xl font-semibold text-cyan">@((Model.Stats?.IntegrityRate * 100 ?? 100).ToString("F1"))%</div>
         </div>
         <div class="card">
             <div class="text-sm font-medium text-graphite">Last Full Check</div>
@@ -60,7 +105,7 @@
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <!-- Verify Memory -->
         <div class="card">
             <h3 class="text-lg font-semibold text-soft-white mb-4">Verify Memory Integrity</h3>
@@ -97,8 +142,14 @@
                     </div>
                     <div class="text-xs font-mono text-graphite space-y-1">
                         <div>Memory: @Model.LastVerification.MemoryId</div>
-                        <div>Stored: @Model.LastVerification.StoredHash</div>
-                        <div>Computed: @Model.LastVerification.ComputedHash</div>
+                        @if (!string.IsNullOrEmpty(Model.LastVerification.StoredHash))
+                        {
+                            <div>Stored: @Model.LastVerification.StoredHash[..Math.Min(32, Model.LastVerification.StoredHash.Length)]...</div>
+                        }
+                        @if (!string.IsNullOrEmpty(Model.LastVerification.ComputedHash))
+                        {
+                            <div>Computed: @Model.LastVerification.ComputedHash[..Math.Min(32, Model.LastVerification.ComputedHash.Length)]...</div>
+                        }
                         @if (!string.IsNullOrEmpty(Model.LastVerification.DiscrepancyReason))
                         {
                             <div class="text-red-300 mt-2">Reason: @Model.LastVerification.DiscrepancyReason</div>
@@ -110,7 +161,7 @@
 
         <!-- Generate Proof -->
         <div class="card">
-            <h3 class="text-lg font-semibold text-soft-white mb-4">Generate Cryptographic Proof</h3>
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Get Cryptographic Proof</h3>
             <form method="post" asp-page-handler="GenerateProof">
                 @Html.AntiForgeryToken()
                 <div class="mb-4">
@@ -119,120 +170,122 @@
                            class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm font-mono focus:outline-none focus:border-electric">
                 </div>
                 <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium">
-                    Generate Proof
+                    Get Proof Bundle
                 </button>
             </form>
 
             @if (!string.IsNullOrEmpty(Model.GeneratedProof))
             {
                 <div class="mt-4">
-                    <div class="text-xs text-graphite mb-2">Generated Proof (SHA-256 + Merkle)</div>
-                    <pre class="bg-slate/30 rounded-md p-3 text-xs font-mono text-soft-white overflow-x-auto">@Model.GeneratedProof</pre>
-                    <button onclick="navigator.clipboard.writeText(`@Model.GeneratedProof`)" class="mt-2 text-xs text-electric hover:underline">
+                    <div class="text-xs text-graphite mb-2">Proof Bundle (SHA-256 Chain)</div>
+                    <pre class="bg-slate/30 rounded-md p-3 text-xs font-mono text-soft-white overflow-x-auto max-h-48 overflow-y-auto">@Model.GeneratedProof</pre>
+                    <button onclick="navigator.clipboard.writeText(document.querySelector('pre').innerText)" class="mt-2 text-xs text-electric hover:underline">
                         Copy to clipboard
                     </button>
                 </div>
             }
         </div>
-    </div>
 
-    <!-- Integrity Check Results -->
-    <div class="card mb-6">
-        <h3 class="text-lg font-semibold text-soft-white mb-4">Recent Integrity Check Results</h3>
-        @if (Model.IntegrityResults.Any(r => !r.IsValid))
-        {
-            <div class="mb-4 bg-red-900/30 border border-red-500 rounded-md p-3">
-                <span class="text-red-400 font-medium">@Model.IntegrityResults.Count(r => !r.IsValid) corrupted memories detected</span>
-            </div>
-        }
-        <div class="overflow-x-auto">
-            <table class="min-w-full">
-                <thead>
-                    <tr class="border-b border-slate">
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Memory</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Status</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Stored Hash</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Computed Hash</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Checked</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate">
-                    @foreach (var result in Model.IntegrityResults)
-                    {
-                        <tr class="hover:bg-slate/30 @(!result.IsValid ? "bg-red-900/20" : "")">
-                            <td class="px-3 py-2 text-sm font-mono text-soft-white">@result.MemoryId.ToString()[..8]...</td>
-                            <td class="px-3 py-2">
-                                @if (result.IsValid)
-                                {
-                                    <span class="px-2 py-0.5 text-xs rounded bg-green-600 text-white">Valid</span>
-                                }
-                                else
-                                {
-                                    <span class="px-2 py-0.5 text-xs rounded bg-red-600 text-white">Corrupted</span>
-                                }
-                            </td>
-                            <td class="px-3 py-2 text-xs font-mono text-graphite">@result.StoredHash[..16]...</td>
-                            <td class="px-3 py-2 text-xs font-mono @(result.IsValid ? "text-graphite" : "text-red-400")">@result.ComputedHash[..16]...</td>
-                            <td class="px-3 py-2 text-sm text-graphite">@result.CheckedAt.ToString("HH:mm:ss")</td>
-                            <td class="px-3 py-2">
-                                @if (!result.IsValid)
-                                {
-                                    <form method="post" asp-page-handler="RepairHash" class="inline" onsubmit="return confirm('Repair this hash? This will update the stored hash to match current content.');">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="memoryId" value="@result.MemoryId" />
-                                        <button type="submit" class="text-xs text-electric hover:underline">Repair</button>
-                                    </form>
-                                }
-                            </td>
-                        </tr>
-                    }
-                    @if (Model.IntegrityResults.Count == 0)
-                    {
-                        <tr>
-                            <td colspan="6" class="px-3 py-4 text-center text-graphite">No recent integrity checks. Run a full check to populate results.</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+        <!-- Privacy Settings -->
+        <div class="card">
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Privacy Settings</h3>
+            <form method="post" asp-page-handler="UpdateSettings">
+                @Html.AntiForgeryToken()
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <label class="text-sm text-graphite">Privacy Mode</label>
+                        <input type="checkbox" name="enablePrivacyMode" value="true" @(Model.Settings?.EnablePrivacyMode == true ? "checked" : "")
+                               class="w-5 h-5 rounded border-slate bg-slate focus:ring-electric">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <label class="text-sm text-graphite">Hash Verification</label>
+                        <input type="checkbox" name="enableHashVerification" value="true" @(Model.Settings?.EnableHashVerification != false ? "checked" : "")
+                               class="w-5 h-5 rounded border-slate bg-slate focus:ring-electric">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <label class="text-sm text-graphite">Audit Logs</label>
+                        <input type="checkbox" name="enableAuditLogs" value="true" @(Model.Settings?.EnableAuditLogs != false ? "checked" : "")
+                               class="w-5 h-5 rounded border-slate bg-slate focus:ring-electric">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-graphite mb-2">Hash Algorithm</label>
+                        <select name="hashAlgorithm" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric">
+                            @{
+                                var algo = Model.Settings?.HashAlgorithm ?? "SHA256";
+                            }
+                            <option value="SHA256" selected="@(algo == "SHA256")">SHA-256</option>
+                            <option value="SHA512" selected="@(algo == "SHA512")">SHA-512</option>
+                            <option value="BLAKE3" selected="@(algo == "BLAKE3")">BLAKE3</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-graphite mb-2">Auto-Verify Interval (hours)</label>
+                        <input type="number" name="autoVerifyIntervalHours" min="1" max="168" value="@(Model.Settings?.AutoVerifyIntervalHours ?? 24)"
+                               class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric">
+                    </div>
+                    <button type="submit" class="w-full btn-secondary px-4 py-2 rounded-md text-sm font-medium">
+                        Save Settings
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
     <!-- Audit Trail -->
     <div class="card">
-        <h3 class="text-lg font-semibold text-soft-white mb-4">Hash Audit Trail</h3>
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Integrity Audit Trail</h3>
         <div class="overflow-x-auto max-h-[400px]">
             <table class="min-w-full">
                 <thead class="sticky top-0 bg-navy">
                     <tr class="border-b border-slate">
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Memory</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Operation</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Old Hash</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">New Hash</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Actor</th>
                         <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Time</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Action</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Memory</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">User</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate">
                     @foreach (var entry in Model.AuditTrail)
                     {
                         <tr class="hover:bg-slate/30">
-                            <td class="px-3 py-2 text-sm font-mono text-soft-white">@entry.MemoryId.ToString()[..8]...</td>
+                            <td class="px-3 py-2 text-sm text-graphite">@entry.Timestamp.ToString("MMM dd HH:mm:ss")</td>
                             <td class="px-3 py-2">
-                                <span class="px-2 py-0.5 text-xs rounded @(entry.Operation == "Created" ? "bg-green-600" : entry.Operation == "Updated" ? "bg-blue-600" : "bg-yellow-600") text-white">
+                                @{
+                                    var badgeColor = entry.Operation switch
+                                    {
+                                        "MemoryCreated" => "bg-green-600",
+                                        "IntegrityComputed" => "bg-blue-600",
+                                        "IntegrityVerified" => "bg-cyan",
+                                        "IntegrityFailed" => "bg-red-600",
+                                        "ChainVerified" => "bg-purple-600",
+                                        "ChainFailed" => "bg-red-600",
+                                        "SettingsUpdated" => "bg-yellow-600",
+                                        "BatchVerificationStarted" => "bg-indigo-600",
+                                        "BatchVerificationCompleted" => "bg-indigo-600",
+                                        _ => "bg-slate"
+                                    };
+                                }
+                                <span class="px-2 py-0.5 text-xs rounded @badgeColor text-white">
                                     @entry.Operation
                                 </span>
                             </td>
-                            <td class="px-3 py-2 text-xs font-mono text-graphite">@(entry.OldHash?[..16] ?? "—")...</td>
-                            <td class="px-3 py-2 text-xs font-mono text-soft-white">@entry.NewHash[..16]...</td>
+                            <td class="px-3 py-2 text-sm font-mono text-soft-white">
+                                @if (entry.MemoryId != Guid.Empty)
+                                {
+                                    @entry.MemoryId.ToString()[..8]<span class="text-graphite">...</span>
+                                }
+                                else
+                                {
+                                    <span class="text-graphite">—</span>
+                                }
+                            </td>
                             <td class="px-3 py-2 text-sm text-graphite">@(entry.ActorId ?? "System")</td>
-                            <td class="px-3 py-2 text-sm text-graphite">@entry.Timestamp.ToString("HH:mm:ss")</td>
                         </tr>
                     }
                     @if (Model.AuditTrail.Count == 0)
                     {
                         <tr>
-                            <td colspan="6" class="px-3 py-4 text-center text-graphite">No audit trail entries</td>
+                            <td colspan="4" class="px-3 py-4 text-center text-graphite">No audit trail entries yet. Integrity operations will be logged here.</td>
                         </tr>
                     }
                 </tbody>

@@ -5,6 +5,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 
@@ -21,6 +22,7 @@ public sealed class ApiKeyService : IApiKeyService
     private readonly string _jwtIssuer;
     private readonly string _jwtAudience;
     private readonly TimeSpan _tokenLifetime;
+    private readonly IDeploymentContext? _deploymentContext;
 
     public ApiKeyService(
         NpgsqlDataSource dataSource,
@@ -28,7 +30,8 @@ public sealed class ApiKeyService : IApiKeyService
         string jwtSecret,
         string jwtIssuer = "serialmemory",
         string jwtAudience = "serialmemory-api",
-        TimeSpan? tokenLifetime = null)
+        TimeSpan? tokenLifetime = null,
+        IDeploymentContext? deploymentContext = null)
     {
         _dataSource = dataSource;
         _logger = logger;
@@ -36,6 +39,7 @@ public sealed class ApiKeyService : IApiKeyService
         _jwtIssuer = jwtIssuer;
         _jwtAudience = jwtAudience;
         _tokenLifetime = tokenLifetime ?? TimeSpan.FromHours(24);
+        _deploymentContext = deploymentContext;
     }
 
     public ApiKeyService(
@@ -43,7 +47,8 @@ public sealed class ApiKeyService : IApiKeyService
         ILogger<ApiKeyService> logger,
         string jwtSecret,
         string jwtIssuer = "serialmemory",
-        string jwtAudience = "serialmemory-api")
+        string jwtAudience = "serialmemory-api",
+        IDeploymentContext? deploymentContext = null)
     {
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         _dataSource = builder.Build();
@@ -52,6 +57,7 @@ public sealed class ApiKeyService : IApiKeyService
         _jwtIssuer = jwtIssuer;
         _jwtAudience = jwtAudience;
         _tokenLifetime = TimeSpan.FromHours(24);
+        _deploymentContext = deploymentContext;
     }
 
     public async Task<SignupResult> SignupAsync(
@@ -109,14 +115,20 @@ public sealed class ApiKeyService : IApiKeyService
                 new { Id = workspaceId, TenantId = tenantId },
                 tx);
 
-            // Create user as owner
+            // Determine role: member for PublicSaaS, owner only for first SelfHosted tenant
             var userId = request.Email.ToLowerInvariant();
+            var isSelfHosted = _deploymentContext?.IsSelfHosted ?? false;
+            var tenantCount = await conn.QuerySingleAsync<int>("SELECT COUNT(*) FROM tenants", transaction: tx);
+            
+            // Only assign owner if: SelfHosted mode AND this is the first tenant ever
+            var assignedRole = (isSelfHosted && tenantCount == 1) ? "owner" : "member";
+            
             await conn.ExecuteAsync(
                 """
-                INSERT INTO tenant_users (tenant_id, user_id, role, created_at, updated_at)
-                                  VALUES (@TenantId, @UserId, 'owner', NOW(), NOW())
+                INSERT INTO tenant_users (tenant_id, user_id, role, email_verified, created_at, updated_at)
+                VALUES (@TenantId, @UserId, @Role, FALSE, NOW(), NOW())
                 """,
-                new { TenantId = tenantId, UserId = userId },
+                new { TenantId = tenantId, UserId = userId, Role = assignedRole },
                 tx);
 
             // Create initial billing cycle
@@ -165,7 +177,7 @@ public sealed class ApiKeyService : IApiKeyService
             await tx.CommitAsync(cancellationToken);
 
             // Generate JWT token
-            var (token, expiresAt) = GenerateJwtToken(tenantId, userId, "owner", scopes);
+            var (token, expiresAt) = GenerateJwtToken(tenantId, userId, assignedRole, scopes);
 
             _logger.LogInformation(
                 "New tenant signed up: {TenantId} ({Slug}) by {UserId}",
@@ -177,7 +189,7 @@ public sealed class ApiKeyService : IApiKeyService
                 TenantName = request.TenantName,
                 Slug = slug,
                 UserId = userId,
-                Role = "owner",
+                Role = assignedRole,
                 Plan = plan,
                 ApiKey = new ApiKeyCreateResult
                 {

@@ -77,7 +77,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/power/update-content", new
             {
                 memoryId = id,
@@ -115,7 +115,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/power/delete-memory", new
             {
                 memoryId = id,
@@ -164,7 +164,7 @@ public sealed class PowerModel : PageModel
 
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = BatchAction switch
             {
                 "delete" => await client.PostAsJsonAsync("/api/power/batch-delete", new { memoryIds = ids, reason = "Batch delete via Power Mode" }),
@@ -198,7 +198,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/power/force-reembed", null);
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -218,7 +218,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/power/recrawl-entities", null);
 
             SuccessMessage = response.IsSuccessStatusCode
@@ -238,7 +238,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.GetFromJsonAsync<RecentMemoriesResponse>("/api/power/recent?limit=50");
             RecentMemories = response?.Memories ?? [];
         }
@@ -252,7 +252,7 @@ public sealed class PowerModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             SelectedMemory = await client.GetFromJsonAsync<MemoryDetail>($"/api/power/memory/{id}");
         }
         catch (HttpRequestException ex)

@@ -31,10 +31,19 @@ public sealed class VerifyEmailModel : PageModel
 
         try
         {
+            _logger.LogInformation("Attempting email verification with token (length={TokenLength})", token.Length);
+
             var client = _httpClientFactory.CreateClient("DashboardApi");
 
             var response = await client.PostAsJsonAsync("/auth/verify-email", new { token });
-            var result = await response.Content.ReadFromJsonAsync<VerifyResult>();
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            _logger.LogInformation(
+                "Verification API response: Status={StatusCode}, Body={Body}",
+                (int)response.StatusCode, responseBody);
+
+            var result = System.Text.Json.JsonSerializer.Deserialize<VerifyResult>(responseBody,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             if (response.IsSuccessStatusCode && result?.Success == true)
             {

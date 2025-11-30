@@ -94,6 +94,10 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Set a system-level tenant context to bypass RLS (empty = show all for introspection)
+        // Use a null-safe UUID to prevent "invalid input syntax for type uuid" errors
+        await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
+
         var snapshot = new IntrospectionSnapshot
         {
             Timestamp = DateTimeOffset.UtcNow,
@@ -121,6 +125,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         {
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
+            await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
             return await BuildJobBacklogAsync(conn, ct);
         }
 
@@ -128,6 +133,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         {
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
+            await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
             return await BuildActiveTracesAsync(conn, ct);
         }
 

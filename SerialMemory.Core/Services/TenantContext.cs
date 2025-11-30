@@ -18,11 +18,19 @@ public sealed class TenantContext : IMutableTenantContext
 
     public string? UserId => _data?.UserId;
 
+    public string? UserEmail => _data?.UserEmail;
+
+    public string? UserRole => _data?.UserRole;
+
     public Guid? SessionId => _data?.SessionId;
 
     public bool IsLabMode => _data?.IsLabMode ?? false;
 
     public bool AllowPowerMode => _data?.AllowPowerMode ?? false;
+
+    public bool IsRootAdmin => _data?.IsRootAdmin ?? false;
+
+    public bool IsOwner => string.Equals(UserRole, "owner", StringComparison.OrdinalIgnoreCase);
 
     public IReadOnlyList<string> Scopes => _data?.Scopes ?? Array.Empty<string>();
 
@@ -30,9 +38,12 @@ public sealed class TenantContext : IMutableTenantContext
         string tenantId,
         string workspaceId,
         string? userId = null,
+        string? userEmail = null,
+        string? userRole = null,
         Guid? sessionId = null,
         bool isLabMode = false,
         bool allowPowerMode = false,
+        bool isRootAdmin = false,
         IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -42,32 +53,18 @@ public sealed class TenantContext : IMutableTenantContext
             tenantId,
             workspaceId,
             userId,
+            userEmail,
+            userRole,
             sessionId,
             isLabMode,
             allowPowerMode,
+            isRootAdmin,
             scopes ?? Array.Empty<string>());
     }
 
     public void Clear()
     {
         _data = null;
-    }
-
-    /// <summary>
-    /// Creates a scope that automatically clears context on disposal.
-    /// </summary>
-    public static IDisposable CreateScope(
-        string tenantId,
-        string workspaceId,
-        string? userId = null,
-        Guid? sessionId = null,
-        bool isLabMode = false,
-        bool allowPowerMode = false,
-        IReadOnlyList<string>? scopes = null)
-    {
-        var context = new TenantContext();
-        context.SetContext(tenantId, workspaceId, userId, sessionId, isLabMode, allowPowerMode, scopes);
-        return new TenantContextScope(context);
     }
 
     /// <summary>
@@ -93,25 +90,13 @@ public sealed class TenantContext : IMutableTenantContext
         string TenantId,
         string WorkspaceId,
         string? UserId,
+        string? UserEmail,
+        string? UserRole,
         Guid? SessionId,
         bool IsLabMode,
         bool AllowPowerMode,
+        bool IsRootAdmin,
         IReadOnlyList<string> Scopes);
-
-    private sealed class TenantContextScope : IDisposable
-    {
-        private readonly TenantContext _context;
-
-        public TenantContextScope(TenantContext context)
-        {
-            _context = context;
-        }
-
-        public void Dispose()
-        {
-            _context.Clear();
-        }
-    }
 }
 
 /// <summary>
@@ -123,9 +108,12 @@ public sealed class FixedTenantContext : ITenantContext
         string tenantId,
         string workspaceId,
         string? userId = null,
+        string? userEmail = null,
+        string? userRole = null,
         Guid? sessionId = null,
         bool isLabMode = false,
         bool allowPowerMode = false,
+        bool isRootAdmin = false,
         IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -134,18 +122,25 @@ public sealed class FixedTenantContext : ITenantContext
         TenantId = tenantId;
         WorkspaceId = workspaceId;
         UserId = userId;
+        UserEmail = userEmail;
+        UserRole = userRole;
         SessionId = sessionId;
         IsLabMode = isLabMode;
         AllowPowerMode = allowPowerMode;
+        IsRootAdmin = isRootAdmin;
         Scopes = scopes ?? Array.Empty<string>();
     }
 
     public string TenantId { get; }
     public string WorkspaceId { get; }
     public string? UserId { get; }
+    public string? UserEmail { get; }
+    public string? UserRole { get; }
     public Guid? SessionId { get; }
     public bool IsLabMode { get; }
     public bool AllowPowerMode { get; }
+    public bool IsRootAdmin { get; }
+    public bool IsOwner => string.Equals(UserRole, "owner", StringComparison.OrdinalIgnoreCase);
     public IReadOnlyList<string> Scopes { get; }
 
     /// <summary>
@@ -154,6 +149,7 @@ public sealed class FixedTenantContext : ITenantContext
     public static FixedTenantContext SelfHosted => new(
         "00000000-0000-0000-0000-000000000000",
         "default",
+        userRole: "owner",
         isLabMode: true,
         allowPowerMode: true,
         scopes: new[] { "serialmemory.core", "serialmemory.admin", "serialmemory.export", "serialmemory.delete", "serialmemory.power" });

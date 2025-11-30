@@ -81,9 +81,19 @@ public sealed class AcsEmailService : IEmailService
         }
     }
 
-    public async Task SendVerificationEmailAsync(string to, string verificationUrl, CancellationToken cancellationToken = default)
+    public async Task SendVerificationEmailAsync(string to, string verificationUrl, string? apiKey = null, CancellationToken cancellationToken = default)
     {
         var subject = "Verify your email - SerialMemory";
+
+        // Build API key section if provided (only at signup)
+        var apiKeySection = string.IsNullOrEmpty(apiKey) ? "" : $$"""
+                    <div style="background-color: #F0FDF4; border: 1px solid #22C55E; border-radius: 8px; padding: 16px; margin: 20px 0;">
+                        <h3 style="margin: 0 0 10px 0; color: #166534;">Your API Key</h3>
+                        <p style="margin: 0 0 10px 0; font-size: 14px; color: #166534;">This is your API key for accessing SerialMemory. <strong>Save it now - this is the only time you'll see it!</strong></p>
+                        <div style="background-color: #1F2937; color: #22C55E; padding: 12px; border-radius: 4px; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; word-break: break-all; user-select: all;">{{apiKey}}</div>
+                    </div>
+            """;
+
         var htmlBody = $$"""
             <!DOCTYPE html>
             <html>
@@ -98,14 +108,15 @@ public sealed class AcsEmailService : IEmailService
             </head>
             <body>
                 <div class="container">
-                    <h2>Verify your email</h2>
-                    <p>Thanks for signing up for SerialMemory! Please verify your email address by clicking the button below:</p>
+                    <h2>Welcome to SerialMemory!</h2>
+                    <p>Thanks for signing up! Please verify your email address by clicking the button below:</p>
                     <p style="margin: 30px 0;">
                         <a href="{{verificationUrl}}" class="button">Verify Email</a>
                     </p>
                     <p>Or copy and paste this link into your browser:</p>
                     <p style="word-break: break-all; color: #4F46E5;">{{verificationUrl}}</p>
-                    <p>This link will expire in 24 hours.</p>
+                    {{apiKeySection}}
+                    <p>This verification link will expire in 24 hours.</p>
                     <div class="footer">
                         <p>If you didn't create an account, you can safely ignore this email.</p>
                         <p>&copy; SerialMemory - Temporal Knowledge Graph Memory System</p>

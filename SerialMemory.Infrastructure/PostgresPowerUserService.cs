@@ -722,17 +722,17 @@ public sealed class PostgresPowerUserService(string connectionString, ILogger<Po
 
         var events = await conn.QueryAsync<EventRow>("""
             SELECT
-                id AS event_id,
-                sequence_number,
-                event_type,
-                memory_id,
-                timestamp,
-                payload::text AS raw_payload,
-                actor_id,
-                correlation_id
+                event_id,
+                global_sequence AS sequence_number,
+                event_type::text AS event_type,
+                stream_id AS memory_id,
+                created_at AS timestamp,
+                event_data::text AS raw_payload,
+                created_by AS actor_id,
+                metadata->>'correlation_id' AS correlation_id
             FROM memory_events
-            WHERE sequence_number > @From
-            ORDER BY sequence_number
+            WHERE global_sequence > @From
+            ORDER BY global_sequence
             LIMIT @Limit
             """, new { From = fromSequence, Limit = limit });
 
@@ -836,22 +836,22 @@ public sealed class PostgresPowerUserService(string connectionString, ILogger<Po
 
         var mutations = await conn.QueryAsync<MutationRow>("""
             SELECT
-                event_id AS mutation_id,
-                sequence_number,
+                id AS mutation_id,
+                0::bigint AS sequence_number,
                 event_type AS mutation_type,
                 node_id,
                 edge_id,
-                source_node_id,
-                target_node_id,
-                node_name,
+                NULL::uuid AS source_node_id,
+                NULL::uuid AS target_node_id,
+                node_type AS node_name,
                 edge_type,
-                occurred_at AS timestamp,
-                previous_state::text,
-                new_state::text,
-                triggered_by
+                created_utc AS timestamp,
+                NULL::text AS previous_state,
+                metadata::text AS new_state,
+                tenant_id AS triggered_by
             FROM graph_events
-            WHERE (@Since IS NULL OR occurred_at > @Since)
-            ORDER BY sequence_number DESC
+            WHERE (@Since IS NULL OR created_utc > @Since)
+            ORDER BY created_utc DESC
             LIMIT @Limit
             """, new { Since = since, Limit = limit });
 

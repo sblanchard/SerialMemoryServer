@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
@@ -8,6 +8,7 @@
     <ItemGroup>
         <ProjectReference Include="..\SerialMemory.Core\SerialMemory.Core.csproj" />
         <ProjectReference Include="..\SerialMemory.Contracts\SerialMemory.Contracts.csproj" />
+        <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
     </ItemGroup>
 
     <ItemGroup>

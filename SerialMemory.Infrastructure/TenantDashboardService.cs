@@ -60,8 +60,9 @@ public sealed class TenantDashboardService : ITenantDashboardService
             """,
             new { TenantId = tenantId });
 
-        // Determine scopes based on role
-        var scopes = GetScopesForRole(userRole?.role ?? "member");
+        // Determine scopes based on role - default to "member" if null or empty
+        var effectiveRole = string.IsNullOrWhiteSpace(userRole?.role) ? "member" : userRole.role;
+        var scopes = GetScopesForRole(effectiveRole);
 
         return new UserInfoResult
         {
@@ -69,7 +70,8 @@ public sealed class TenantDashboardService : ITenantDashboardService
             TenantId = tenantId,
             TenantName = tenant.name,
             TenantSlug = tenant.slug,
-            Role = userRole?.role ?? "member",
+            Role = effectiveRole,
+            Email = userId, // user_id is the email (lowercase)
             Scopes = scopes,
             Workspaces = workspaces.Select(w => new WorkspaceInfo
             {

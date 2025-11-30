@@ -140,11 +140,14 @@
     let currentEdges = [];
 
     const apiBaseUrl = '@Model.ApiBaseUrl';
+    const signalRToken = '@Model.SignalRToken';
 
     // Initialize SignalR
     async function initSignalR() {
         connection = new signalR.HubConnectionBuilder()
-            .withUrl(apiBaseUrl + "/hubs/live")
+            .withUrl(apiBaseUrl + "/hubs/live", {
+                accessTokenFactory: () => signalRToken
+            })
             .withAutomaticReconnect()
             .build();
 

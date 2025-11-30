@@ -305,32 +305,27 @@ public sealed class GraphIsolationTests : TenantIsolationTestBase
     {
         await using var conn = await ConnectionFactory.OpenAsync(TenantA);
 
-        // Even if we create a relationship pointing to TenantB's entity ID,
-        // the target entity is not visible due to RLS, so the relationship is orphaned
+        // Attempting to create a relationship pointing to TenantB's entity ID
+        // should be blocked by the cross-tenant FK protection trigger
         var relationshipId = Guid.CreateVersion7();
-        await conn.ExecuteAsync(@"
-            INSERT INTO entity_relationships
-                (id, tenant_id, source_entity_id, target_entity_id, relationship_type)
-            VALUES
-                (@Id, @TenantId, @SourceId, @TargetId, 'CROSS_TENANT_ATTACK')",
-            new
-            {
-                Id = relationshipId,
-                TenantId = TenantA,
-                SourceId = TenantAData.EntityIds.First(),
-                TargetId = TenantBData.EntityIds.First() // Other tenant's entity ID (orphan reference)
-            });
+        var exception = await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO entity_relationships
+                    (id, tenant_id, source_entity_id, target_entity_id, relationship_type)
+                VALUES
+                    (@Id, @TenantId, @SourceId, @TargetId, 'CROSS_TENANT_ATTACK')",
+                new
+                {
+                    Id = relationshipId,
+                    TenantId = TenantA,
+                    SourceId = TenantAData.EntityIds.First(),
+                    TargetId = TenantBData.EntityIds.First() // Other tenant's entity ID
+                });
+        });
 
-        // The relationship exists, but trying to JOIN to the target entity returns nothing
-        var targetEntity = await conn.QueryFirstOrDefaultAsync<EntityRecord>(@"
-            SELECT e.id, e.tenant_id, e.name, e.entity_type
-            FROM entities e
-            JOIN entity_relationships r ON e.id = r.target_entity_id
-            WHERE r.id = @RelId",
-            new { RelId = relationshipId });
-
-        // CRITICAL: The target entity must NOT be visible (it's TenantB's data)
-        Assert.Null(targetEntity);
+        // CRITICAL: Cross-tenant FK must be blocked by trigger
+        Assert.Contains("SECURITY VIOLATION", exception.Message);
     }
 
     [Fact]
@@ -338,28 +333,23 @@ public sealed class GraphIsolationTests : TenantIsolationTestBase
     {
         await using var conn = await ConnectionFactory.OpenAsync(TenantA);
 
-        // Even if we create a link to TenantB's entity ID,
-        // the entity is not visible due to RLS
-        await conn.ExecuteAsync(@"
-            INSERT INTO memory_entities (tenant_id, memory_id, entity_id, relevance)
-            VALUES (@TenantId, @MemoryId, @EntityId, 1.0)",
-            new
-            {
-                TenantId = TenantA,
-                MemoryId = TenantAData.MemoryIds.First(),
-                EntityId = TenantBData.EntityIds.First() // Other tenant's entity ID (orphan reference)
-            });
+        // Attempting to create a link to TenantB's entity ID
+        // should be blocked by the cross-tenant FK protection trigger
+        var exception = await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO memory_entities (tenant_id, memory_id, entity_id, relevance)
+                VALUES (@TenantId, @MemoryId, @EntityId, 1.0)",
+                new
+                {
+                    TenantId = TenantA,
+                    MemoryId = TenantAData.MemoryIds.First(),
+                    EntityId = TenantBData.EntityIds.First() // Other tenant's entity ID
+                });
+        });
 
-        // The link exists, but trying to JOIN to the entity returns nothing
-        var linkedEntity = await conn.QueryFirstOrDefaultAsync<EntityRecord>(@"
-            SELECT e.id, e.tenant_id, e.name, e.entity_type
-            FROM entities e
-            JOIN memory_entities me ON e.id = me.entity_id
-            WHERE me.memory_id = @MemoryId AND me.entity_id = @EntityId",
-            new { MemoryId = TenantAData.MemoryIds.First(), EntityId = TenantBData.EntityIds.First() });
-
-        // CRITICAL: The entity must NOT be visible (it's TenantB's data)
-        Assert.Null(linkedEntity);
+        // CRITICAL: Cross-tenant FK must be blocked by trigger
+        Assert.Contains("SECURITY VIOLATION", exception.Message);
     }
 
     [Fact]

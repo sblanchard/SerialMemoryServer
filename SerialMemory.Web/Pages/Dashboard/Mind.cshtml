@@ -78,7 +78,22 @@
     }
 
     <!-- Overall Health Score -->
-    @if (Model.HealthScore != null)
+    @if (Model.HealthScore != null && Model.HealthScore.Status == "NoData")
+    {
+        <!-- No data state - new user with no memories -->
+        <div class="card mb-8">
+            <div class="text-center py-8">
+                <svg class="w-16 h-16 mx-auto text-graphite mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <h3 class="text-xl font-medium text-soft-white mb-2">No Memories Yet</h3>
+                <p class="text-graphite max-w-md mx-auto">
+                    Start using the MCP tools to ingest memories. Once you have data, you'll see health metrics here showing coherence, consistency, and reliability scores.
+                </p>
+            </div>
+        </div>
+    }
+    else if (Model.HealthScore != null)
     {
         <div class="card mb-8">
             <div class="grid grid-cols-1 md:grid-cols-6 gap-6">

@@ -279,6 +279,7 @@ public sealed class MindHealthSnapshot
 
 public enum HealthStatus
 {
+    NoData,     // No memories yet - show zeros
     Excellent,
     Good,
     Fair,

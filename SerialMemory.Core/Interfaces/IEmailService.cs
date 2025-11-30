@@ -17,7 +17,8 @@ public interface IEmailService
     /// <summary>
     /// Send email verification link.
     /// </summary>
-    Task SendVerificationEmailAsync(string to, string verificationUrl, CancellationToken cancellationToken = default);
+    /// <param name="apiKey">Optional API key to include in the email (only shown once at signup)</param>
+    Task SendVerificationEmailAsync(string to, string verificationUrl, string? apiKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Send passwordless login link.

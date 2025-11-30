@@ -1,4 +1,5 @@
 using Dapper;
+using System.Diagnostics;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Core.Operations;
@@ -14,11 +15,14 @@ using SerialMemory.Api.Realtime;
 using SerialMemory.Api.Analysis;
 using SerialMemory.Api.Auth;
 using SerialMemory.Api.SelfHosted;
+using SerialMemory.Api.LLM;
+using SerialMemory.Api.Endpoints;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using MassTransit;
 using Npgsql;
+using Microsoft.AspNetCore.Mvc;
 using Metrics = SerialMemory.Core.Telemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,6 +47,7 @@ if (operationalConfig.HasActivePanicSwitch)
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpClient(); // For auth endpoint forwarding to Dashboard API
 
 // CORS for web frontend and SignalR
 builder.Services.AddCors(options =>
@@ -77,7 +82,17 @@ var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
        $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
        $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
 
-// Embedding Service - Ollama
+// LLM Configuration - OpenAI is primary if configured, fallback to Ollama
+var openAiApiKey = builder.Configuration["OpenAI:ApiKey"]
+    ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var openAiModel = builder.Configuration["OpenAI:Model"]
+    ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
+    ?? "gpt-4.1-mini";
+var openAiEmbedModel = builder.Configuration["OpenAI:EmbedModel"]
+    ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
+    ?? "text-embedding-3-small";
+
+// Ollama configuration (fallback)
 var ollamaUrl = builder.Configuration["Ollama:Url"]
     ?? Environment.GetEnvironmentVariable("OLLAMA_BASE_URL")
     ?? Environment.GetEnvironmentVariable("OLLAMA_URL")
@@ -85,6 +100,9 @@ var ollamaUrl = builder.Configuration["Ollama:Url"]
 var ollamaModel = builder.Configuration["Ollama:Model"]
     ?? Environment.GetEnvironmentVariable("OLLAMA_MODEL")
     ?? "nomic-embed-text";
+var ollamaLlmModel = builder.Configuration["Ollama:LlmModel"]
+    ?? Environment.GetEnvironmentVariable("OLLAMA_LLM_MODEL")
+    ?? "qwen2.5:7b";
 var ollamaEmbeddingDim = int.TryParse(
     builder.Configuration["Ollama:EmbeddingDim"] ?? Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_DIM"),
     out var dim) ? dim : 768;
@@ -92,8 +110,28 @@ var ollamaEmbeddingDim = int.TryParse(
 // Base knowledge graph store - created per-scope with tenant context for proper RLS enforcement
 // Note: We'll register this as Scoped later with ITenantContext injection
 
-Console.WriteLine($"Using Ollama embedding service: {ollamaModel} at {ollamaUrl} (dim={ollamaEmbeddingDim})");
-builder.Services.AddSingleton<IEmbeddingService>(_ => new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
+// Register embedding and LLM services based on configuration
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    // OpenAI is available - use it as primary
+    Console.WriteLine($"[INFO] Using OpenAI: chat={openAiModel}, embed={openAiEmbedModel}");
+    var openAiClient = new OpenAiClient(
+        apiKey: openAiApiKey,
+        chatModel: openAiModel,
+        embedModel: openAiEmbedModel,
+        embeddingDimension: 1536);
+
+    builder.Services.AddSingleton<IEmbeddingService>(openAiClient);
+    builder.Services.AddSingleton<ILlmService>(openAiClient);
+    builder.Services.AddSingleton(openAiClient);
+}
+else
+{
+    // Fallback to Ollama
+    Console.WriteLine($"[INFO] Using Ollama: embed={ollamaModel}, llm={ollamaLlmModel} at {ollamaUrl}");
+    builder.Services.AddSingleton<IEmbeddingService>(_ => new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
+    builder.Services.AddSingleton<ILlmService>(_ => new OllamaLlmService(ollamaUrl, ollamaLlmModel));
+}
 
 // Entity extraction service - use HTTP/Ollama if configured, otherwise pattern-based
 var extractionServiceUrl = builder.Configuration["ExtractionServiceUrl"]
@@ -121,6 +159,41 @@ builder.Services.AddScoped<IUsageService>(sp =>
 builder.Services.AddSingleton<IPlanService>(sp =>
     new PlanService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanService>()));
 
+// Stripe billing service - required for payment processing
+var stripeSecretKey = builder.Configuration["Stripe:SecretKey"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
+var stripePublishableKey = builder.Configuration["Stripe:PublishableKey"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_PUBLISHABLE_KEY");
+var stripeWebhookSecret = builder.Configuration["Stripe:WebhookSecret"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_WEBHOOK_SECRET");
+var stripeProPriceId = builder.Configuration["Stripe:ProPriceId"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_PRO_PRICE_ID")
+    ?? "price_pro_monthly";
+var stripeEnterprisePriceId = builder.Configuration["Stripe:EnterprisePriceId"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_ENTERPRISE_PRICE_ID")
+    ?? "price_enterprise_monthly";
+
+if (!string.IsNullOrEmpty(stripeSecretKey) && !string.IsNullOrEmpty(stripeWebhookSecret))
+{
+    var stripeConfig = new StripeConfig
+    {
+        SecretKey = stripeSecretKey,
+        PublishableKey = stripePublishableKey ?? "",
+        WebhookSecret = stripeWebhookSecret,
+        ProPriceId = stripeProPriceId,
+        EnterprisePriceId = stripeEnterprisePriceId,
+        DefaultSuccessUrl = $"{Environment.GetEnvironmentVariable("SERIALMEMORY_BASE_URL") ?? "https://serialmemory.dev"}/dashboard/billing?success=true",
+        DefaultCancelUrl = $"{Environment.GetEnvironmentVariable("SERIALMEMORY_BASE_URL") ?? "https://serialmemory.dev"}/dashboard/billing?canceled=true"
+    };
+    builder.Services.AddSingleton(stripeConfig);
+    builder.Services.AddSingleton<IBillingService>(sp =>
+        new StripeBillingService(pgConnectionString, sp.GetRequiredService<ILoggerFactory>().CreateLogger<StripeBillingService>(), stripeConfig));
+    Console.WriteLine("[INFO] Stripe billing service configured");
+}
+else
+{
+    Console.WriteLine("[WARN] Stripe not configured - billing features disabled");
+}
 // Email service (Azure Communication Services) - use NoOp if ACS not configured
 var acsConnectionString = builder.Configuration["Email:AcsConnectionString"]
     ?? builder.Configuration["AzureCommunicationServices:ConnectionString"]
@@ -249,6 +322,16 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SerialMemory.Infra
 // Real-time introspection service - streams job/trace/security/graph state via SignalR
 builder.Services.AddHostedService<SerialMemory.Api.Realtime.IntrospectionBackgroundService>();
 
+// Memory Layer Worker - L0→L1→L2→L3→L4 cognitive layer promotion
+builder.Services.AddHostedService<SerialMemory.Infrastructure.MemoryLayer.MemoryLayerWorker>();
+
+// Integrity Worker - automatic hash computation and periodic chain verification
+builder.Services.AddHostedService(sp =>
+    new SerialMemory.Infrastructure.Integrity.IntegrityWorker(
+        sp,
+        pgConnectionString,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.Integrity.IntegrityWorker>()));
+
 // Self-healing memory engine - detection only, no auto-repair
 builder.Services.AddSingleton<IMemorySelfHealing>(sp =>
 {
@@ -345,10 +428,11 @@ builder.Services.AddSingleton<IPerformanceService>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<PostgresPerformanceService>(),
         TimeSpan.FromMilliseconds(100)));
 
-// Mind health service - self-awareness tracking
-builder.Services.AddSingleton<IMindHealthService>(sp =>
+// Mind health service - self-awareness tracking (scoped for tenant isolation)
+builder.Services.AddScoped<IMindHealthService>(sp =>
     new PostgresMindHealthService(
         pgConnectionString,
+        sp.GetRequiredService<ITenantContext>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<PostgresMindHealthService>()));
 
 // Replay Engine - READ-ONLY forensic replay
@@ -368,6 +452,20 @@ builder.Services.AddSingleton<IPredictiveSimulationService>(sp =>
     new PredictiveSimulationService(
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<PredictiveSimulationService>()));
+
+// Integrity Service - tamper-evident hashing and chain verification
+builder.Services.AddScoped<IIntegrityService>(sp =>
+    new SerialMemory.Infrastructure.Integrity.IntegrityService(
+        pgConnectionString,
+        sp.GetRequiredService<ITenantContext>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.Integrity.IntegrityService>()));
+
+// Integrity Audit Service - privacy and integrity audit trail
+builder.Services.AddScoped<IIntegrityAuditService>(sp =>
+    new SerialMemory.Infrastructure.Privacy.IntegrityAuditService(
+        pgConnectionString,
+        sp.GetRequiredService<ITenantContext>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.Privacy.IntegrityAuditService>()));
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("SerialMemory.Api"))
@@ -429,6 +527,12 @@ app.MapPrometheusScrapingEndpoint();
 
 // Self-Hosted Admin Endpoints (only available in SelfHosted deployment mode)
 app.MapSelfHostedEndpoints();
+
+// LLM Endpoints (chat, embed, test)
+app.MapLlmEndpoints();
+
+// Auth Endpoints (forwards to Dashboard API for signup/verification)
+app.MapAuthEndpoints();
 
 // ============================================
 // HEALTH CHECK ENDPOINTS (for operators)
@@ -1029,7 +1133,7 @@ app.MapPost("/api/import/core", async (CoreExportData coreData, KnowledgeGraphSe
 // ============================================
 
 // GET /api/usage/current - Current cycle usage summary with weighted credits
-app.MapGet("/api/usage/current", async (IUsageService usageService) =>
+app.MapGet("/api/usage/current", async (IUsageService usageService, IDeploymentContext deploymentContext) =>
 {
     var cycle = await usageService.GetCurrentBillingCycleAsync();
     var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
@@ -1050,11 +1154,13 @@ app.MapGet("/api/usage/current", async (IUsageService usageService) =>
 
     if (cycle == null)
     {
+        // SelfHosted = unlimited, SaaS = Free plan (1000 credits)
+        var defaultCredits = deploymentContext.IsSelfHosted ? 999999999m : 1000m;
         return Results.Ok(new
         {
             creditsUsed = totalCredits,
-            creditsIncluded = 999999999m, // Self-hosted unlimited
-            percentUsed = 0,
+            creditsIncluded = defaultCredits,
+            percentUsed = defaultCredits > 0 ? (int)Math.Min(100, totalCredits / defaultCredits * 100) : 0,
             totalOperations,
             cycleStart = DateTimeOffset.UtcNow.ToString("o"),
             cycleEnd = DateTimeOffset.UtcNow.AddMonths(1).ToString("o")
@@ -1399,16 +1505,16 @@ app.MapGet("/api/jobs", (
 });
 
 // GET /api/billing/plan - Current plan info
-app.MapGet("/api/billing/plan", async (IPlanService planService) =>
+app.MapGet("/api/billing/plan", async (IPlanService planService, ITenantContext tenantContext, IDeploymentContext deploymentContext) =>
 {
-    var subscription = await planService.GetSubscriptionAsync("self", "default");
+    var subscription = await planService.GetSubscriptionAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
     if (subscription == null)
     {
-        // Default to self-hosted unlimited plan
+        // SelfHosted = unlimited, SaaS = Free plan (1000 credits)
         return Results.Ok(new
         {
-            planName = "Self-Hosted",
-            creditsPerMonth = 999999999m,
+            planName = deploymentContext.IsSelfHosted ? "Self-Hosted" : "Free",
+            creditsPerMonth = deploymentContext.IsSelfHosted ? 999999999m : 1000m,
             priceUsd = 0.0m
         });
     }
@@ -1427,6 +1533,584 @@ app.MapGet("/api/billing/plan", async (IPlanService planService) =>
         }
     });
 });
+
+
+// ============================================
+// STRIPE BILLING API ENDPOINTS
+// ============================================
+
+// POST /api/billing/stripe/webhook - Stripe webhook endpoint (no auth - uses signature verification)
+app.MapPost("/api/billing/stripe/webhook", async (
+    HttpRequest request,
+    IServiceProvider sp,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        logger.LogWarning("Stripe webhook received but billing service is not configured");
+        return Results.BadRequest(new { error = "billing_not_configured", message = "Stripe billing is not configured" });
+    }
+
+    var payload = await new StreamReader(request.Body).ReadToEndAsync(ct);
+    var signature = request.Headers["Stripe-Signature"].FirstOrDefault();
+
+    if (string.IsNullOrEmpty(signature))
+    {
+        logger.LogWarning("Stripe webhook received without signature");
+        Metrics.StripeFailuresTotal.Add(1, new TagList { { "type", "missing_signature" } });
+        return Results.BadRequest(new { error = "missing_signature" });
+    }
+
+    var result = await billingService.ProcessWebhookAsync(payload, signature, ct);
+
+    if (!result.Success && !result.AlreadyProcessed)
+    {
+        Metrics.StripeFailuresTotal.Add(1, new TagList { { "type", result.ErrorCode ?? "webhook_error" } });
+        logger.LogError("Stripe webhook processing failed: {Error}", result.ErrorMessage);
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    if (result.EventType?.Contains("payment_intent.succeeded") == true ||
+        result.EventType?.Contains("invoice.paid") == true)
+    {
+        Metrics.StripePaymentsTotal.Add(1);
+    }
+
+    return Results.Ok(new { received = true, eventType = result.EventType, alreadyProcessed = result.AlreadyProcessed });
+})
+.WithName("StripeWebhookAPI")
+.WithDescription("Stripe webhook endpoint for subscription events")
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// POST /api/billing/checkout - Create a Stripe checkout session
+app.MapPost("/api/billing/checkout", async (
+    CreateCheckoutRequest checkoutRequest,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.BadRequest(new { error = "billing_not_configured", message = "Stripe billing is not configured" });
+    }
+
+    var request = new CreateCheckoutRequest
+    {
+        TenantId = checkoutRequest.TenantId ?? tenantContext.TenantId,
+        PlanName = checkoutRequest.PlanName,
+        SuccessUrl = checkoutRequest.SuccessUrl,
+        CancelUrl = checkoutRequest.CancelUrl
+    };
+
+    var result = await billingService.CreateCheckoutSessionAsync(request, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new { sessionId = result.SessionId, checkoutUrl = result.CheckoutUrl });
+})
+.WithName("CreateCheckoutSession")
+.WithDescription("Creates a Stripe checkout session for upgrading to a paid plan")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// POST /api/billing/portal - Create a Stripe customer portal session
+app.MapPost("/api/billing/portal", async (
+    CreatePortalRequest portalRequest,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.BadRequest(new { error = "billing_not_configured", message = "Stripe billing is not configured" });
+    }
+
+    var request = new CreatePortalRequest
+    {
+        TenantId = portalRequest.TenantId ?? tenantContext.TenantId,
+        ReturnUrl = portalRequest.ReturnUrl
+    };
+
+    var result = await billingService.CreatePortalSessionAsync(request, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new { portalUrl = result.PortalUrl });
+})
+.WithName("CreatePortalSession")
+.WithDescription("Creates a Stripe customer portal session for managing billing")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// GET /api/billing/summary - Get billing summary for current tenant
+app.MapGet("/api/billing/summary", async (
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.Ok(new
+        {
+            tenantId = tenantContext.TenantId,
+            currentPlan = "Free",
+            creditsPerMonth = 1000m,
+            billingEnabled = false
+        });
+    }
+
+    var summary = await billingService.GetBillingSummaryAsync(tenantContext.TenantId, ct);
+    if (summary == null)
+    {
+        return Results.Ok(new
+        {
+            tenantId = tenantContext.TenantId,
+            currentPlan = "Free",
+            creditsPerMonth = 1000m,
+            billingEnabled = true
+        });
+    }
+
+    return Results.Ok(summary);
+})
+.WithName("GetBillingSummary")
+.WithDescription("Gets billing summary for the current tenant")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// GET /api/billing/payments - Get payment history for current tenant
+app.MapGet("/api/billing/payments", async (
+    int? limit,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.Ok(new { payments = Array.Empty<object>(), total = 0 });
+    }
+
+    var payments = await billingService.GetPaymentHistoryAsync(tenantContext.TenantId, limit ?? 10, ct);
+    return Results.Ok(new { payments, total = payments.Count });
+})
+.WithName("GetPaymentHistory")
+.WithDescription("Gets payment history for the current tenant")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// POST /api/billing/cancel - Cancel subscription at period end
+app.MapPost("/api/billing/cancel", async (
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.BadRequest(new { error = "billing_not_configured" });
+    }
+
+    var result = await billingService.CancelSubscriptionAsync(tenantContext.TenantId, ct);
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new { message = "Subscription will be cancelled at the end of the billing period" });
+})
+.WithName("CancelSubscription")
+.WithDescription("Cancels subscription at the end of the current billing period")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// POST /api/billing/resume - Resume a cancelled subscription
+app.MapPost("/api/billing/resume", async (
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.BadRequest(new { error = "billing_not_configured" });
+    }
+
+    var result = await billingService.ResumeSubscriptionAsync(tenantContext.TenantId, ct);
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new { message = "Subscription resumed" });
+})
+.WithName("ResumeSubscription")
+.WithDescription("Resumes a cancelled subscription")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// ============================================
+// BILLING PACK V2 - PLAN MANAGEMENT
+// ============================================
+
+// GET /api/billing/plans - List all available plans with features
+app.MapGet("/api/billing/plans", async (
+    IPlanService planService,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var currentSubscription = await planService.GetSubscriptionAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
+    var currentPlanName = currentSubscription?.PlanName?.ToLower() ?? "free";
+
+    // Define the 4 SaaS tiers with exact credit mappings
+    var planDefinitions = new[]
+    {
+        new {
+            name = "free",
+            displayName = "Free",
+            credits = 200,
+            memories = 1000,
+            rateLimit = 5,
+            prioritySupport = false,
+            customIntegrations = false,
+            advancedAnalytics = false
+        },
+        new {
+            name = "pro",
+            displayName = "Pro",
+            credits = 5000,
+            memories = 50000,
+            rateLimit = 60,
+            prioritySupport = false,
+            customIntegrations = false,
+            advancedAnalytics = true
+        },
+        new {
+            name = "team",
+            displayName = "Team",
+            credits = 20000,
+            memories = 200000,
+            rateLimit = 120,
+            prioritySupport = true,
+            customIntegrations = false,
+            advancedAnalytics = true
+        },
+        new {
+            name = "enterprise",
+            displayName = "Enterprise",
+            credits = -1, // -1 = unlimited
+            memories = -1, // -1 = unlimited
+            rateLimit = -1, // -1 = no limit
+            prioritySupport = true,
+            customIntegrations = true,
+            advancedAnalytics = true
+        }
+    };
+
+    return Results.Ok(new
+    {
+        plans = planDefinitions.Select(p => new
+        {
+            id = Guid.NewGuid(), // Generated ID for display
+            name = p.name,
+            displayName = p.displayName,
+            creditsPerMonth = p.credits,
+            maxMemories = p.memories,
+            maxEntities = p.memories / 10, // Entities are ~10% of memories
+            rateLimitPerMinute = p.rateLimit,
+            features = new
+            {
+                prioritySupport = p.prioritySupport,
+                customIntegrations = p.customIntegrations,
+                advancedAnalytics = p.advancedAnalytics,
+                apiAccess = true
+            },
+            pricing = new
+            {
+                monthly = GetPlanPrice(p.name, "monthly"),
+                quarterly = GetPlanPrice(p.name, "quarterly"),
+                annual = GetPlanPrice(p.name, "annual")
+            },
+            isCurrent = currentPlanName == p.name
+        }),
+        currentPlan = currentPlanName
+    });
+})
+.WithName("ListPlans")
+.WithDescription("Lists all available plans with features and pricing")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// GET /api/billing/plan/preview - Preview plan change costs
+app.MapGet("/api/billing/plan/preview", async (
+    string targetPlan,
+    string? billingInterval,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    IUsageService usageService,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+
+    // Get current usage
+    var cycle = await usageService.GetCurrentBillingCycleAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
+    var creditsUsed = cycle?.CreditsUsed ?? 0;
+
+    // Calculate prorated amounts
+    var daysInMonth = DateTime.DaysInMonth(DateTime.UtcNow.Year, DateTime.UtcNow.Month);
+    var daysRemaining = daysInMonth - DateTime.UtcNow.Day;
+    var prorationFactor = (decimal)daysRemaining / daysInMonth;
+
+    var targetPrice = GetPlanPrice(targetPlan, billingInterval ?? "monthly");
+    var proratedAmount = targetPrice * prorationFactor;
+
+    return Results.Ok(new
+    {
+        targetPlan,
+        billingInterval = billingInterval ?? "monthly",
+        currentCreditsUsed = creditsUsed,
+        effectiveDate = DateTime.UtcNow,
+        proratedAmount = Math.Round(proratedAmount, 2),
+        nextBillingAmount = targetPrice,
+        nextBillingDate = DateTime.UtcNow.AddDays(daysRemaining),
+        savings = billingInterval switch
+        {
+            "annual" => Math.Round(targetPrice * 12 * 0.20m, 2),
+            "quarterly" => Math.Round(targetPrice * 3 * 0.10m, 2),
+            _ => 0m
+        }
+    });
+})
+.WithName("PreviewPlanChange")
+.WithDescription("Preview costs for changing to a different plan")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// POST /api/billing/plan/change - Change to a different plan
+app.MapPost("/api/billing/plan/change", async (
+    PlanChangeRequest request,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.BadRequest(new { error = "billing_not_configured" });
+    }
+
+    logger.LogInformation("Plan change requested: {TenantId} -> {TargetPlan}", tenantContext.TenantId, request.TargetPlan);
+
+    var checkoutRequest = new CreateCheckoutRequest
+    {
+        TenantId = tenantContext.TenantId,
+        PlanName = request.TargetPlan,
+        SuccessUrl = request.SuccessUrl ?? "/dashboard/billing?success=true",
+        CancelUrl = request.CancelUrl ?? "/dashboard/billing?cancelled=true"
+    };
+
+    var result = await billingService.CreateCheckoutSessionAsync(checkoutRequest, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
+    }
+
+    return Results.Ok(new
+    {
+        message = "Plan change initiated",
+        checkoutUrl = result.CheckoutUrl,
+        sessionId = result.SessionId
+    });
+})
+.WithName("ChangePlan")
+.WithDescription("Initiates a plan change (upgrade or downgrade)")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest);
+
+// ============================================
+// BILLING PACK V2 - INVOICES
+// ============================================
+
+// GET /api/billing/invoices - List all invoices
+app.MapGet("/api/billing/invoices", async (
+    int? limit,
+    int? offset,
+    IServiceProvider sp,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var billingService = sp.GetService<IBillingService>();
+    if (billingService == null)
+    {
+        return Results.Ok(new { invoices = Array.Empty<object>(), total = 0 });
+    }
+
+    var payments = await billingService.GetPaymentHistoryAsync(tenantContext.TenantId, limit ?? 50, ct);
+
+    return Results.Ok(new
+    {
+        invoices = payments.Select(p => new
+        {
+            id = p.Id,
+            stripeInvoiceId = p.StripeInvoiceId,
+            amount = p.AmountCents / 100.0m,
+            currency = p.Currency,
+            status = p.Status,
+            planName = p.PlanName,
+            billingPeriodStart = p.BillingPeriodStart,
+            billingPeriodEnd = p.BillingPeriodEnd,
+            pdfUrl = p.InvoicePdfUrl,
+            hostedUrl = p.HostedInvoiceUrl,
+            createdAt = p.CreatedAt
+        }),
+        total = payments.Count
+    });
+})
+.WithName("ListInvoices")
+.WithDescription("Lists all invoices for the current tenant")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// ============================================
+// BILLING PACK V2 - FORECASTING
+// ============================================
+
+// GET /api/billing/forecast - Get usage forecast
+app.MapGet("/api/billing/forecast", async (
+    int? days,
+    IUsageService usageService,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var forecastDays = days ?? 30;
+
+    // Get historical usage for trend analysis
+    var cycle = await usageService.GetCurrentBillingCycleAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
+    var currentUsage = cycle?.CreditsUsed ?? 0;
+    var daysElapsed = (DateTime.UtcNow - (cycle?.CycleStart ?? DateTime.UtcNow)).Days + 1;
+
+    // Simple linear projection
+    var dailyRate = currentUsage / Math.Max(1, daysElapsed);
+    var projectedMonthly = dailyRate * 30;
+
+    var forecasts = Enumerable.Range(1, forecastDays).Select(d => new
+    {
+        date = DateTime.UtcNow.AddDays(d).Date,
+        predictedCredits = Math.Round(currentUsage + (dailyRate * d), 2),
+        confidenceLow = Math.Round((currentUsage + (dailyRate * d)) * 0.8m, 2),
+        confidenceHigh = Math.Round((currentUsage + (dailyRate * d)) * 1.2m, 2)
+    });
+
+    return Results.Ok(new
+    {
+        currentUsage,
+        dailyRate = Math.Round(dailyRate, 2),
+        projectedMonthly = Math.Round(projectedMonthly, 2),
+        forecastDays,
+        forecasts,
+        modelVersion = "v1.0-linear",
+        generatedAt = DateTime.UtcNow
+    });
+})
+.WithName("GetUsageForecast")
+.WithDescription("Gets usage forecast for the specified number of days")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
+// GET /api/billing/recommendations - Get cost optimization recommendations
+app.MapGet("/api/billing/recommendations", async (
+    IUsageService usageService,
+    IPlanService planService,
+    ITenantContext tenantContext,
+    CancellationToken ct) =>
+{
+    var cycle = await usageService.GetCurrentBillingCycleAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
+    var subscription = await planService.GetSubscriptionAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
+    var currentPlan = subscription?.PlanName ?? "free";
+
+    var recommendations = new List<object>();
+
+    // Check for plan upgrade recommendation
+    var creditsUsed = cycle?.CreditsUsed ?? 0;
+    var creditsAllocated = cycle?.CreditsAllocated ?? 1000;
+    var usagePercent = creditsAllocated > 0 ? (creditsUsed / creditsAllocated) * 100 : 0;
+
+    if (usagePercent > 80 && currentPlan == "free")
+    {
+        recommendations.Add(new
+        {
+            type = "plan_upgrade",
+            title = "Consider upgrading to Pro",
+            description = $"You've used {usagePercent:F0}% of your free credits. Pro plan offers 10x more credits.",
+            estimatedSavings = 0,
+            priority = 1,
+            action = new { type = "upgrade", targetPlan = "pro" }
+        });
+    }
+    else if (usagePercent < 20 && currentPlan != "free")
+    {
+        recommendations.Add(new
+        {
+            type = "plan_downgrade",
+            title = "You may be overpaying",
+            description = $"You're only using {usagePercent:F0}% of your allocated credits. Consider a lower tier.",
+            estimatedSavings = currentPlan == "enterprise" ? 270m : 29m,
+            priority = 2,
+            action = new { type = "downgrade", targetPlan = currentPlan == "enterprise" ? "pro" : "free" }
+        });
+    }
+
+    // Annual billing recommendation
+    if (currentPlan != "free")
+    {
+        var monthlyPrice = GetPlanPrice(currentPlan, "monthly");
+        var annualSavings = monthlyPrice * 12 * 0.20m;
+        recommendations.Add(new
+        {
+            type = "billing_cycle",
+            title = "Save 20% with annual billing",
+            description = "Switch to annual billing and save 20% on your subscription.",
+            estimatedSavings = Math.Round(annualSavings, 2),
+            priority = 3,
+            action = new { type = "change_billing", targetInterval = "annual" }
+        });
+    }
+
+    return Results.Ok(new
+    {
+        recommendations,
+        analyzedAt = DateTime.UtcNow,
+        currentPlan,
+        currentUsagePercent = Math.Round(usagePercent, 1)
+    });
+})
+.WithName("GetCostRecommendations")
+.WithDescription("Gets cost optimization recommendations based on usage patterns")
+.RequireAuthorization()
+.Produces(StatusCodes.Status200OK);
+
 
 // ============================================
 // SHADOW MEMORY API ENDPOINTS
@@ -2139,26 +2823,48 @@ app.MapGet("/api/memory/timeline", async (
     DateTimeOffset? from,
     DateTimeOffset? to,
     int? limit,
-    ITimelineService timelineService) =>
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
 {
-    var timeline = await timelineService.GetGlobalTimelineAsync(from, to, limit ?? 100);
+    // Query with RLS context
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    var events = await conn.QueryAsync<dynamic>(@"
+        SELECT e.id as event_id, e.stream_id as memory_id, e.event_type, e.timestamp,
+               COALESCE(e.payload->>'summary', SUBSTRING(m.content, 1, 100)) as summary,
+               e.actor_id,
+               (e.payload->>'confidence_before')::float as confidence_before,
+               (e.payload->>'confidence_after')::float as confidence_after,
+               e.sequence_number
+        FROM memory_events e
+        LEFT JOIN memories m ON e.stream_id = m.id
+        WHERE (@From IS NULL OR e.timestamp >= @From)
+          AND (@To IS NULL OR e.timestamp <= @To)
+        ORDER BY e.timestamp DESC
+        LIMIT @Limit",
+        new { From = from, To = to, Limit = limit ?? 100 });
+
+    var eventsList = events.ToList();
+    var totalCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM memory_events");
 
     return Results.Ok(new
     {
-        timeline.From,
-        timeline.To,
-        timeline.TotalEvents,
-        eventTypeCounts = timeline.EventTypeCounts,
-        events = timeline.Events.Select(e => new
+        from = from,
+        to = to,
+        totalEvents = totalCount,
+        events = eventsList.Select(e => new
         {
-            e.EventId,
-            e.MemoryId,
-            e.EventType,
-            e.Timestamp,
-            e.Description,
-            e.ConfidenceBefore,
-            e.ConfidenceAfter,
-            e.ContentHash
+            sequenceNumber = (long)e.sequence_number,
+            eventId = (Guid)e.event_id,
+            memoryId = (Guid)e.memory_id,
+            eventType = (string)e.event_type,
+            timestamp = (DateTimeOffset)e.timestamp,
+            summary = (string?)e.summary,
+            actorId = (string?)e.actor_id,
+            confidenceBefore = (double?)e.confidence_before,
+            confidenceAfter = (double?)e.confidence_after
         })
     });
 });
@@ -2701,12 +3407,13 @@ app.MapPost("/api/security/scan", async (SecurityScanRequest request, ISecurityP
 });
 
 // ============================================
-// PRIVACY AUDIT API ENDPOINTS
+// LEGACY PRIVACY AUDIT API ENDPOINTS (kept for backwards compatibility)
 // Stores only hashes, timestamps, counts - NEVER raw content
+// Note: New endpoints use /api/privacy/* with IIntegrityAuditService
 // ============================================
 
-// GET /api/privacy/audit - Get audit trail (no content, only hashes)
-app.MapGet("/api/privacy/audit", async (
+// GET /api/privacy-legacy/audit - Get legacy audit trail (no content, only hashes)
+app.MapGet("/api/privacy-legacy/audit", async (
     DateTimeOffset? from,
     DateTimeOffset? to,
     int? limit,
@@ -2738,8 +3445,8 @@ app.MapGet("/api/privacy/audit", async (
     });
 });
 
-// GET /api/privacy/audit/stats - Get aggregated statistics (no content)
-app.MapGet("/api/privacy/audit/stats", async (
+// GET /api/privacy-legacy/audit/stats - Get aggregated statistics (no content)
+app.MapGet("/api/privacy-legacy/audit/stats", async (
     DateTimeOffset? from,
     DateTimeOffset? to,
     IPrivacyAuditService auditService) =>
@@ -2762,8 +3469,8 @@ app.MapGet("/api/privacy/audit/stats", async (
     });
 });
 
-// POST /api/privacy/audit/verify - Verify audit chain integrity
-app.MapPost("/api/privacy/audit/verify", async (
+// POST /api/privacy-legacy/audit/verify - Verify audit chain integrity
+app.MapPost("/api/privacy-legacy/audit/verify", async (
     PrivacyAuditVerifyRequest request,
     IPrivacyAuditService auditService) =>
 {
@@ -2792,8 +3499,8 @@ app.MapPost("/api/privacy/audit/verify", async (
     });
 });
 
-// POST /api/privacy/audit/proof - Generate cryptographic proof
-app.MapPost("/api/privacy/audit/proof", async (
+// POST /api/privacy-legacy/audit/proof - Generate cryptographic proof
+app.MapPost("/api/privacy-legacy/audit/proof", async (
     PrivacyAuditProofRequest request,
     IPrivacyAuditService auditService) =>
 {
@@ -2825,8 +3532,8 @@ app.MapPost("/api/privacy/audit/proof", async (
     });
 });
 
-// GET /api/privacy/audit/proof/{proofId} - Get stored proof by ID
-app.MapGet("/api/privacy/audit/proof/{proofId:guid}", async (Guid proofId) =>
+// GET /api/privacy-legacy/audit/proof/{proofId} - Get stored proof by ID
+app.MapGet("/api/privacy-legacy/audit/proof/{proofId:guid}", async (Guid proofId) =>
 {
     // Future: retrieve stored proof from privacy_audit_proofs table
     return Results.Ok(new
@@ -3164,19 +3871,33 @@ app.MapGet("/api/graph/topology/stats", async (IGraphEventStore graphEventStore)
 // ---- POWER PAGE DATA ENDPOINTS ----
 
 // GET /api/power/recent - Get recent memories for Power page
-app.MapGet("/api/power/recent", async (int? limit, IKnowledgeGraphStore store) =>
+app.MapGet("/api/power/recent", async (
+    int? limit,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
 {
-    var memories = await store.GetRecentMemoriesAsync(limit ?? 50);
+    // Query with RLS context
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    var memories = await conn.QueryAsync<dynamic>(@"
+        SELECT id, content, confidence, created_at, is_active, updated_at
+        FROM memories
+        ORDER BY created_at DESC
+        LIMIT @Limit", new { Limit = limit ?? 50 });
+
     return Results.Ok(new
     {
-        memories = memories.Select(m => new
+        items = memories.Select(m => new
         {
-            id = m.Id,
-            content = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content,
+            id = (Guid)m.id,
+            content = ((string)m.content).Length > 200 ? ((string)m.content)[..200] + "..." : (string)m.content,
             layer = "L3_KNOWLEDGE",
-            confidence = m.Similarity > 0 ? m.Similarity : 0.8,
-            createdAt = m.CreatedAt,
-            isActive = true
+            confidence = (decimal?)m.confidence ?? 0.8m,
+            createdAt = (DateTimeOffset)m.created_at,
+            updatedAt = (DateTimeOffset?)m.updated_at,
+            isActive = (bool)m.is_active
         })
     });
 });
@@ -3426,25 +4147,39 @@ app.MapGet("/api/power/events/type/{eventType}", async (
 app.MapGet("/api/power/events/stream", async (
     long? fromSequence,
     int? limit,
-    IPowerUserService powerService) =>
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
 {
-    var events = await powerService.GetEventStreamAsync(fromSequence ?? 0, limit ?? 1000);
+    // Query with RLS context
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    var events = await conn.QueryAsync<dynamic>(@"
+        SELECT id as event_id, sequence_number, event_type, stream_id as memory_id,
+               timestamp, payload as raw_payload, actor_id
+        FROM memory_events
+        WHERE sequence_number >= @FromSequence
+        ORDER BY sequence_number
+        LIMIT @Limit",
+        new { FromSequence = fromSequence ?? 0, Limit = limit ?? 1000 });
+
+    var eventsList = events.ToList();
 
     return Results.Ok(new
     {
         fromSequence = fromSequence ?? 0,
-        toSequence = events.LastOrDefault()?.SequenceNumber ?? 0,
-        events = events.Select(e => new
+        toSequence = eventsList.LastOrDefault()?.sequence_number ?? 0L,
+        items = eventsList.Select(e => new
         {
-            e.EventId,
-            e.SequenceNumber,
-            e.EventType,
-            e.MemoryId,
-            e.Timestamp,
-            e.RawPayload,
-            e.ActorId
+            eventId = (Guid)e.event_id,
+            sequenceNumber = (long)e.sequence_number,
+            eventType = (string)e.event_type,
+            streamId = (Guid)e.memory_id,
+            timestamp = (DateTimeOffset)e.timestamp,
+            actorId = (string?)e.actor_id
         }),
-        total = events.Count
+        total = eventsList.Count
     });
 });
 
@@ -3547,9 +4282,26 @@ app.MapGet("/api/power/mutations/replay", async (
 // ============================================
 
 // GET /api/mind/health - Overall mind health snapshot
-app.MapGet("/api/mind/health", async (IMindHealthService mindService) =>
+app.MapGet("/api/mind/health", async (
+    IMindHealthService mindService,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
 {
     var snapshot = await mindService.GetHealthSnapshotAsync();
+
+    // Query memory stats with RLS context
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    var stats = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE is_active = true) AS active,
+            COUNT(*) FILTER (WHERE is_active = false) AS archived,
+            COALESCE(AVG(confidence), 0) AS avg_confidence
+        FROM memories");
+
     // Convert to dashboard-expected format with string status
     return Results.Ok(new
     {
@@ -3559,7 +4311,11 @@ app.MapGet("/api/mind/health", async (IMindHealthService mindService) =>
         reliabilityScore = 1.0 - snapshot.HallucinationRate,
         freshnessScore = snapshot.ConfidenceCalibration,
         status = snapshot.Status.ToString(), // Ensure string, not number
-        calculatedAt = snapshot.Timestamp
+        calculatedAt = snapshot.Timestamp,
+        totalMemories = stats?.total ?? 0L,
+        activeMemories = stats?.active ?? 0L,
+        archivedMemories = stats?.archived ?? 0L,
+        avgConfidence = stats?.avg_confidence ?? 0.0
     });
 });
 
@@ -3773,6 +4529,198 @@ app.MapPost("/api/mind/recalibrate", async (IMindHealthService mindService) =>
         acknowledged = true,
         currentScore = snapshot.OverallScore,
         message = "Recalibration initiated. Health scores will be updated in the next cycle."
+    });
+});
+
+// ============================================
+// INTEGRITY & PRIVACY ENDPOINTS
+// ============================================
+
+// POST /api/integrity/verify/{memoryId} - Verify single memory integrity
+app.MapPost("/api/integrity/verify/{memoryId:guid}", async (
+    Guid memoryId,
+    IIntegrityService integrityService,
+    IIntegrityAuditService auditService) =>
+{
+    var result = await integrityService.VerifyProofAsync(memoryId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = result.IsValid ? IntegrityAuditAction.IntegrityVerified : IntegrityAuditAction.IntegrityFailed,
+        MemoryId = memoryId,
+        IntegrityValid = result.IsValid,
+        Details = new Dictionary<string, object>
+        {
+            ["status"] = result.Status,
+            ["failureReason"] = result.FailureReason ?? ""
+        }
+    });
+
+    return Results.Ok(result);
+});
+
+// POST /api/integrity/verify-all - Verify entire chain for tenant
+app.MapPost("/api/integrity/verify-all", async (
+    ITenantContext tenantContext,
+    IIntegrityService integrityService,
+    IIntegrityAuditService auditService) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.BatchVerificationStarted
+    });
+
+    var result = await integrityService.VerifyChainAsync(tenantId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.BatchVerificationCompleted,
+        IntegrityValid = result.IsValid,
+        Details = new Dictionary<string, object>
+        {
+            ["verifiedCount"] = result.VerifiedCount,
+            ["invalidCount"] = result.InvalidCount,
+            ["orphanCount"] = result.OrphanCount,
+            ["durationMs"] = result.Duration.TotalMilliseconds
+        }
+    });
+
+    return Results.Ok(result);
+});
+
+// GET /api/integrity/proof/{memoryId} - Get proof bundle
+app.MapGet("/api/integrity/proof/{memoryId:guid}", async (
+    Guid memoryId,
+    IIntegrityService integrityService) =>
+{
+    var proof = await integrityService.GetProofAsync(memoryId);
+    if (proof == null)
+        return Results.NotFound(new { error = "Proof not found or not yet computed" });
+
+    return Results.Ok(proof);
+});
+
+// POST /api/integrity/compute/{memoryId} - Compute/update proof for a memory
+app.MapPost("/api/integrity/compute/{memoryId:guid}", async (
+    Guid memoryId,
+    IIntegrityService integrityService,
+    IIntegrityAuditService auditService) =>
+{
+    var proof = await integrityService.UpdateIntegrityAsync(memoryId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.IntegrityComputed,
+        MemoryId = memoryId,
+        IntegrityValid = true
+    });
+
+    return Results.Ok(proof);
+});
+
+// GET /api/privacy/settings - Get tenant privacy settings
+app.MapGet("/api/privacy/settings", async (IIntegrityAuditService auditService) =>
+{
+    var settings = await auditService.GetSettingsAsync();
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.SettingsRead
+    });
+
+    return Results.Ok(settings);
+});
+
+// POST /api/privacy/settings - Update privacy settings
+app.MapPost("/api/privacy/settings", async (
+    TenantIntegritySettingsUpdate update,
+    IIntegrityAuditService auditService) =>
+{
+    var settings = await auditService.UpdateSettingsAsync(update);
+    return Results.Ok(settings);
+});
+
+// GET /api/privacy/audit - Paginated audit log
+app.MapGet("/api/privacy/audit", async (
+    int? page,
+    int? pageSize,
+    string? action,
+    Guid? memoryId,
+    DateTimeOffset? from,
+    DateTimeOffset? to,
+    IIntegrityAuditService auditService) =>
+{
+    IntegrityAuditAction? actionFilter = null;
+    if (!string.IsNullOrEmpty(action) && Enum.TryParse<IntegrityAuditAction>(action, out var parsed))
+    {
+        actionFilter = parsed;
+    }
+
+    var options = new IntegrityAuditQueryOptions
+    {
+        Page = page ?? 1,
+        PageSize = pageSize ?? 50,
+        Action = actionFilter,
+        MemoryId = memoryId,
+        From = from,
+        To = to
+    };
+
+    var result = await auditService.GetAuditEntriesAsync(options);
+    return Results.Ok(result);
+});
+
+// GET /api/privacy/audit/{memoryId} - Audit trail for specific memory
+app.MapGet("/api/privacy/audit/{memoryId:guid}", async (
+    Guid memoryId,
+    IIntegrityAuditService auditService) =>
+{
+    var entries = await auditService.GetMemoryAuditTrailAsync(memoryId);
+    return Results.Ok(entries);
+});
+
+// GET /api/integrity/stats - Get integrity statistics
+app.MapGet("/api/integrity/stats", async (
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    var stats = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+        SELECT
+            COUNT(*) AS total_memories,
+            COUNT(*) FILTER (WHERE integrity_status = 'valid') AS verified_count,
+            COUNT(*) FILTER (WHERE integrity_status = 'invalid') AS corrupted_count,
+            COUNT(*) FILTER (WHERE content_hash IS NULL) AS pending_count,
+            MAX(CASE WHEN proof_bundle IS NOT NULL THEN created_at END) AS last_verified_at
+        FROM memories
+        WHERE tenant_id = @TenantId",
+        new { TenantId = tenantId });
+
+    // Get last verification run
+    var lastRun = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+        SELECT started_at, completed_at, status, total_memories, verified_count, invalid_count
+        FROM integrity_verification_runs
+        WHERE tenant_id = @TenantId
+        ORDER BY started_at DESC
+        LIMIT 1",
+        new { TenantId = tenantId });
+
+    return Results.Ok(new
+    {
+        totalMemories = (long)(stats?.total_memories ?? 0),
+        verifiedCount = (long)(stats?.verified_count ?? 0),
+        corruptedCount = (long)(stats?.corrupted_count ?? 0),
+        pendingCount = (long)(stats?.pending_count ?? 0),
+        integrityRate = (long)(stats?.total_memories ?? 0) > 0
+            ? (double)(stats?.verified_count ?? 0) / (long)(stats?.total_memories ?? 1)
+            : 1.0,
+        lastFullCheck = lastRun?.completed_at,
+        lastRunStatus = lastRun?.status
     });
 });
 
@@ -4472,7 +5420,38 @@ app.MapGet("/api/mutations/predict/default", async (IPredictiveSimulationService
 
 app.Run();
 
+// Helper function for plan pricing
+static decimal GetPlanPrice(string planName, string interval) => planName.ToLower() switch
+{
+    "free" => 0m,
+    "pro" => interval switch
+    {
+        "annual" => 19.99m * 12 * 0.80m,  // 20% discount
+        "quarterly" => 19.99m * 3 * 0.90m, // 10% discount
+        _ => 19.99m
+    },
+    "team" => interval switch
+    {
+        "annual" => 79m * 12 * 0.80m,  // 20% discount
+        "quarterly" => 79m * 3 * 0.90m, // 10% discount
+        _ => 79m
+    },
+    "enterprise" => interval switch
+    {
+        "annual" => 299m * 12 * 0.80m,
+        "quarterly" => 299m * 3 * 0.90m,
+        _ => 299m
+    },
+    _ => 0m
+};
+
 // Request DTOs
+internal record PlanChangeRequest(
+    string TargetPlan,
+    string? BillingInterval = "monthly",
+    string? SuccessUrl = null,
+    string? CancelUrl = null);
+
 internal record MemoryIngestRequest(
     string Content,
     string? Source = null,

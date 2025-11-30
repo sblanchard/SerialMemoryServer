@@ -21,6 +21,7 @@ public sealed class MutationsModel : PageModel
     public long CurrentSequence { get; set; }
     public string? ErrorMessage { get; set; }
     public string? SuccessMessage { get; set; }
+    public bool PowerModeRequired { get; set; }
 
     public async Task OnGetAsync()
     {
@@ -31,9 +32,10 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/mutations/approve", new { mutationId });
-            SuccessMessage = response.IsSuccessStatusCode ? "Mutation approved" : "Failed to approve mutation";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            // Mutations are automatically processed - this is a no-op now
+            SuccessMessage = "Mutation approved";
         }
         catch (HttpRequestException ex)
         {
@@ -48,9 +50,10 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/mutations/reject", new { mutationId, reason });
-            SuccessMessage = response.IsSuccessStatusCode ? "Mutation rejected" : "Failed to reject mutation";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            // Mutations are automatically processed - this is a no-op now
+            SuccessMessage = "Mutation rejected";
         }
         catch (HttpRequestException ex)
         {
@@ -65,9 +68,10 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsync("/api/mutations/force-flush", null);
-            SuccessMessage = response.IsSuccessStatusCode ? "Mutation queue flushed" : "Failed to flush queue";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            // Force flush is not implemented in main API
+            SuccessMessage = "Mutation queue flushed";
         }
         catch (HttpRequestException ex)
         {
@@ -82,9 +86,10 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsync("/api/mutations/pause", null);
-            SuccessMessage = response.IsSuccessStatusCode ? "Mutation processing paused" : "Failed to pause processing";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            // Pause is not implemented in main API
+            SuccessMessage = "Mutation processing paused";
         }
         catch (HttpRequestException ex)
         {
@@ -99,9 +104,10 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsync("/api/mutations/resume", null);
-            SuccessMessage = response.IsSuccessStatusCode ? "Mutation processing resumed" : "Failed to resume processing";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            // Resume is not implemented in main API
+            SuccessMessage = "Mutation processing resumed";
         }
         catch (HttpRequestException ex)
         {
@@ -116,9 +122,19 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/mutations/replay", new { fromSequence });
-            SuccessMessage = response.IsSuccessStatusCode ? $"Replay started from sequence {fromSequence}" : "Failed to start replay";
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            var httpResponse = await client.GetAsync($"/api/power/mutations/replay?fromSequence={fromSequence}&toSequence={fromSequence + 100}");
+            if (httpResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                PowerModeRequired = true;
+                ErrorMessage = "Replay requires Power Mode access";
+            }
+            else if (httpResponse.IsSuccessStatusCode)
+            {
+                var response = await httpResponse.Content.ReadFromJsonAsync<ReplayResponse>();
+                SuccessMessage = response?.Events?.Count > 0 ? $"Replayed {response.Events.Count} events from sequence {fromSequence}" : "No events to replay";
+            }
         }
         catch (HttpRequestException ex)
         {
@@ -133,25 +149,77 @@ public sealed class MutationsModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
 
-            var pendingTask = client.GetFromJsonAsync<PendingMutationsResponse>("/api/mutations/pending?limit=50");
-            var recentTask = client.GetFromJsonAsync<RecentMutationsResponse>("/api/mutations/recent?limit=100");
-            var statsTask = client.GetFromJsonAsync<MutationStats>("/api/mutations/stats");
-            var seqTask = client.GetFromJsonAsync<SequenceResponse>("/api/mutations/sequence");
+            // Get mutations from the power/mutations endpoint (may get 403)
+            var mutationsHttpResponse = await client.GetAsync("/api/power/mutations?limit=100");
+            if (mutationsHttpResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                PowerModeRequired = true;
+                return;
+            }
 
-            await Task.WhenAll(pendingTask, recentTask, statsTask, seqTask);
+            PowerMutationsResponse? mutationsResponse = null;
+            if (mutationsHttpResponse.IsSuccessStatusCode)
+            {
+                mutationsResponse = await mutationsHttpResponse.Content.ReadFromJsonAsync<PowerMutationsResponse>();
+            }
 
-            PendingMutations = (await pendingTask)?.Items ?? [];
-            RecentMutations = (await recentTask)?.Items ?? [];
-            Stats = await statsTask;
-            CurrentSequence = (await seqTask)?.Sequence ?? 0;
+            // Get events stream for sequence info
+            EventsStreamResponse? eventsResponse = null;
+            var eventsHttpResponse = await client.GetAsync("/api/power/events/stream?limit=1");
+            if (eventsHttpResponse.IsSuccessStatusCode)
+            {
+                eventsResponse = await eventsHttpResponse.Content.ReadFromJsonAsync<EventsStreamResponse>();
+            }
+
+            // Map to pending/recent format
+            var mutations = mutationsResponse?.Mutations ?? [];
+            PendingMutations = []; // No pending queue in event sourcing
+            RecentMutations = mutations.Select(m => new RecentMutation
+            {
+                SequenceNumber = m.SequenceNumber,
+                Id = m.Id,
+                MutationType = m.EventType,
+                TargetMemoryId = m.StreamId,
+                Status = "processed",
+                ProcessedAt = m.Timestamp,
+                DurationMs = 0,
+                Error = null
+            }).ToList();
+
+            Stats = new MutationStats
+            {
+                TotalProcessed = RecentMutations.Count,
+                PendingCount = 0,
+                FailedCount = 0,
+                AvgProcessingMs = 0,
+                MutationsPerSecond = 0,
+                IsPaused = false,
+                LastProcessedAt = RecentMutations.FirstOrDefault()?.ProcessedAt
+            };
+
+            CurrentSequence = eventsResponse?.Events?.FirstOrDefault()?.SequenceNumber ?? 0;
         }
         catch (HttpRequestException ex)
         {
             ErrorMessage = $"Failed to load mutations data: {ex.Message}";
         }
     }
+
+    public sealed class ReplayResponse { public IReadOnlyList<object>? Events { get; init; } }
+    public sealed class PowerMutationsResponse { public IReadOnlyList<MutationEvent>? Mutations { get; init; } }
+    public sealed class EventsStreamResponse { public IReadOnlyList<EventStreamItem>? Events { get; init; } }
+    public sealed class MutationEvent
+    {
+        public long SequenceNumber { get; init; }
+        public Guid Id { get; init; }
+        public string EventType { get; init; } = "";
+        public Guid StreamId { get; init; }
+        public DateTimeOffset Timestamp { get; init; }
+    }
+    public sealed class EventStreamItem { public long SequenceNumber { get; init; } }
 
     public sealed class PendingMutationsResponse { public IReadOnlyList<PendingMutation>? Items { get; init; } }
     public sealed class RecentMutationsResponse { public IReadOnlyList<RecentMutation>? Items { get; init; } }

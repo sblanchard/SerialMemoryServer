@@ -70,7 +70,7 @@ public class MultiTenantUsageTests : IAsyncLifetime
         var context = new TenantContext();
 
         // Act
-        context.SetContext("tenant-1", "workspace-1", "user-1", Guid.CreateVersion7());
+        context.SetContext("tenant-1", "workspace-1", "user-1", sessionId: Guid.CreateVersion7());
 
         // Assert
         Assert.Equal("tenant-1", context.TenantId);

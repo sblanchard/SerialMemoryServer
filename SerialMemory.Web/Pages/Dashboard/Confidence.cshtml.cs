@@ -33,7 +33,7 @@ public sealed class ConfidenceModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsJsonAsync("/api/confidence/reason", new
             {
                 project,
@@ -61,7 +61,7 @@ public sealed class ConfidenceModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            var client = _apiClient.CreateClient("Api");
 
             // Load history
             var historyResponse = await client.GetAsync("/api/confidence/history?limit=20");

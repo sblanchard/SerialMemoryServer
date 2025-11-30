@@ -18,18 +18,15 @@ public sealed class TracesModel : PageModel
     public IReadOnlyList<MemoryTraceItem> Traces { get; set; } = [];
     public IReadOnlyList<EventLogItem> Events { get; set; } = [];
     public MemoryTraceDetail? SelectedTrace { get; set; }
-    public string? SqlResult { get; set; }
     public string? ErrorMessage { get; set; }
     public string? SuccessMessage { get; set; }
+    public bool PowerModeRequired { get; set; }
 
     [BindProperty]
     public string? MemoryId { get; set; }
 
     [BindProperty]
     public string? EventFilter { get; set; }
-
-    [BindProperty]
-    public string? SqlQuery { get; set; }
 
     public async Task OnGetAsync(Guid? id, string? eventFilter)
     {
@@ -57,68 +54,48 @@ public sealed class TracesModel : PageModel
         return Page();
     }
 
-    public async Task<IActionResult> OnPostExecuteSqlAsync()
-    {
-        if (string.IsNullOrWhiteSpace(SqlQuery))
-        {
-            ErrorMessage = "SQL query cannot be empty";
-            await LoadTracesAsync();
-            return Page();
-        }
-
-        // Security check - only allow SELECT queries
-        var trimmed = SqlQuery.Trim().ToUpperInvariant();
-        if (!trimmed.StartsWith("SELECT") && !trimmed.StartsWith("EXPLAIN"))
-        {
-            ErrorMessage = "Only SELECT and EXPLAIN queries are allowed";
-            await LoadTracesAsync();
-            return Page();
-        }
-
-        try
-        {
-            var client = _apiClient.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/traces/execute-sql", new { query = SqlQuery });
-
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<SqlResultResponse>();
-                SqlResult = result?.Result ?? "No results";
-            }
-            else
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                ErrorMessage = $"SQL error: {error}";
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            ErrorMessage = $"API error: {ex.Message}";
-        }
-
-        await LoadTracesAsync();
-        return Page();
-    }
-
     private async Task LoadTracesAsync()
     {
         try
         {
-            var client = _apiClient.CreateClient();
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
 
-            var tracesUrl = "/api/traces/recent?limit=50";
-            if (!string.IsNullOrEmpty(EventFilter))
+            // Use the correct power events endpoint
+            var eventsUrl = string.IsNullOrEmpty(EventFilter)
+                ? "/api/power/events/stream?limit=100"
+                : $"/api/power/events/type/{EventFilter}?limit=100";
+
+            // Try power endpoints (may get 403 for non-power users)
+            var memoriesResponse = await client.GetAsync("/api/power/recent?limit=50");
+            if (memoriesResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
-                tracesUrl += $"&eventType={EventFilter}";
+                PowerModeRequired = true;
+                return;
             }
 
-            var tracesTask = client.GetFromJsonAsync<TracesResponse>(tracesUrl);
-            var eventsTask = client.GetFromJsonAsync<EventsResponse>("/api/traces/events?limit=100");
+            var eventsResponse = await client.GetAsync(eventsUrl);
 
-            await Task.WhenAll(tracesTask, eventsTask);
+            if (memoriesResponse.IsSuccessStatusCode)
+            {
+                var memoriesResult = await memoriesResponse.Content.ReadFromJsonAsync<MemoriesResponse>();
+                var memories = memoriesResult?.Items ?? [];
+                Traces = memories.Select(m => new MemoryTraceItem
+                {
+                    MemoryId = m.Id,
+                    Content = m.Content ?? "",
+                    EventCount = 0,
+                    LastEventType = "unknown",
+                    LastEventAt = m.UpdatedAt ?? m.CreatedAt,
+                    IsActive = m.IsActive
+                }).ToList();
+            }
 
-            Traces = (await tracesTask)?.Items ?? [];
-            Events = (await eventsTask)?.Items ?? [];
+            if (eventsResponse.IsSuccessStatusCode)
+            {
+                var eventsResult = await eventsResponse.Content.ReadFromJsonAsync<EventsResponse>();
+                Events = eventsResult?.Items ?? [];
+            }
         }
         catch (HttpRequestException ex)
         {
@@ -130,8 +107,18 @@ public sealed class TracesModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient();
-            SelectedTrace = await client.GetFromJsonAsync<MemoryTraceDetail>($"/api/traces/memory/{id}");
+            // Use "Api" client for main API endpoints
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.GetAsync($"/api/power/trace/{id}");
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                PowerModeRequired = true;
+                return;
+            }
+            if (response.IsSuccessStatusCode)
+            {
+                SelectedTrace = await response.Content.ReadFromJsonAsync<MemoryTraceDetail>();
+            }
         }
         catch (HttpRequestException ex)
         {
@@ -139,9 +126,18 @@ public sealed class TracesModel : PageModel
         }
     }
 
+    public sealed class MemoriesResponse { public IReadOnlyList<MemoryItem>? Items { get; init; } }
+    public sealed class MemoryItem
+    {
+        public Guid Id { get; init; }
+        public string? Content { get; init; }
+        public bool IsActive { get; init; }
+        public DateTimeOffset CreatedAt { get; init; }
+        public DateTimeOffset? UpdatedAt { get; init; }
+    }
+
     public sealed class TracesResponse { public IReadOnlyList<MemoryTraceItem>? Items { get; init; } }
     public sealed class EventsResponse { public IReadOnlyList<EventLogItem>? Items { get; init; } }
-    public sealed class SqlResultResponse { public string? Result { get; init; } }
 
     public sealed class MemoryTraceItem
     {

@@ -117,30 +117,18 @@ app.UseRouting();
 app.UseSession();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseInternalTokenMiddleware(); // Auto-generates/refreshes internal tokens
 app.MapRazorPages();
 
 // API Proxy - forwards /api/* requests to internal API server
-// Uses internal short-lived tokens, NOT external API keys
+// Uses internal short-lived tokens managed by InternalTokenMiddleware
 app.Map("/api/{**path}", async (
     HttpContext context,
     IHttpClientFactory httpClientFactory,
-    InternalTokenService internalTokenService,
     ILogger<Program> logger,
     string path) =>
 {
     var client = httpClientFactory.CreateClient("Api");
-
-    // Ensure X-Api-Key is present for service-to-service auth
-    // (may not be set if HttpClient handler pooling resets headers)
-    if (!client.DefaultRequestHeaders.Contains("X-Api-Key"))
-    {
-        var svcKey = context.RequestServices.GetRequiredService<IConfiguration>()["SERVICE_API_KEY"]
-            ?? Environment.GetEnvironmentVariable("SERVICE_API_KEY");
-        if (!string.IsNullOrEmpty(svcKey))
-        {
-            client.DefaultRequestHeaders.Add("X-Api-Key", svcKey);
-        }
-    }
 
     // SECURITY: Get tenant context from cookie claims (primary authority)
     var cookieTenantId = context.User.FindFirst("tenant_id")?.Value;
@@ -152,80 +140,19 @@ app.Map("/api/{**path}", async (
         return Results.Unauthorized();
     }
 
-    // SECURITY: Get internal token from session (NOT from cookie)
-    var internalToken = context.Session.GetString("internal_token");
-    var sessionTenantId = context.Session.GetString("internal_token_tenant");
-    var sessionUserId = context.Session.GetString("internal_token_user");
-
-    // SECURITY: Validate tenant matches between cookie and session
-    if (sessionTenantId != cookieTenantId || sessionUserId != cookieUserId)
+    // Get internal token from middleware (stored in HttpContext.Items)
+    var internalToken = context.Items["InternalToken"] as string;
+    if (string.IsNullOrEmpty(internalToken))
     {
-        logger.LogError(
-            "SECURITY: Cross-tenant attack detected! Cookie tenant={CookieTenant}/{CookieUser}, Session tenant={SessionTenant}/{SessionUser}",
-            cookieTenantId, cookieUserId, sessionTenantId, sessionUserId);
-
-        // Clear compromised session
-        context.Session.Clear();
-        return Results.Problem(
-            "Session integrity check failed. Please log in again.",
-            statusCode: 403);
+        logger.LogWarning("API proxy request rejected: no internal token available for user {UserId}", cookieUserId);
+        return Results.Problem("Session expired. Please log in again.", statusCode: 401);
     }
 
-    // Validate internal token if present
-    if (!string.IsNullOrEmpty(internalToken))
-    {
-        var tokenClaims = internalTokenService.ValidateToken(internalToken);
+    // Forward internal token to API as Bearer token
+    client.DefaultRequestHeaders.Authorization =
+        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", internalToken);
 
-        if (tokenClaims == null)
-        {
-            // Token expired or invalid - regenerate
-            logger.LogDebug("Internal token expired for user {UserId}, regenerating", cookieUserId);
-            internalToken = internalTokenService.GenerateToken(new InternalTokenClaims
-            {
-                TenantId = cookieTenantId,
-                UserId = cookieUserId,
-                WorkspaceId = "default",
-                Role = context.User.FindFirst("role")?.Value ?? "user",
-                Email = context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
-            });
-            context.Session.SetString("internal_token", internalToken);
-        }
-        else if (!internalTokenService.ValidateTenantMatch(context.User, tokenClaims))
-        {
-            logger.LogError(
-                "SECURITY: Token tenant mismatch! Clearing session for user {UserId}",
-                cookieUserId);
-            context.Session.Clear();
-            return Results.Problem(
-                "Security validation failed. Please log in again.",
-                statusCode: 403);
-        }
-
-        // Forward internal token to API
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", internalToken);
-    }
-    else
-    {
-        // No internal token - generate new one
-        logger.LogDebug("No internal token found for user {UserId}, generating", cookieUserId);
-        internalToken = internalTokenService.GenerateToken(new InternalTokenClaims
-        {
-            TenantId = cookieTenantId,
-            UserId = cookieUserId,
-            WorkspaceId = "default",
-            Role = context.User.FindFirst("role")?.Value ?? "user",
-            Email = context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
-        });
-        context.Session.SetString("internal_token", internalToken);
-        context.Session.SetString("internal_token_tenant", cookieTenantId);
-        context.Session.SetString("internal_token_user", cookieUserId);
-
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", internalToken);
-    }
-
-    // Add tenant context headers for API (trusted because of service API key)
+    // Add tenant context headers for API
     client.DefaultRequestHeaders.Add("X-Tenant-Id", cookieTenantId);
     client.DefaultRequestHeaders.Add("X-User-Id", cookieUserId);
 
@@ -247,6 +174,17 @@ app.Map("/api/{**path}", async (
             var body = await reader.ReadToEndAsync();
             var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
             response = await client.PostAsync(targetUrl, content);
+        }
+        else if (context.Request.Method == "DELETE")
+        {
+            response = await client.DeleteAsync(targetUrl);
+        }
+        else if (context.Request.Method == "PUT")
+        {
+            using var reader = new StreamReader(context.Request.Body);
+            var body = await reader.ReadToEndAsync();
+            var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            response = await client.PutAsync(targetUrl, content);
         }
         else
         {

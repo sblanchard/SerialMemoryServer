@@ -81,6 +81,7 @@ public sealed record UserInfoResult
     public required string TenantName { get; init; }
     public required string TenantSlug { get; init; }
     public required string Role { get; init; }
+    public string? Email { get; init; }
     public required IReadOnlyList<string> Scopes { get; init; }
     public required IReadOnlyList<WorkspaceInfo> Workspaces { get; init; }
     public DateTimeOffset? JoinedAt { get; init; }

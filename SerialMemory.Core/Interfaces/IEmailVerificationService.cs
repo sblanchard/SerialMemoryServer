@@ -45,12 +45,14 @@ public interface IEmailVerificationService
     /// <summary>
     /// Creates verification token and sends verification email.
     /// </summary>
+    /// <param name="apiKey">Optional API key to include in the email (only shown once at signup)</param>
     Task SendVerificationEmailAsync(
         Guid tenantId,
         string userId,
         string email,
         string? ipAddress = null,
         string? userAgent = null,
+        string? apiKey = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
