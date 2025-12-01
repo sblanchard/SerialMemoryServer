@@ -93,9 +93,11 @@ builder.Services.AddScoped<ApiClientService>();
 var deploymentContext = new DeploymentContext();
 
 // Store configuration for views
+var publicDashboardApiUrl = builder.Configuration["PUBLIC_DASHBOARD_API_URL"] ?? dashboardApiUrl;
 builder.Services.AddSingleton(new AppConfig
 {
     ApiBaseUrl = publicApiUrl, // Public URL for browser JavaScript (SignalR, fetch)
+    DashboardApiBaseUrl = publicDashboardApiUrl, // Dashboard API URL for reasoning endpoints
     StripePublishableKey = stripePublishableKey,
     IsSelfHosted = deploymentContext.IsSelfHosted,
     DeploymentMode = deploymentContext.Mode.ToString(),
@@ -209,6 +211,7 @@ app.Run();
 public sealed class AppConfig
 {
     public string ApiBaseUrl { get; init; } = "";
+    public string DashboardApiBaseUrl { get; init; } = "";
     public string StripePublishableKey { get; init; } = "";
     public bool IsSelfHosted { get; init; }
     public string DeploymentMode { get; init; } = "";

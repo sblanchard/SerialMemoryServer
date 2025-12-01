@@ -13,6 +13,10 @@ using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Email;
 using SerialMemory.Infrastructure.KillSwitch;
+using SerialMemory.Infrastructure.Rag;
+using SerialMemory.Infrastructure.Reasoning;
+using SerialMemory.Infrastructure.Services;
+using SerialMemory.ML;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -93,6 +97,111 @@ builder.Services.AddSingleton<IDeveloperOnboardingService>(sp =>
         sp.GetRequiredService<IEmailService>(),
         sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService>>()));
 builder.Services.AddSingleton<IEmailVerificationService, EmailVerificationService>();
+
+// =============================================================================
+// RAG SERVICE REGISTRATIONS
+// =============================================================================
+
+// Embedding and LLM services for RAG
+var openAiApiKey = builder.Configuration["OPENAI_API_KEY"]
+    ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var ollamaBaseUrl = builder.Configuration["OLLAMA_BASE_URL"]
+    ?? Environment.GetEnvironmentVariable("OLLAMA_BASE_URL")
+    ?? "http://localhost:11434";
+
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    var openAiEmbedModel = builder.Configuration["OPENAI_EMBED_MODEL"]
+        ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
+        ?? "text-embedding-3-small";
+    var openAiClient = new OpenAiClient(
+        apiKey: openAiApiKey,
+        chatModel: "gpt-4.1-mini",
+        embedModel: openAiEmbedModel,
+        embeddingDimension: 1536);
+    builder.Services.AddSingleton(openAiClient);
+    builder.Services.AddSingleton<IEmbeddingService>(openAiClient);
+    builder.Services.AddSingleton<ILlmService>(openAiClient);
+}
+else
+{
+    var ollamaEmbedModel = builder.Configuration["OLLAMA_EMBEDDING_MODEL"]
+        ?? Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_MODEL")
+        ?? "nomic-embed-text";
+    builder.Services.AddSingleton<IEmbeddingService>(_ =>
+        new OllamaEmbeddingService(ollamaBaseUrl, ollamaEmbedModel));
+    builder.Services.AddSingleton<ILlmService>(_ =>
+        new OllamaLlmService(ollamaBaseUrl, "qwen2.5:14b-instruct-q4_K_M"));
+}
+
+// L2 Embedding service for RAG indexing
+builder.Services.AddSingleton<IL2EmbeddingService>(sp =>
+    new L2EmbeddingService(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<IEmbeddingService>(),
+        sp.GetRequiredService<ILogger<L2EmbeddingService>>()));
+
+// Personalized RAG service
+builder.Services.AddSingleton<IPersonalizedRagService>(sp =>
+    new PersonalizedRagService(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<IEmbeddingService>(),
+        sp.GetRequiredService<ILlmService>(),
+        sp.GetRequiredService<ILogger<PersonalizedRagService>>()));
+
+// =============================================================================
+// REASONING SERVICE REGISTRATIONS
+// =============================================================================
+
+// Knowledge graph store for reasoning (uses connection string for single-tenant mode)
+builder.Services.AddSingleton<IKnowledgeGraphStore>(sp =>
+    new SerialMemory.Infrastructure.PostgresKnowledgeGraphStore(
+        builder.Configuration.GetConnectionString("DefaultConnection") ?? ""));
+
+// Engineering reasoning service (rule-based, uses primary constructor)
+builder.Services.AddSingleton<IEngineeringReasoningService>(sp =>
+    new SerialMemory.Infrastructure.Services.EngineeringReasoningService(
+        sp.GetRequiredService<IKnowledgeGraphStore>()));
+
+// Reasoning model factory
+builder.Services.AddSingleton<IReasoningModelFactory>(sp =>
+    new SerialMemory.Infrastructure.Services.DefaultReasoningModelFactory(
+        sp.GetRequiredService<IKnowledgeGraphStore>(),
+        sp.GetRequiredService<ILoggerFactory>()));
+
+// Multi-model reasoning service
+builder.Services.AddSingleton<IMultiModelReasoningService>(sp =>
+    new MultiModelReasoningService(
+        sp.GetRequiredService<IKnowledgeGraphStore>(),
+        sp.GetRequiredService<IEngineeringReasoningService>(),
+        sp.GetRequiredService<IReasoningModelFactory>(),
+        sp.GetRequiredService<ILogger<MultiModelReasoningService>>()));
+
+// Reasoning hub broadcaster for SignalR events
+builder.Services.AddSingleton<ReasoningHubBroadcaster>();
+
+// Reasoning run service (orchestrates and persists)
+builder.Services.AddSingleton<IReasoningRunService>(sp =>
+{
+    var service = new ReasoningRunService(
+        sp.GetRequiredService<IInternalDbConnectionFactory>(),
+        sp.GetRequiredService<IMultiModelReasoningService>(),
+        sp.GetRequiredService<ILogger<ReasoningRunService>>());
+
+    // Wire up SignalR broadcasting
+    var broadcaster = sp.GetRequiredService<ReasoningHubBroadcaster>();
+    service.OnTraceAdded += async (executionId, trace) =>
+    {
+        // Get tenantId from the execution context (stored on the trace)
+        await broadcaster.BroadcastNewStepAddedAsync(executionId, trace.ExecutionId != Guid.Empty ? trace.ExecutionId : executionId, trace);
+    };
+    service.OnExecutionCompleted += async (executionId, execution) =>
+    {
+        await broadcaster.BroadcastExecutionCompletedAsync(executionId, execution.TenantId, execution);
+    };
+
+    return service;
+});
 
 // Stripe configuration
 var stripeConfig = new StripeConfig
@@ -175,6 +284,9 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
+
+// Add SignalR for real-time reasoning updates
+builder.Services.AddSignalR();
 
 // Add production-grade telemetry with Prometheus exporter
 builder.Services.AddSerialMemoryTelemetry("SerialMemory.Api.Dashboard", "1.0.0");
@@ -1064,6 +1176,21 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = Dat
 // Control Room Endpoints
 // =============================================================================
 app.MapControlRoomEndpoints(selfHostedMode);
+
+// =============================================================================
+// RAG Endpoints (Ask My Memory)
+// =============================================================================
+app.MapRagEndpoints(selfHostedMode);
+
+// =============================================================================
+// Reasoning Endpoints (Multi-Model DAG Analysis)
+// =============================================================================
+app.MapReasoningEndpoints(selfHostedMode);
+
+// =============================================================================
+// SignalR Hub for Reasoning (Real-time DAG updates)
+// =============================================================================
+app.MapHub<ReasoningHub>("/hubs/reasoning");
 
 app.Run();
 

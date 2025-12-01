@@ -594,6 +594,7 @@ app.MapGet("/health", async () =>
 // Map SignalR hubs
 app.MapHub<ContextHub>("/hub/context");
 app.MapHub<LiveHub>("/hubs/live");
+app.MapHub<ReasoningHub>("/hubs/reasoning");
 
 // ============================================
 // KNOWLEDGE GRAPH API ENDPOINTS

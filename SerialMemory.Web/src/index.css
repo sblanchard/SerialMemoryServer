@@ -366,3 +366,139 @@ body {
 .animate-in {
   animation: slide-in-from-top 0.2s ease-out;
 }
+
+/* =============================================================================
+   Ask My Memory Panel
+   ============================================================================= */
+
+.ask-memory-panel {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(34, 211, 238, 0.04));
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.ask-memory-input {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+  color: white;
+  border-radius: 10px;
+  padding: 12px 80px 12px 14px;
+  width: 100%;
+  resize: none;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  transition: all 0.2s ease;
+  min-height: 44px;
+}
+
+.ask-memory-input:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+.ask-memory-input::placeholder {
+  color: var(--text-muted);
+}
+
+.ask-memory-input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* History dropdown */
+.history-dropdown {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 0.75rem;
+  color: var(--text-main);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+}
+
+/* Response container */
+.response-container {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.response-answer {
+  color: var(--text-main);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Sources toggle */
+.sources-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sources-toggle:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* Source card */
+.source-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(139, 92, 246, 0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: all 0.15s ease;
+}
+
+.source-card:hover {
+  background: rgba(139, 92, 246, 0.06);
+  border-color: rgba(139, 92, 246, 0.25);
+}
+
+/* Error message */
+.error-message {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* Line clamp utility */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

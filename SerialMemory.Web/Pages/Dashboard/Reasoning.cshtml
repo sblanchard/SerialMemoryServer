@@ -140,30 +140,47 @@
     let currentEdges = [];
 
     const apiBaseUrl = '@Model.ApiBaseUrl';
+    const dashboardApiUrl = '@Model.DashboardApiBaseUrl';
     const signalRToken = '@Model.SignalRToken';
 
-    // Initialize SignalR
+    // Initialize SignalR for ReasoningHub (connects to Dashboard API)
     async function initSignalR() {
         connection = new signalR.HubConnectionBuilder()
-            .withUrl(apiBaseUrl + "/hubs/live", {
+            .withUrl(dashboardApiUrl + "/hubs/reasoning", {
                 accessTokenFactory: () => signalRToken
             })
             .withAutomaticReconnect()
             .build();
 
-        connection.on("reasoning.progress", (evt) => {
-            console.log("Progress:", evt);
-            if (evt.runId === selectedRunId || !selectedRunId) {
-                addStep(evt);
+        // Listen for new DAG nodes
+        connection.on("NewStepAdded", (evt) => {
+            console.log("NewStepAdded:", evt);
+            if (evt.executionId === selectedRunId || !selectedRunId) {
+                addStep(evt.trace);
             }
         });
 
-        connection.on("reasoning.result", (evt) => {
-            console.log("Result:", evt);
-            updateRunStatus(evt.runId, evt.status);
-            if (evt.status === "completed") {
-                loadRunDetails(evt.runId);
+        // Listen for execution started
+        connection.on("ExecutionStarted", (evt) => {
+            console.log("ExecutionStarted:", evt);
+            // Refresh runs list to show new execution
+            location.reload();
+        });
+
+        // Listen for execution completed
+        connection.on("ExecutionCompleted", (evt) => {
+            console.log("ExecutionCompleted:", evt);
+            updateRunStatus(evt.executionId, evt.status);
+            if (evt.status === "Completed" || evt.status === "completed") {
+                loadRunDetails(evt.executionId);
             }
+        });
+
+        // Listen for progress updates
+        connection.on("Progress", (evt) => {
+            console.log("Progress:", evt);
+            document.getElementById('timelineStatus').textContent =
+                `Step ${evt.completedSteps}/${evt.totalSteps}: ${evt.currentStep}`;
         });
 
         connection.onreconnecting(() => updateConnectionUI(false, "Reconnecting..."));
@@ -184,8 +201,8 @@
 
     async function subscribeToStreams() {
         if (connection) {
-            await connection.invoke("Subscribe", "reasoning.progress");
-            await connection.invoke("Subscribe", "reasoning.result");
+            // Subscribe to all reasoning events for this tenant
+            await connection.invoke("SubscribeToAllReasoningEvents");
         }
     }
 
@@ -204,19 +221,37 @@
         btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Running...';
 
         try {
-            const response = await fetch(apiBaseUrl + '/api/reasoning/run', {
+            // Use Dashboard API's reasoning endpoints
+            const response = await fetch(dashboardApiUrl + '/reasoning/run/query', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project: null, memoryId: null, limit: 50 })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + signalRToken
+                },
+                body: JSON.stringify({
+                    query: "Analyze the knowledge graph for insights",
+                    maxDurationMs: 30000
+                })
             });
-            const result = await response.json();
-            console.log("Started run:", result);
 
-            // Reload runs list
-            setTimeout(() => location.reload(), 1000);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            console.log("Started execution:", result);
+
+            // Subscribe to this specific execution
+            if (connection && result.executionId) {
+                await connection.invoke("SubscribeToExecution", result.executionId);
+                selectedRunId = result.executionId;
+            }
+
+            // Wait and reload to show new execution
+            setTimeout(() => location.reload(), 2000);
         } catch (err) {
             console.error("Failed to start run:", err);
-            alert("Failed to start reasoning run");
+            alert("Failed to start reasoning run: " + err.message);
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> Run Analysis';
@@ -236,39 +271,86 @@
         document.getElementById('stepsContainer').classList.remove('hidden');
         document.getElementById('timelineStatus').textContent = 'Loading...';
 
+        // Subscribe to this execution for live updates
+        if (connection) {
+            await connection.invoke("SubscribeToExecution", runId);
+        }
+
         await loadRunDetails(runId);
     }
 
     async function loadRunDetails(runId) {
         try {
-            const response = await fetch(apiBaseUrl + `/api/reasoning/run/${runId}`);
+            // Use Dashboard API's reasoning endpoints
+            const response = await fetch(dashboardApiUrl + `/reasoning/executions/${runId}`, {
+                headers: {
+                    'Authorization': 'Bearer ' + signalRToken
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
             const data = await response.json();
 
-            currentSteps = data.steps || [];
-            currentEdges = data.edges || [];
+            // Transform traces to steps format
+            currentSteps = (data.traces || []).map((trace, idx) => ({
+                id: trace.stepId,
+                index: trace.stepOrder || (idx + 1),
+                type: trace.role || 'reasoning_step',
+                summary: trace.modelName + (trace.success ? ' ✓' : ' ✗'),
+                parentIds: trace.parentStepIds || [],
+                durationMs: trace.durationMs,
+                modelName: trace.modelName,
+                modelVersion: trace.modelVersion,
+                success: trace.success,
+                errorMessage: trace.errorMessage
+            }));
 
-            document.getElementById('timelineStatus').textContent = `${currentSteps.length} steps`;
+            // Build edges from parent relationships
+            currentEdges = [];
+            currentSteps.forEach(step => {
+                (step.parentIds || []).forEach(parentId => {
+                    currentEdges.push({ from: parentId, to: step.id });
+                });
+            });
+
+            document.getElementById('timelineStatus').textContent =
+                `${currentSteps.length} steps | ${data.insightCount || 0} insights | ${data.disagreementCount || 0} disagreements`;
 
             renderSteps();
             renderDAG();
+
+            // Store insights and disagreements for detail view
+            window.currentInsights = data.insights || [];
+            window.currentDisagreements = data.disagreements || [];
         } catch (err) {
-            console.error("Failed to load run:", err);
+            console.error("Failed to load execution:", err);
             document.getElementById('timelineStatus').textContent = 'Failed to load';
         }
     }
 
-    function addStep(step) {
-        currentSteps.push({
-            id: step.stepId,
-            index: currentSteps.length + 1,
-            type: 'reasoning_step',
-            summary: step.summary,
-            parentIds: step.parentIds || []
-        });
+    function addStep(trace) {
+        // Handle trace from SignalR NewStepAdded event
+        const step = {
+            id: trace.stepId,
+            index: trace.stepOrder || (currentSteps.length + 1),
+            type: trace.role || 'reasoning_step',
+            summary: trace.modelName + (trace.success ? ' ✓' : ' ✗'),
+            parentIds: trace.parentStepIds || [],
+            durationMs: trace.durationMs,
+            modelName: trace.modelName,
+            modelVersion: trace.modelVersion,
+            success: trace.success,
+            errorMessage: trace.errorMessage
+        };
 
-        // Add edges
+        currentSteps.push(step);
+
+        // Add edges for parent relationships
         (step.parentIds || []).forEach(parentId => {
-            currentEdges.push({ from: parentId, to: step.stepId });
+            currentEdges.push({ from: parentId, to: step.id });
         });
 
         renderSteps();
