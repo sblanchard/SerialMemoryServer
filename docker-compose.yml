@@ -10,10 +10,8 @@
 #
 # Services:
 #   - PostgreSQL + pgvector:    localhost:5435
-#   - SerialMemory MCP Core:    stdio (for Claude)
 #   - SerialMemory API:         localhost:5000
 #   - Dashboard API:            localhost:5001
-#   - Ollama (embeddings):      localhost:11434 (WSL - not in Docker)
 #   - Redis:                    localhost:6379
 #   - Prometheus:               localhost:9090
 #   - Grafana:                  localhost:3001
@@ -52,11 +50,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  # ---------------------------------------------------------------------------
-  # Embeddings: Ollama runs locally on WSL (not in Docker)
-  # Access via host.docker.internal:11434 from containers
-  # ---------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------
   # SerialMemory API (REST endpoints)
@@ -294,48 +287,7 @@ services:
       rabbitmq:
         condition: service_started
     restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # MCP Client (Docker-first STDIO proxy for Claude Desktop)
-  # ---------------------------------------------------------------------------
-  mcp-client:
-    build:
-      context: SerialMemory.McpClient
-      dockerfile: Dockerfile
-    container_name: serialmemory-mcp-client
-    image: serialcoder/serialmemory-mcp:latest
-    environment:
-      - MCP_SERVER_URL=http://api:8080
-      - MCP_API_KEY=${MCP_API_KEY:-}
-      - MCP_MODE=developer
-    stdin_open: true
-    tty: true
-    depends_on:
-      api:
-        condition: service_healthy
-
-  # ---------------------------------------------------------------------------
-  # Cloudflare Tunnel (DEPRECATED - use Windows native cloudflared instead)
-  # ---------------------------------------------------------------------------
-  # The Docker cloudflared has routing issues. Use Windows native cloudflared:
-  #   cloudflared tunnel --config ops/cloudflared/config.yml run
-  #
-  # The config.yml points to localhost:5000 (API), localhost:5002 (web-admin)
-  # ---------------------------------------------------------------------------
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   container_name: serialmemory-cloudflared
-  #   command: tunnel --config /etc/cloudflared/config.yml run
-  #   volumes:
-  #     - ./ops/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
-  #     - ./ops/cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
-  #   depends_on:
-  #     - api
-  #     - web-admin
-  #   profiles:
-  #     - tunnel
-  #   restart: unless-stopped
-
+    
 volumes:
   postgres_data:
   redis_data:

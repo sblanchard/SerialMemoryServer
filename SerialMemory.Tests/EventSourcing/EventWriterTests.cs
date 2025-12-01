@@ -286,7 +286,7 @@ public class EventWriterTests : IAsyncLifetime
             new { TenantId = _testTenantId })).ToList();
 
         // Assert
-        events.Should().HaveCountGreaterOrEqualTo(3);
+        events.Should().HaveCountGreaterThanOrEqualTo(3);
     }
 }
 

@@ -11,10 +11,12 @@ using SerialMemory.EventSourcing.Store;
 using SerialMemory.EventSourcing.Streaming;
 using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.Billing;
+using SerialMemory.Infrastructure.Classification;
 using SerialMemory.Infrastructure.Integrity;
 using SerialMemory.Infrastructure.MemoryLayer;
 using SerialMemory.ML;
 using SerialMemory.Worker;
+using SerialMemory.Worker.Classification;
 using SerialMemory.Worker.Consumers;
 using MassTransit;
 
@@ -127,6 +129,27 @@ builder.Services.AddSingleton<IProjection>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryProjection>()));
 
 // ========================================================================
+// EVENT WRITER (for classification pipeline and event sourcing)
+// ========================================================================
+
+builder.Services.AddSingleton<IEventWriter>(sp =>
+    new EventWriter(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<EventWriter>(),
+        sp.GetService<ILiveEventEmitter>())); // Optional - may not be available in worker
+
+// ========================================================================
+// CLASSIFICATION SERVICE (L0-L4 pipeline)
+// ========================================================================
+
+builder.Services.AddSingleton<IClassificationService>(sp =>
+    new ClassificationService(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<ILlmService>(),
+        sp.GetRequiredService<IEmbeddingService>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ClassificationService>()));
+
+// ========================================================================
 // MEMORY LAYER SERVICES (previously unused - now registered)
 // ========================================================================
 
@@ -172,6 +195,14 @@ builder.Services.AddHostedService<IntegrityWorker>(sp =>
         sp,
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<IntegrityWorker>()));
+
+// 4. Memory Classification Worker - L0→L4 classification pipeline
+builder.Services.AddHostedService<MemoryClassificationWorker>(sp =>
+    new MemoryClassificationWorker(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IClassificationService>(),
+        sp.GetRequiredService<IEventWriter>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryClassificationWorker>()));
 
 // ========================================================================
 // MASSTRANSIT CONFIGURATION
