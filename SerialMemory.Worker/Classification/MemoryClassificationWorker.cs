@@ -1,8 +1,5 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Dapper;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
 
@@ -12,35 +9,23 @@ namespace SerialMemory.Worker.Classification;
 /// Background worker that processes memories through L0-L4 classification layers.
 /// Uses internal admin role for RLS bypass during processing.
 /// </summary>
-public sealed class MemoryClassificationWorker : BackgroundService
+public sealed class MemoryClassificationWorker(
+    NpgsqlDataSource dataSource,
+    IClassificationService classificationService,
+    IEventWriter eventWriter,
+    ILogger<MemoryClassificationWorker> logger)
+    : BackgroundService
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IClassificationService _classificationService;
-    private readonly IEventWriter _eventWriter;
-    private readonly ILogger<MemoryClassificationWorker> _logger;
-    private readonly string _workerId;
+    private readonly string _workerId = $"worker-{Environment.MachineName}-{Guid.CreateVersion7():N}";
 
     private const int BatchSize = 10;
     private const int PollingIntervalMs = 1000;
     private const int ErrorBackoffMs = 5000;
     private static readonly TimeSpan LockDuration = TimeSpan.FromMinutes(5);
 
-    public MemoryClassificationWorker(
-        NpgsqlDataSource dataSource,
-        IClassificationService classificationService,
-        IEventWriter eventWriter,
-        ILogger<MemoryClassificationWorker> logger)
-    {
-        _dataSource = dataSource;
-        _classificationService = classificationService;
-        _eventWriter = eventWriter;
-        _logger = logger;
-        _workerId = $"worker-{Environment.MachineName}-{Guid.CreateVersion7():N}";
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Memory Classification Worker {WorkerId} starting", _workerId);
+        logger.LogInformation("Memory Classification Worker {WorkerId} starting", _workerId);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -60,12 +45,12 @@ public sealed class MemoryClassificationWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in classification worker loop");
+                logger.LogError(ex, "Error in classification worker loop");
                 await Task.Delay(ErrorBackoffMs, stoppingToken);
             }
         }
 
-        _logger.LogInformation("Memory Classification Worker {WorkerId} stopping", _workerId);
+        logger.LogInformation("Memory Classification Worker {WorkerId} stopping", _workerId);
     }
 
     private async Task<int> ProcessBatchAsync(CancellationToken ct)
@@ -85,7 +70,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
         if (batch.Count == 0)
             return 0;
 
-        _logger.LogDebug("Acquired {Count} memories for classification", batch.Count);
+        logger.LogDebug("Acquired {Count} memories for classification", batch.Count);
 
         foreach (var item in batch)
         {
@@ -97,7 +82,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process memory {MemoryId}", item.memory_id);
+                logger.LogError(ex, "Failed to process memory {MemoryId}", item.memory_id);
                 // Error already logged to DB in ProcessMemoryAsync
             }
         }
@@ -107,7 +92,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
 
     private async Task ProcessMemoryAsync(NpgsqlConnection conn, QueueItem item, CancellationToken ct)
     {
-        _logger.LogDebug("Processing memory {MemoryId} for tenant {TenantId}, current stage: {Stage}",
+        logger.LogDebug("Processing memory {MemoryId} for tenant {TenantId}, current stage: {Stage}",
             item.memory_id, item.tenant_id, item.current_stage);
 
         // Set tenant context for this operation
@@ -122,7 +107,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
 
         if (memory == null)
         {
-            _logger.LogWarning("Memory {MemoryId} not found, removing from queue", item.memory_id);
+            logger.LogWarning("Memory {MemoryId} not found, removing from queue", item.memory_id);
             await conn.ExecuteAsync(
                 "DELETE FROM memory_processing_queue WHERE memory_id = @MemoryId",
                 new { MemoryId = item.memory_id });
@@ -153,7 +138,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to classify {Layer} for memory {MemoryId}",
+                logger.LogError(ex, "Failed to classify {Layer} for memory {MemoryId}",
                     layer, item.memory_id);
 
                 await conn.ExecuteAsync(
@@ -170,7 +155,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
             }
         }
 
-        _logger.LogInformation("Completed classification for memory {MemoryId}", item.memory_id);
+        logger.LogInformation("Completed classification for memory {MemoryId}", item.memory_id);
     }
 
     private async Task ProcessLayerAsync(
@@ -180,7 +165,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
         MemoryLayer layer,
         CancellationToken ct)
     {
-        _logger.LogDebug("Processing {Layer} for memory {MemoryId}", layer, memory.id);
+        logger.LogDebug("Processing {Layer} for memory {MemoryId}", layer, memory.id);
 
         var sw = Stopwatch.StartNew();
 
@@ -196,7 +181,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
         var previousLayerContent = await GetPreviousLayerContentAsync(conn, memory.id, layer);
 
         // Classify using the classification service
-        var result = await _classificationService.ClassifyAsync(
+        var result = await classificationService.ClassifyAsync(
             memory.content,
             layer,
             previousLayerContent,
@@ -223,26 +208,26 @@ public sealed class MemoryClassificationWorker : BackgroundService
             });
 
         // *** EMIT LayerGenerated EVENT ***
-        var eventId = await _eventWriter.EmitLayerGeneratedAsync(
+        var eventId = await eventWriter.EmitLayerGeneratedAsync(
             item.tenant_id,
             memory.id,
             layer.ToString(),
             result.ContentJson ?? "{}",
             result.ModelName ?? "unknown",
             (int)sw.ElapsedMilliseconds,
-            result.Confidence,
+            (decimal)result.Confidence!,
             _workerId,
             ct);
 
         // *** CREATE TIMELINE SNAPSHOT ***
-        await _eventWriter.CreateTimelineSnapshotAsync(
+        await eventWriter.CreateTimelineSnapshotAsync(
             item.tenant_id,
             memory.id,
             eventId,
             "LayerGenerated",
             memory.content,
             layer.ToString(),
-            result.Confidence,
+            (decimal)result.Confidence!,
             new { layer_id = layerId, model = result.ModelName },
             ct);
 
@@ -252,7 +237,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
             await ExtractKnowledgeNodesAsync(conn, memory.id, item.tenant_id, layerId, layer, result, ct);
         }
 
-        _logger.LogDebug("Completed {Layer} for memory {MemoryId} in {ElapsedMs}ms (event: {EventId})",
+        logger.LogDebug("Completed {Layer} for memory {MemoryId} in {ElapsedMs}ms (event: {EventId})",
             layer, memory.id, sw.ElapsedMilliseconds, eventId);
     }
 
@@ -324,7 +309,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
                 });
 
             // *** EMIT KnowledgeNodeAdded EVENT ***
-            await _eventWriter.EmitMemoryEventAsync(
+            await eventWriter.EmitMemoryEventAsync(
                 tenantId,
                 memoryId,
                 "KnowledgeNodeAdded",
@@ -342,7 +327,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
                 ct);
         }
 
-        _logger.LogDebug("Extracted {Count} knowledge nodes for memory {MemoryId}",
+        logger.LogDebug("Extracted {Count} knowledge nodes for memory {MemoryId}",
             result.KnowledgeNodes.Count, memoryId);
     }
 
@@ -369,7 +354,7 @@ public sealed class MemoryClassificationWorker : BackgroundService
     /// </summary>
     private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
     {
-        var conn = await _dataSource.OpenConnectionAsync(ct);
+        var conn = await dataSource.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
         return conn;
     }

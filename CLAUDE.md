@@ -96,9 +96,123 @@ docker compose down -v  # Stop and remove volumes
 ```
 
 **Services Available:**
-- **PostgreSQL**: localhost:5432 (postgres/postgres, db: contextdb)
+- **PostgreSQL**: localhost:5435 (postgres/postgres, db: contextdb)
 - **Redis**: localhost:6379
 - **RabbitMQ Management**: http://localhost:15672 (guest/guest)
+
+## VPS Production Deployment (Security Hardened)
+
+For production deployment on a VPS, use `docker-compose.prod.yml` which includes:
+
+### Security Features
+
+- **No default credentials** - All services require strong passwords from environment variables
+- **Separate database users** - Admin user for setup, limited-privilege app user for runtime
+- **Network isolation** - Internal services (PostgreSQL, Redis, RabbitMQ) not exposed to host
+- **Redis authentication** - Password-protected Redis
+- **RabbitMQ hardened** - Custom credentials, dedicated vhost, no guest user
+- **Grafana hardened** - No anonymous access, secure cookies
+
+### Quick Start
+
+```bash
+# 1. Copy and configure environment
+cp .env.production.example .env
+# Edit .env and fill in ALL required values
+
+# 2. Generate secure passwords
+openssl rand -base64 32  # For each password field
+openssl rand -base64 64  # For JWT_SECRET and INTERNAL_TOKEN_KEY
+
+# 3. Start the stack
+docker compose -f docker-compose.prod.yml up -d
+
+# 4. Check logs
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+### Required Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `POSTGRES_ADMIN_PASSWORD` | PostgreSQL admin password (setup only) |
+| `POSTGRES_USER` | Application database user |
+| `POSTGRES_PASSWORD` | Application database password |
+| `REDIS_PASSWORD` | Redis authentication password |
+| `RABBITMQ_USER` | RabbitMQ username |
+| `RABBITMQ_PASSWORD` | RabbitMQ password |
+| `JWT_SECRET` | JWT signing secret (64+ chars) |
+| `INTERNAL_TOKEN_KEY` | Service-to-service token key |
+| `SERVICE_API_KEY` | Admin API key |
+| `GRAFANA_PASSWORD` | Grafana admin password |
+| `STRIPE_*` | Stripe keys (if using SaaS mode) |
+
+### Network Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    External Network                          │
+│  ┌─────────┐  ┌───────────────┐  ┌─────────────┐           │
+│  │   API   │  │ Dashboard API │  │  Web Admin  │           │
+│  │  :5000  │  │    :5001      │  │   :5002     │           │
+│  └────┬────┘  └──────┬────────┘  └──────┬──────┘           │
+└───────┼──────────────┼──────────────────┼──────────────────┘
+        │              │                  │
+┌───────┴──────────────┴──────────────────┴──────────────────┐
+│                    Internal Network                          │
+│  ┌──────────┐  ┌───────┐  ┌──────────┐  ┌─────────────┐   │
+│  │ Postgres │  │ Redis │  │ RabbitMQ │  │   Worker    │   │
+│  │  (5432)  │  │(6379) │  │  (5672)  │  │   (8081)    │   │
+│  └──────────┘  └───────┘  └──────────┘  └─────────────┘   │
+│  ┌────────────┐  ┌─────────┐                               │
+│  │ Prometheus │  │ Grafana │  (monitoring - internal only) │
+│  │   (9090)   │  │ (3000)  │                               │
+│  └────────────┘  └─────────┘                               │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Firewall Configuration
+
+Only expose necessary ports:
+
+```bash
+# UFW example
+ufw allow 22/tcp    # SSH
+ufw allow 80/tcp    # HTTP (for Let's Encrypt)
+ufw allow 443/tcp   # HTTPS
+ufw allow 5000/tcp  # API (or use reverse proxy)
+ufw allow 5002/tcp  # Web Admin (or use reverse proxy)
+ufw enable
+```
+
+### Recommended: Reverse Proxy with Cloudflare Tunnel
+
+For secure external access without exposing ports:
+
+```bash
+# Install cloudflared
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared
+sudo mv cloudflared /usr/local/bin/
+
+# Login and create tunnel
+cloudflared tunnel login
+cloudflared tunnel create serialmemory
+
+# Configure (ops/cloudflared/config.yml)
+# Point to localhost:5000 (API), localhost:5002 (Web)
+cloudflared tunnel run serialmemory
+```
+
+### Database Backup
+
+```bash
+# Backup
+docker exec serialmemory-postgres pg_dump -U pgadmin contextdb > backup.sql
+
+# Restore
+cat backup.sql | docker exec -i serialmemory-postgres psql -U pgadmin contextdb
+```
 
 ## Architecture Overview
 

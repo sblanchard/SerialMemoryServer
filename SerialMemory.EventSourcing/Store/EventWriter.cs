@@ -309,18 +309,19 @@ public sealed class EventWriter : IEventWriter
 
         try
         {
-            var graphChange = new GraphChangeEvent
+            // Use MemoryEventBroadcast for memory-specific events
+            var memoryEvent = new MemoryEventBroadcast
             {
+                EventId = Guid.CreateVersion7(),
                 TenantId = tenantId.ToString(),
+                MemoryId = memoryId,
                 EventType = eventType,
-                EntityId = memoryId.ToString(),
-                EntityType = "memory",
-                Timestamp = DateTimeOffset.UtcNow,
                 Actor = actor,
-                Data = eventData
+                Payload = eventData,
+                Timestamp = DateTimeOffset.UtcNow
             };
 
-            await _eventEmitter.EmitGraphChangeAsync(graphChange);
+            await _eventEmitter.EmitMemoryEventAsync(memoryEvent);
         }
         catch (Exception ex)
         {
@@ -343,17 +344,19 @@ public sealed class EventWriter : IEventWriter
 
         try
         {
-            var graphChange = new GraphChangeEvent
+            // Use RecentEventBroadcast for system events
+            var recentEvent = new RecentEventBroadcast
             {
+                Id = Guid.CreateVersion7(),
                 TenantId = tenantId.ToString(),
                 EventType = eventType,
-                EntityType = category,
-                Timestamp = DateTimeOffset.UtcNow,
+                Category = category,
                 Actor = "system",
-                Data = payload
+                Payload = payload,
+                CreatedAt = DateTimeOffset.UtcNow
             };
 
-            await _eventEmitter.EmitGraphChangeAsync(graphChange);
+            await _eventEmitter.EmitRecentEventAsync(recentEvent);
         }
         catch (Exception ex)
         {
@@ -369,12 +372,4 @@ public sealed class EventWriter : IEventWriter
         var json = JsonSerializer.Serialize(content);
         return json.Length > 200 ? json[..200] + "..." : json;
     }
-}
-
-/// <summary>
-/// Extension for GraphChangeEvent to include data payload.
-/// </summary>
-public partial class GraphChangeEvent
-{
-    public object? Data { get; set; }
 }

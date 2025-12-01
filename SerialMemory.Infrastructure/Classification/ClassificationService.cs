@@ -1,0 +1,634 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Dapper;
+using Microsoft.Extensions.Logging;
+using Npgsql;
+using SerialMemory.Core.Interfaces;
+
+// Alias to avoid conflict with SerialMemory.Infrastructure.MemoryLayer namespace
+using MemoryLayerType = SerialMemory.Core.Interfaces.MemoryLayer;
+
+namespace SerialMemory.Infrastructure.Classification;
+
+/// <summary>
+/// Full L0→L4 classification pipeline using LLM calls.
+/// Each layer processes the memory through structured prompts and validates output schemas.
+/// </summary>
+public sealed class ClassificationService : IClassificationService
+{
+    private readonly NpgsqlDataSource _dataSource;
+    private readonly ILlmService _llmService;
+    private readonly IEmbeddingService _embeddingService;
+    private readonly ILogger<ClassificationService> _logger;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public ClassificationService(
+        NpgsqlDataSource dataSource,
+        ILlmService llmService,
+        IEmbeddingService embeddingService,
+        ILogger<ClassificationService> logger)
+    {
+        _dataSource = dataSource;
+        _llmService = llmService;
+        _embeddingService = embeddingService;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public async Task<ClassificationResult> ClassifyAsync(
+        string content,
+        MemoryLayerType layer,
+        string? previousLayerContent,
+        CancellationToken cancellationToken = default)
+    {
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var (systemPrompt, userPrompt) = GetPromptsForLayer(layer, content, previousLayerContent);
+
+            var response = await _llmService.ChatAsync(
+                userMessage: userPrompt,
+                systemPrompt: systemPrompt,
+                temperature: 0.3f,
+                maxTokens: 2000,
+                cancellationToken: cancellationToken);
+
+            sw.Stop();
+
+            // Extract and parse JSON from response
+            var json = ExtractJson(response);
+            if (string.IsNullOrEmpty(json))
+            {
+                _logger.LogWarning("Failed to extract JSON from {Layer} response: {Response}",
+                    layer, response.Length > 500 ? response[..500] : response);
+
+                // Return a fallback result
+                return CreateFallbackResult(layer, content, sw.ElapsedMilliseconds);
+            }
+
+            // Validate and parse the schema
+            var result = ParseAndValidateResult(layer, json, sw.ElapsedMilliseconds);
+
+            _logger.LogDebug("Classified {Layer} in {ElapsedMs}ms, confidence: {Confidence}",
+                layer, sw.ElapsedMilliseconds, result.Confidence);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Classification failed for {Layer}", layer);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets the system and user prompts for a specific layer.
+    /// </summary>
+    private static (string SystemPrompt, string UserPrompt) GetPromptsForLayer(
+        MemoryLayerType layer,
+        string content,
+        string? previousLayerContent)
+    {
+        return layer switch
+        {
+            MemoryLayerType.L0_RAW => GetL0Prompts(content),
+            MemoryLayerType.L1_CONTEXT => GetL1Prompts(content, previousLayerContent),
+            MemoryLayerType.L2_SUMMARY => GetL2Prompts(content, previousLayerContent),
+            MemoryLayerType.L3_KNOWLEDGE => GetL3Prompts(content, previousLayerContent),
+            MemoryLayerType.L4_HEURISTIC => GetL4Prompts(content, previousLayerContent),
+            _ => throw new ArgumentOutOfRangeException(nameof(layer))
+        };
+    }
+
+    #region L0_RAW Prompts
+
+    private static (string SystemPrompt, string UserPrompt) GetL0Prompts(string content)
+    {
+        const string systemPrompt = """
+            You are a memory ingestion system. Your job is to structure raw input into a clean JSON format.
+
+            IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, just the JSON object.
+
+            Output format:
+            {
+              "raw_text": "<the exact user input, preserved verbatim>",
+              "metadata": {
+                "timestamp_utc": "<current ISO timestamp>",
+                "source": "<detected source: web|api|mcp|chat|internal>",
+                "actor": "<detected actor or 'user'>",
+                "word_count": <number>,
+                "language": "<detected language code>"
+              }
+            }
+            """;
+
+        var userPrompt = $"""
+            Process this raw input and return structured JSON:
+
+            ---
+            {content}
+            ---
+            """;
+
+        return (systemPrompt, userPrompt);
+    }
+
+    #endregion
+
+    #region L1_CONTEXT Prompts
+
+    private static (string SystemPrompt, string UserPrompt) GetL1Prompts(string content, string? previousLayer)
+    {
+        const string systemPrompt = """
+            You are a context analysis engine. Analyze the input and extract contextual data.
+
+            IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, just the JSON object.
+
+            Output format:
+            {
+              "speaker": "<who said/wrote it, or 'user' if unclear>",
+              "listener": "<who it is directed to, or 'system' if unclear>",
+              "intent": "<primary intent: inform|request|command|question|statement|expression>",
+              "context_description": "<short natural language explanation of what's happening>",
+              "sentiment": "<positive|negative|neutral>",
+              "urgency": "<low|medium|high>",
+              "topic_domain": "<primary domain: technical|personal|business|casual|other>",
+              "tags": ["<relevant>", "<contextual>", "<tags>"]
+            }
+            """;
+
+        var userPrompt = $"""
+            Analyze this input and extract contextual data:
+
+            ---
+            {content}
+            ---
+
+            {(previousLayer != null ? $"Previous layer (L0_RAW):\n{previousLayer}" : "")}
+            """;
+
+        return (systemPrompt, userPrompt);
+    }
+
+    #endregion
+
+    #region L2_SUMMARY Prompts
+
+    private static (string SystemPrompt, string UserPrompt) GetL2Prompts(string content, string? previousLayer)
+    {
+        const string systemPrompt = """
+            You are a summarization engine. Summarize the meaning of the memory while preserving intent and correctness.
+
+            IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, just the JSON object.
+
+            Output format:
+            {
+              "summary": "<concise summary capturing the essential meaning, max 100 words>",
+              "one_liner": "<single sentence summary, max 15 words>",
+              "keywords": ["<important>", "<keywords>", "<max 10>"],
+              "importance_score": <0.0 to 1.0>,
+              "action_items": ["<any action items mentioned>"],
+              "references": ["<any external references, URLs, or names mentioned>"]
+            }
+            """;
+
+        var userPrompt = $"""
+            Summarize this memory content:
+
+            ---
+            {content}
+            ---
+
+            {(previousLayer != null ? $"Context from L1:\n{previousLayer}" : "")}
+            """;
+
+        return (systemPrompt, userPrompt);
+    }
+
+    #endregion
+
+    #region L3_KNOWLEDGE Prompts (FACTS)
+
+    private static (string SystemPrompt, string UserPrompt) GetL3Prompts(string content, string? previousLayer)
+    {
+        const string systemPrompt = """
+            You are a knowledge extraction engine. Extract atomic facts from the memory.
+
+            IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, just the JSON object.
+
+            Fact types: assertion, preference, relationship, event, definition, procedure, rule
+            Entity types: Person, Organization, Product, Location, Technology, Concept, Event, Date, Project, Service, File, Module, API, Database, Error, Feature, Bug, Task
+
+            Output format:
+            {
+              "facts": [
+                {
+                  "type": "<fact_type>",
+                  "subject": "<entity or concept>",
+                  "predicate": "<relationship or action>",
+                  "object": "<value, entity, or state>",
+                  "confidence": <0.0 to 1.0>,
+                  "evidence": "<quote from original text supporting this fact>"
+                }
+              ],
+              "entities": [
+                {
+                  "name": "<entity name>",
+                  "type": "<entity type>",
+                  "aliases": ["<alternative names>"],
+                  "description": "<brief description if inferrable>"
+                }
+              ],
+              "relationships": [
+                {
+                  "source": "<source entity name>",
+                  "target": "<target entity name>",
+                  "relation_type": "<relationship type: works_at, created_by, depends_on, related_to, etc.>",
+                  "confidence": <0.0 to 1.0>
+                }
+              ]
+            }
+            """;
+
+        var userPrompt = $"""
+            Extract facts, entities, and relationships from this memory:
+
+            ---
+            {content}
+            ---
+
+            {(previousLayer != null ? $"Summary from L2:\n{previousLayer}" : "")}
+            """;
+
+        return (systemPrompt, userPrompt);
+    }
+
+    #endregion
+
+    #region L4_HEURISTIC Prompts (PATTERNS / RULES)
+
+    private static (string SystemPrompt, string UserPrompt) GetL4Prompts(string content, string? previousLayer)
+    {
+        const string systemPrompt = """
+            You are a pattern analysis engine. Analyze the memory and return inferred patterns, preferences, and heuristics.
+
+            IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, just the JSON object.
+
+            Output format:
+            {
+              "preferences": ["<user preference statements>"],
+              "habits": ["<observed behavioral patterns>"],
+              "long_term_tendencies": ["<long-term preferences or tendencies>"],
+              "classification": "<primary category: work|personal|learning|project|communication|planning|debugging|other>",
+              "expertise_indicators": ["<domains where user shows expertise>"],
+              "inferred_rules": [
+                {
+                  "rule": "<if-then rule inferred from the content>",
+                  "confidence": <0.0 to 1.0>,
+                  "scope": "<when this rule applies>"
+                }
+              ],
+              "mental_model_updates": [
+                {
+                  "model": "<what mental model this updates>",
+                  "update": "<how the model should be updated>",
+                  "confidence": <0.0 to 1.0>
+                }
+              ]
+            }
+            """;
+
+        var userPrompt = $"""
+            Analyze this memory and extract patterns, preferences, and heuristics:
+
+            ---
+            {content}
+            ---
+
+            {(previousLayer != null ? $"Knowledge from L3:\n{previousLayer}" : "")}
+            """;
+
+        return (systemPrompt, userPrompt);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Parses and validates the classification result based on the layer schema.
+    /// </summary>
+    private ClassificationResult ParseAndValidateResult(MemoryLayerType layer, string json, long durationMs)
+    {
+        try
+        {
+            // Parse to verify it's valid JSON
+            using var doc = JsonDocument.Parse(json);
+
+            // Extract knowledge nodes for L3/L4
+            List<KnowledgeNode>? knowledgeNodes = null;
+
+            if (layer == MemoryLayerType.L3_KNOWLEDGE)
+            {
+                knowledgeNodes = ExtractL3KnowledgeNodes(doc);
+            }
+            else if (layer == MemoryLayerType.L4_HEURISTIC)
+            {
+                knowledgeNodes = ExtractL4KnowledgeNodes(doc);
+            }
+
+            // Calculate confidence based on content richness
+            var confidence = CalculateConfidence(layer, doc);
+
+            return new ClassificationResult
+            {
+                ContentJson = json,
+                ModelName = $"{_llmService.ProviderName}/{_llmService.ModelName}",
+                Confidence = confidence,
+                KnowledgeNodes = knowledgeNodes
+            };
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse {Layer} JSON: {Json}", layer, json);
+            return CreateFallbackResult(layer, json, durationMs);
+        }
+    }
+
+    /// <summary>
+    /// Extracts knowledge nodes from L3 (facts) output.
+    /// </summary>
+    private List<KnowledgeNode> ExtractL3KnowledgeNodes(JsonDocument doc)
+    {
+        var nodes = new List<KnowledgeNode>();
+
+        // Extract facts
+        if (doc.RootElement.TryGetProperty("facts", out var facts))
+        {
+            foreach (var fact in facts.EnumerateArray())
+            {
+                nodes.Add(new KnowledgeNode
+                {
+                    NodeType = "fact",
+                    Subject = fact.TryGetProperty("subject", out var s) ? s.GetString() ?? "" : "",
+                    Predicate = fact.TryGetProperty("predicate", out var p) ? p.GetString() : null,
+                    Object = fact.TryGetProperty("object", out var o) ? o.GetString() : null,
+                    Confidence = fact.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.8m,
+                    Evidence = fact.TryGetProperty("evidence", out var e) ? e.GetString() : null,
+                    Metadata = JsonSerializer.Serialize(new { type = fact.TryGetProperty("type", out var t) ? t.GetString() : "assertion" })
+                });
+            }
+        }
+
+        // Extract entities
+        if (doc.RootElement.TryGetProperty("entities", out var entities))
+        {
+            foreach (var entity in entities.EnumerateArray())
+            {
+                nodes.Add(new KnowledgeNode
+                {
+                    NodeType = "entity",
+                    Subject = entity.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    Predicate = "is_a",
+                    Object = entity.TryGetProperty("type", out var t) ? t.GetString() : "Unknown",
+                    Confidence = 0.9m,
+                    Evidence = entity.TryGetProperty("description", out var d) ? d.GetString() : null
+                });
+            }
+        }
+
+        // Extract relationships
+        if (doc.RootElement.TryGetProperty("relationships", out var relationships))
+        {
+            foreach (var rel in relationships.EnumerateArray())
+            {
+                nodes.Add(new KnowledgeNode
+                {
+                    NodeType = "relationship",
+                    Subject = rel.TryGetProperty("source", out var src) ? src.GetString() ?? "" : "",
+                    Predicate = rel.TryGetProperty("relation_type", out var rt) ? rt.GetString() : "related_to",
+                    Object = rel.TryGetProperty("target", out var tgt) ? tgt.GetString() : null,
+                    Confidence = rel.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.85m
+                });
+            }
+        }
+
+        return nodes;
+    }
+
+    /// <summary>
+    /// Extracts knowledge nodes from L4 (heuristics) output.
+    /// </summary>
+    private List<KnowledgeNode> ExtractL4KnowledgeNodes(JsonDocument doc)
+    {
+        var nodes = new List<KnowledgeNode>();
+
+        // Extract preferences
+        if (doc.RootElement.TryGetProperty("preferences", out var prefs))
+        {
+            foreach (var pref in prefs.EnumerateArray())
+            {
+                var prefText = pref.GetString();
+                if (!string.IsNullOrEmpty(prefText))
+                {
+                    nodes.Add(new KnowledgeNode
+                    {
+                        NodeType = "preference",
+                        Subject = "user",
+                        Predicate = "prefers",
+                        Object = prefText,
+                        Confidence = 0.75m
+                    });
+                }
+            }
+        }
+
+        // Extract habits
+        if (doc.RootElement.TryGetProperty("habits", out var habits))
+        {
+            foreach (var habit in habits.EnumerateArray())
+            {
+                var habitText = habit.GetString();
+                if (!string.IsNullOrEmpty(habitText))
+                {
+                    nodes.Add(new KnowledgeNode
+                    {
+                        NodeType = "habit",
+                        Subject = "user",
+                        Predicate = "typically",
+                        Object = habitText,
+                        Confidence = 0.7m
+                    });
+                }
+            }
+        }
+
+        // Extract inferred rules
+        if (doc.RootElement.TryGetProperty("inferred_rules", out var rules))
+        {
+            foreach (var rule in rules.EnumerateArray())
+            {
+                nodes.Add(new KnowledgeNode
+                {
+                    NodeType = "rule",
+                    Subject = rule.TryGetProperty("scope", out var scope) ? scope.GetString() ?? "general" : "general",
+                    Predicate = "implies",
+                    Object = rule.TryGetProperty("rule", out var r) ? r.GetString() : null,
+                    Confidence = rule.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.6m
+                });
+            }
+        }
+
+        // Extract mental model updates
+        if (doc.RootElement.TryGetProperty("mental_model_updates", out var models))
+        {
+            foreach (var model in models.EnumerateArray())
+            {
+                nodes.Add(new KnowledgeNode
+                {
+                    NodeType = "mental_model",
+                    Subject = model.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
+                    Predicate = "updated_by",
+                    Object = model.TryGetProperty("update", out var u) ? u.GetString() : null,
+                    Confidence = model.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.65m
+                });
+            }
+        }
+
+        return nodes;
+    }
+
+    /// <summary>
+    /// Calculates confidence score based on content richness.
+    /// </summary>
+    private static decimal CalculateConfidence(MemoryLayerType layer, JsonDocument doc)
+    {
+        var baseConfidence = 0.7m;
+
+        try
+        {
+            var propCount = doc.RootElement.EnumerateObject().Count();
+
+            // More properties = higher confidence
+            baseConfidence += Math.Min(0.2m, propCount * 0.02m);
+
+            // Layer-specific adjustments
+            switch (layer)
+            {
+                case MemoryLayerType.L3_KNOWLEDGE:
+                    if (doc.RootElement.TryGetProperty("facts", out var facts) && facts.GetArrayLength() > 0)
+                        baseConfidence += 0.05m;
+                    if (doc.RootElement.TryGetProperty("entities", out var entities) && entities.GetArrayLength() > 0)
+                        baseConfidence += 0.05m;
+                    break;
+
+                case MemoryLayerType.L4_HEURISTIC:
+                    if (doc.RootElement.TryGetProperty("preferences", out var prefs) && prefs.GetArrayLength() > 0)
+                        baseConfidence += 0.03m;
+                    if (doc.RootElement.TryGetProperty("inferred_rules", out var rules) && rules.GetArrayLength() > 0)
+                        baseConfidence += 0.07m;
+                    break;
+            }
+        }
+        catch
+        {
+            // Ignore parsing errors in confidence calculation
+        }
+
+        return Math.Min(0.99m, baseConfidence);
+    }
+
+    /// <summary>
+    /// Creates a fallback result when classification fails.
+    /// </summary>
+    private ClassificationResult CreateFallbackResult(MemoryLayerType layer, string content, long durationMs)
+    {
+        var fallbackJson = layer switch
+        {
+            MemoryLayerType.L0_RAW => JsonSerializer.Serialize(new
+            {
+                raw_text = content,
+                metadata = new
+                {
+                    timestamp_utc = DateTime.UtcNow.ToString("O"),
+                    source = "fallback",
+                    actor = "system"
+                }
+            }),
+            MemoryLayerType.L1_CONTEXT => JsonSerializer.Serialize(new
+            {
+                speaker = "unknown",
+                listener = "system",
+                intent = "unknown",
+                context_description = "Classification fallback - could not parse LLM response",
+                tags = new[] { "fallback" }
+            }),
+            MemoryLayerType.L2_SUMMARY => JsonSerializer.Serialize(new
+            {
+                summary = content.Length > 200 ? content[..200] + "..." : content,
+                keywords = Array.Empty<string>(),
+                one_liner = "Classification pending"
+            }),
+            MemoryLayerType.L3_KNOWLEDGE => JsonSerializer.Serialize(new
+            {
+                facts = Array.Empty<object>(),
+                entities = Array.Empty<object>(),
+                relationships = Array.Empty<object>()
+            }),
+            MemoryLayerType.L4_HEURISTIC => JsonSerializer.Serialize(new
+            {
+                preferences = Array.Empty<string>(),
+                habits = Array.Empty<string>(),
+                long_term_tendencies = Array.Empty<string>(),
+                classification = "unknown"
+            }),
+            _ => "{}"
+        };
+
+        return new ClassificationResult
+        {
+            ContentJson = fallbackJson,
+            ModelName = "fallback",
+            Confidence = 0.1m,
+            KnowledgeNodes = null
+        };
+    }
+
+    /// <summary>
+    /// Extracts JSON from a response that may contain markdown or other text.
+    /// </summary>
+    private static string? ExtractJson(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        // Remove markdown code blocks if present
+        text = text.Trim();
+        if (text.StartsWith("```json"))
+            text = text[7..];
+        else if (text.StartsWith("```"))
+            text = text[3..];
+
+        if (text.EndsWith("```"))
+            text = text[..^3];
+
+        text = text.Trim();
+
+        // Find the JSON object
+        var start = text.IndexOf('{');
+        if (start < 0)
+            return null;
+
+        var end = text.LastIndexOf('}');
+        if (end <= start)
+            return null;
+
+        return text[start..(end + 1)];
+    }
+}
