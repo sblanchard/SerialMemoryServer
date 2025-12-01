@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { MainLayout } from './components/Layout';
 import { ForceGraph3D, GraphControls } from './components/Graph';
-import { StatsPanel, SearchPanel, MemoryList } from './components/Sidebar';
+import { StatsPanel, SearchPanel, MemoryList, AskMyMemory } from './components/Sidebar';
 import { useGraphData } from './hooks/useGraphData';
 import { fetchRecentMemories, searchMemories } from './lib/api';
 import type { SearchMemory, ForceGraphNode } from './types/graph';
@@ -81,6 +81,10 @@ function AppContent() {
   const sidebar = (
     <div className="memory-panel h-full">
       <StatsPanel />
+
+      <div className="panel-divider" />
+
+      <AskMyMemory />
 
       <div className="panel-divider" />
 

@@ -1,4 +1,12 @@
 import type { GraphData, Stats, SearchMemory } from '../types/graph';
+import type {
+  RagAnswerRequest,
+  RagAnswerResponse,
+  RagSearchRequest,
+  RagSearchResponse,
+  RagHistoryResponse,
+  RagStats,
+} from '../types/rag';
 
 const API_BASE = '/api';
 
@@ -57,5 +65,50 @@ export async function ingestMemory(content: string, source?: string): Promise<{ 
     body: JSON.stringify({ content, source, extractEntities: true }),
   });
   if (!response.ok) throw new Error('Failed to ingest memory');
+  return response.json();
+}
+
+// =============================================================================
+// RAG (Ask My Memory) API Functions
+// =============================================================================
+
+const RAG_BASE = '/rag';
+
+// Ask a question using RAG over user memories
+export async function askMyMemory(request: RagAnswerRequest): Promise<RagAnswerResponse> {
+  const response = await fetch(`${RAG_BASE}/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to get answer' }));
+    throw new Error(error.message || 'Failed to get answer');
+  }
+  return response.json();
+}
+
+// Search memories using RAG without generating an answer
+export async function searchRagMemories(request: RagSearchRequest): Promise<RagSearchResponse> {
+  const response = await fetch(`${RAG_BASE}/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) throw new Error('Failed to search memories');
+  return response.json();
+}
+
+// Get RAG query history
+export async function getRagHistory(limit: number = 20): Promise<RagHistoryResponse> {
+  const response = await fetch(`${RAG_BASE}/history?limit=${limit}`);
+  if (!response.ok) throw new Error('Failed to fetch RAG history');
+  return response.json();
+}
+
+// Get RAG usage statistics
+export async function getRagStats(): Promise<RagStats> {
+  const response = await fetch(`${RAG_BASE}/stats`);
+  if (!response.ok) throw new Error('Failed to fetch RAG stats');
   return response.json();
 }

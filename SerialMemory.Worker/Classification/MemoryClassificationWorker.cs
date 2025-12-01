@@ -8,11 +8,13 @@ namespace SerialMemory.Worker.Classification;
 /// <summary>
 /// Background worker that processes memories through L0-L4 classification layers.
 /// Uses internal admin role for RLS bypass during processing.
+/// After L2 completes, indexes the L2 embedding for RAG retrieval.
 /// </summary>
 public sealed class MemoryClassificationWorker(
     NpgsqlDataSource dataSource,
     IClassificationService classificationService,
     IEventWriter eventWriter,
+    IL2EmbeddingService l2EmbeddingService,
     ILogger<MemoryClassificationWorker> logger)
     : BackgroundService
 {
@@ -230,6 +232,21 @@ public sealed class MemoryClassificationWorker(
             (decimal)result.Confidence!,
             new { layer_id = layerId, model = result.ModelName },
             ct);
+
+        // For L2, index the embedding for RAG retrieval
+        if (layer == MemoryLayer.L2_SUMMARY)
+        {
+            try
+            {
+                await l2EmbeddingService.IndexL2Async(item.tenant_id, memory.id, ct);
+                logger.LogDebug("Indexed L2 embedding for memory {MemoryId}", memory.id);
+            }
+            catch (Exception ex)
+            {
+                // Don't fail classification if L2 embedding fails - it can be reindexed later
+                logger.LogWarning(ex, "Failed to index L2 embedding for memory {MemoryId}", memory.id);
+            }
+        }
 
         // For L3/L4, extract knowledge graph nodes
         if (layer is MemoryLayer.L3_KNOWLEDGE or MemoryLayer.L4_HEURISTIC)

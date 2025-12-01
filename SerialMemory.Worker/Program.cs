@@ -14,6 +14,7 @@ using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Classification;
 using SerialMemory.Infrastructure.Integrity;
 using SerialMemory.Infrastructure.MemoryLayer;
+using SerialMemory.Infrastructure.Rag;
 using SerialMemory.ML;
 using SerialMemory.Worker;
 using SerialMemory.Worker.Classification;
@@ -150,6 +151,16 @@ builder.Services.AddSingleton<IClassificationService>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<ClassificationService>()));
 
 // ========================================================================
+// L2 EMBEDDING SERVICE (for RAG pipeline)
+// ========================================================================
+
+builder.Services.AddSingleton<IL2EmbeddingService>(sp =>
+    new L2EmbeddingService(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IEmbeddingService>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<L2EmbeddingService>()));
+
+// ========================================================================
 // MEMORY LAYER SERVICES (previously unused - now registered)
 // ========================================================================
 
@@ -196,12 +207,13 @@ builder.Services.AddHostedService<IntegrityWorker>(sp =>
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<IntegrityWorker>()));
 
-// 4. Memory Classification Worker - L0→L4 classification pipeline
+// 4. Memory Classification Worker - L0→L4 classification pipeline with L2 RAG indexing
 builder.Services.AddHostedService<MemoryClassificationWorker>(sp =>
     new MemoryClassificationWorker(
         sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<IClassificationService>(),
         sp.GetRequiredService<IEventWriter>(),
+        sp.GetRequiredService<IL2EmbeddingService>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryClassificationWorker>()));
 
 // ========================================================================

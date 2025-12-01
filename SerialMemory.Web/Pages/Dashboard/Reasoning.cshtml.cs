@@ -18,6 +18,7 @@ public sealed class ReasoningModel : PageModel
     }
 
     public string ApiBaseUrl => _appConfig.ApiBaseUrl;
+    public string DashboardApiBaseUrl => _appConfig.DashboardApiBaseUrl;
 
     // SignalR access token (from InternalTokenMiddleware)
     public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
@@ -68,12 +69,22 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _apiClient.CreateClient("Api");
-            var response = await client.GetAsync("/api/reasoning/runs?limit=20");
+            // Use Dashboard API's reasoning executions endpoint
+            var client = _apiClient.CreateClient("DashboardApi");
+            var response = await client.GetAsync("/reasoning/executions?limit=20");
             if (response.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<ReasoningRunsResponse>();
-                ReasoningRuns = result?.Runs ?? [];
+                var result = await response.Content.ReadFromJsonAsync<ReasoningExecutionsResponse>();
+                ReasoningRuns = result?.Executions.Select(e => new ReasoningRun
+                {
+                    Id = e.Id,
+                    Scope = e.InputType + (string.IsNullOrEmpty(e.InputReference) ? "" : $": {e.InputReference}"),
+                    StartedAt = e.StartedAt ?? e.CreatedAt,
+                    CompletedAt = e.CompletedAt,
+                    DurationMs = e.TotalDurationMs,
+                    StepCount = e.ModelsUsed,
+                    Status = e.Status
+                }).ToList() ?? [];
             }
         }
         catch (HttpRequestException)
@@ -415,5 +426,30 @@ public sealed class ReasoningModel : PageModel
     private sealed class ReasoningRunsResponse
     {
         public IReadOnlyList<ReasoningRun> Runs { get; init; } = [];
+    }
+
+    // New DTOs for Dashboard API reasoning endpoints
+    private sealed class ReasoningExecutionsResponse
+    {
+        public IReadOnlyList<ReasoningExecutionDto> Executions { get; init; } = [];
+        public int Count { get; init; }
+    }
+
+    private sealed class ReasoningExecutionDto
+    {
+        public Guid Id { get; init; }
+        public string InputType { get; init; } = "";
+        public string? InputReference { get; init; }
+        public string Status { get; init; } = "";
+        public DateTimeOffset? StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
+        public int ModelsUsed { get; init; }
+        public int SuccessfulModels { get; init; }
+        public int TotalDurationMs { get; init; }
+        public float OverallConfidence { get; init; }
+        public int InsightCount { get; init; }
+        public int DisagreementCount { get; init; }
+        public string? ErrorMessage { get; init; }
+        public DateTimeOffset CreatedAt { get; init; }
     }
 }
