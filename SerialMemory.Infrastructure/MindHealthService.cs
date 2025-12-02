@@ -564,6 +564,20 @@ public sealed class PostgresMindHealthService(
         }).ToList();
     }
 
+    public async Task ComputeDailyHealthAsync(Guid tenantId, DateOnly date, CancellationToken ct = default)
+    {
+        await using var conn = await OpenTenantConnectionAsync();
+
+        // Call the SQL function that computes daily mind health
+        await conn.ExecuteAsync(
+            "SELECT compute_daily_mind_health(@TenantId, @Date)",
+            new { TenantId = tenantId, Date = date.ToDateTime(TimeOnly.MinValue) });
+
+        _logger.LogInformation(
+            "Computed daily mind health for tenant {TenantId} on {Date}",
+            tenantId, date);
+    }
+
     private static TrendDirection CalculateTrend(IEnumerable<float> values)
     {
         var list = values.ToList();

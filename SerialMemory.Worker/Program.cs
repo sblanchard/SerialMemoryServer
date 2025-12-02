@@ -10,6 +10,7 @@ using SerialMemory.EventSourcing.Retrieval;
 using SerialMemory.EventSourcing.Store;
 using SerialMemory.EventSourcing.Streaming;
 using SerialMemory.Infrastructure;
+using SerialMemory.Infrastructure.Backfill;
 using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Classification;
 using SerialMemory.Infrastructure.Integrity;
@@ -161,6 +162,18 @@ builder.Services.AddSingleton<IL2EmbeddingService>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<L2EmbeddingService>()));
 
 // ========================================================================
+// MEMORY BACKFILL SERVICE (for historical memory processing)
+// ========================================================================
+
+builder.Services.AddSingleton<IMemoryBackfillService>(sp =>
+    new MemoryBackfillService(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IClassificationService>(),
+        sp.GetRequiredService<IEventWriter>(),
+        sp.GetRequiredService<IL2EmbeddingService>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryBackfillService>()));
+
+// ========================================================================
 // MEMORY LAYER SERVICES (previously unused - now registered)
 // ========================================================================
 
@@ -216,6 +229,13 @@ builder.Services.AddHostedService<MemoryClassificationWorker>(sp =>
         sp.GetRequiredService<IL2EmbeddingService>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryClassificationWorker>()));
 
+// 5. Historical Memory Processor - detects and processes all unprocessed historical memories
+//    Ensures 100% of memories have L1-L4 layers, runs on startup and every 2 minutes
+builder.Services.AddHostedService<HistoricalMemoryProcessor>(sp =>
+    new HistoricalMemoryProcessor(
+        sp.GetRequiredService<IMemoryBackfillService>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<HistoricalMemoryProcessor>()));
+
 // ========================================================================
 // MASSTRANSIT CONFIGURATION
 // ========================================================================
@@ -226,10 +246,15 @@ builder.Services.AddMassTransit(x =>
 
     x.UsingRabbitMq((context, cfg) =>
     {
-        cfg.Host(builder.Configuration["RabbitMq:Host"] ?? "localhost", "/", h =>
+        var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
+        var rabbitVHost = builder.Configuration["RabbitMq:VHost"] ?? "/";
+        var rabbitUser = builder.Configuration["RabbitMq:User"] ?? "guest";
+        var rabbitPass = builder.Configuration["RabbitMq:Password"] ?? "guest";
+
+        cfg.Host(rabbitHost, rabbitVHost, h =>
         {
-            h.Username("guest");
-            h.Password("guest");
+            h.Username(rabbitUser);
+            h.Password(rabbitPass);
         });
 
         cfg.UseMessageRetry(r =>

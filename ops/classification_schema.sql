@@ -411,8 +411,8 @@ BEGIN
     -- Get tenant_id from memory
     SELECT tenant_id INTO v_tenant_id FROM memories WHERE id = p_memory_id;
 
-    -- Compute content hash
-    v_content_hash := encode(sha256(p_content_json::text::bytea), 'hex');
+    -- Compute content hash (use convert_to for proper UTF-8 encoding, not ::bytea which fails on escape chars)
+    v_content_hash := encode(sha256(convert_to(p_content_json::text, 'UTF8')), 'hex');
 
     -- Mark previous layer as not current
     UPDATE memory_layers

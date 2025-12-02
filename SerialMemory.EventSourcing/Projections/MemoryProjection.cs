@@ -60,6 +60,24 @@ public sealed class MemoryProjection : IProjection
             case MemoryEventType.MemoryMerged:
                 await ApplyMemoryMerged(conn, storedEvent, cancellationToken);
                 break;
+
+            // Classification events - acknowledged but don't modify projections
+            case MemoryEventType.LayerGenerated:
+            case MemoryEventType.LayerClassified:
+                _logger.LogDebug("Skipping classification event {EventType} for stream {StreamId}",
+                    storedEvent.EventType, storedEvent.StreamId);
+                return;
+
+            // Safety/export/unknown events - skip silently
+            case MemoryEventType.ContradictionDetected:
+            case MemoryEventType.HallucinationFlagged:
+            case MemoryEventType.IntegrityCheckFailed:
+            case MemoryEventType.ExportCompleted:
+            case MemoryEventType.Unknown:
+            default:
+                _logger.LogDebug("Skipping event type {EventType} for stream {StreamId} (no projection handler)",
+                    storedEvent.EventType, storedEvent.StreamId);
+                return;
         }
 
         _logger.LogDebug("Applied {EventType} to projection for stream {StreamId}",

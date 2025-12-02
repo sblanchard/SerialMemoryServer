@@ -1,7 +1,7 @@
 # =============================================================================
 # SerialMemory Complete Stack
 # =============================================================================
-# Production-ready deployment with all services.
+# Development deployment with all services.
 #
 # Quick Start:
 #   docker compose up -d
@@ -12,9 +12,12 @@
 #   - PostgreSQL + pgvector:    localhost:5435
 #   - SerialMemory API:         localhost:5000
 #   - Dashboard API:            localhost:5001
+#   - Web Admin:                localhost:5002
 #   - Redis:                    localhost:6379
+#   - RabbitMQ:                 localhost:5672 (management: 15672)
 #   - Prometheus:               localhost:9090
 #   - Grafana:                  localhost:3001
+#   - Worker:                   localhost:8081
 #
 # =============================================================================
 
@@ -43,6 +46,7 @@ services:
       - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
       - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
       - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
+      - ./ops/classification_schema.sql:/docker-entrypoint-initdb.d/12-classification.sql:ro
       - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/99-rls-fix.sql:ro
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -50,6 +54,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # SerialMemory API (REST endpoints)
@@ -61,8 +66,12 @@ services:
     container_name: serialmemory-api
     ports:
       - "5000:8080"
+    # Linux: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=contextdb_app
@@ -70,31 +79,34 @@ services:
       - POSTGRES_DB=contextdb
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
+      # Redis
+      - ConnectionStrings__Redis=redis:6379
+      # RabbitMQ
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__User=guest
+      - RabbitMq__Password=guest
+      - RabbitMq__VHost=/
+      # LLM & Embeddings (OpenAI preferred if set, fallback to Ollama)
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-      # OpenAI Configuration (primary if set, fallback to Ollama)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
       - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
-      - ConnectionStrings__Redis=redis:6379
-      - RabbitMq__Host=rabbitmq
+      # Security
       - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
-      # Internal token key for dashboard-to-API communication (base64 64-byte key)
-      # WARNING: Change this in production! Generate with: openssl rand -base64 64 | tr -d '\n'
       - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
-      # Deployment Mode: PublicSaaS (default) or SelfHosted
+      # Dashboard API URL for auth forwarding
+      - DASHBOARD_API_URL=http://dashboard-api:8080
+      # Deployment Mode
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
       - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
       - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:-stephan@serialcoder.com}
       - SERIALMEMORY_LICENSE_KEY=${SERIALMEMORY_LICENSE_KEY:-}
-      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:-stephan@serialcoder.com}
-      # Dashboard API URL for auth forwarding
-      - DASHBOARD_API_URL=http://dashboard-api:8080
-      # Feature Flags
+      # Feature Flags (development defaults - most disabled)
       - FEATURE_EMBEDDING_CACHE=${FEATURE_EMBEDDING_CACHE:-false}
       - FEATURE_DETERMINISTIC_INFERENCE=${FEATURE_DETERMINISTIC_INFERENCE:-false}
       - FEATURE_MEMORY_COMPILATION=${FEATURE_MEMORY_COMPILATION:-false}
@@ -120,6 +132,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Dashboard API (Tenant Self-Service + Signup)
@@ -133,6 +146,7 @@ services:
       - "5001:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=contextdb_app
@@ -140,9 +154,11 @@ services:
       - POSTGRES_DB=contextdb
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
+      # Security
       - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
+      # Stripe
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_your_test_key_here}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
@@ -158,6 +174,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Web Admin Portal (Razor Pages)
@@ -171,6 +188,7 @@ services:
       - "5002:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
       - API_BASE_URL=http://api:8080
       - DASHBOARD_API_URL=http://dashboard-api:8080
       - PUBLIC_API_URL=${PUBLIC_API_URL:-https://api.serialmemory.dev}
@@ -192,6 +210,7 @@ services:
     depends_on:
       - api
       - dashboard-api
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Redis (caching, rate limiting)
@@ -203,6 +222,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Message Queue: RabbitMQ
@@ -221,6 +241,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Monitoring
@@ -232,8 +253,11 @@ services:
       - "9090:9090"
     volumes:
       - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:11.2.0
@@ -247,6 +271,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Worker (Background processing, maintenance, projections)
@@ -258,17 +283,25 @@ services:
     container_name: serialmemory-worker
     ports:
       - "8081:8081"
+    # Linux: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
       - ConnectionStrings__Redis=redis:6379
+      # RabbitMQ
       - RabbitMq__Host=rabbitmq
+      - RabbitMq__User=guest
+      - RabbitMq__Password=guest
+      - RabbitMq__VHost=/
+      # LLM & Embeddings (OpenAI preferred if set, fallback to Ollama)
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
       - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
-      # Feature Flags
+      # Feature Flags (development defaults - most disabled)
       - FEATURE_EMBEDDING_CACHE=${FEATURE_EMBEDDING_CACHE:-false}
       - FEATURE_DETERMINISTIC_INFERENCE=${FEATURE_DETERMINISTIC_INFERENCE:-false}
       - FEATURE_MEMORY_COMPILATION=${FEATURE_MEMORY_COMPILATION:-false}
@@ -287,9 +320,10 @@ services:
       rabbitmq:
         condition: service_started
     restart: unless-stopped
-    
+
 volumes:
   postgres_data:
   redis_data:
   grafana_data:
+  prometheus_data:
   web_admin_keys:

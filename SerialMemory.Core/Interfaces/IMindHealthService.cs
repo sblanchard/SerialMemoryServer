@@ -86,6 +86,12 @@ public interface IMindHealthService
     /// Get daily health scores.
     /// </summary>
     Task<IReadOnlyList<DailyHealthScore>> GetDailyScoresAsync(int days = 30, CancellationToken ct = default);
+
+    /// <summary>
+    /// Compute/refresh daily health score for a specific tenant and date.
+    /// This triggers recalculation of all health metrics.
+    /// </summary>
+    Task ComputeDailyHealthAsync(Guid tenantId, DateOnly date, CancellationToken ct = default);
 }
 
 // ==========================================

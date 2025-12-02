@@ -457,6 +457,23 @@ builder.Services.AddSingleton<IScalePredictionService>(sp =>
         pgConnectionString,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<ScalePredictionService>()));
 
+// Self-Host Metrics Provider - explicit demo mode handling for admin dashboard
+// Configure from environment: SELF_HOST_METRICS_MODE=auto|live|demo
+builder.Services.Configure<SelfHostMetricsConfig>(options =>
+{
+    options.Mode = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_MODE") ?? "auto";
+    options.PrometheusUrl = Environment.GetEnvironmentVariable("SELF_HOST_PROMETHEUS_URL");
+    if (int.TryParse(Environment.GetEnvironmentVariable("SELF_HOST_METRICS_TIMEOUT_SECONDS"), out var timeout))
+        options.FetchTimeout = TimeSpan.FromSeconds(timeout);
+    if (int.TryParse(Environment.GetEnvironmentVariable("SELF_HOST_METRICS_CACHE_SECONDS"), out var cache))
+        options.CacheExpiry = TimeSpan.FromSeconds(cache);
+});
+builder.Services.AddSingleton<ISelfHostMetricsProvider>(sp =>
+    new SelfHostMetricsProvider(
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SelfHostMetricsConfig>>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<SelfHostMetricsProvider>()));
+
 // Predictive Simulation - future state analysis
 builder.Services.AddSingleton<IPredictiveSimulationService>(sp =>
     new PredictiveSimulationService(

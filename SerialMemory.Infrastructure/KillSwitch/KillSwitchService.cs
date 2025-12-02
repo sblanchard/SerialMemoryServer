@@ -656,17 +656,23 @@ public sealed class KillSwitchService : IKillSwitchService
             duration = duration?.ToString()
         });
 
+        // Parse tenant ID - if targetId is a valid GUID, use it; otherwise use a system tenant
+        Guid? tenantId = null;
+        if (!string.IsNullOrEmpty(targetId) && Guid.TryParse(targetId, out var tid))
+        {
+            tenantId = tid;
+        }
+
+        // Use the append_admin_action function which handles hash chaining
         await conn.ExecuteAsync(
             """
-            INSERT INTO admin_actions (id, tool_name, tenant_id, user_id, timestamp, params_hash, metadata, success)
-            VALUES (@Id, @ToolName, @TenantId, @UserId, NOW(), @ParamsHash, @Metadata::jsonb, TRUE)
+            SELECT append_admin_action(@TenantId, @UserId, @ToolName, @ParamsHash, @Metadata::jsonb)
             """,
             new
             {
-                Id = Guid.CreateVersion7(),
-                ToolName = toolName,
-                TenantId = string.IsNullOrEmpty(targetId) ? (Guid?)null : Guid.TryParse(targetId, out var tid) ? tid : (Guid?)null,
+                TenantId = tenantId,
                 UserId = userId,
+                ToolName = toolName,
                 ParamsHash = ComputeHash(metadata),
                 Metadata = metadata
             });

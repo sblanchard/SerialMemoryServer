@@ -60,7 +60,7 @@ public sealed class BillingModel : PageModel
                 CancelUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing?canceled=true"
             };
 
-            var response = await client.PostAsJsonAsync("/billing/checkout", request);
+            var response = await client.PostAsJsonAsync("/api/billing/checkout", request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -114,7 +114,7 @@ public sealed class BillingModel : PageModel
                 ReturnUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing"
             };
 
-            var response = await client.PostAsJsonAsync("/billing/portal", request);
+            var response = await client.PostAsJsonAsync("/api/billing/portal", request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -196,7 +196,7 @@ public sealed class BillingModel : PageModel
             var client = _apiClient.CreateClient("Api");
 
             // Get billing summary
-            var billingResponse = await client.GetAsync("/billing");
+            var billingResponse = await client.GetAsync("/api/billing");
             if (billingResponse.IsSuccessStatusCode)
             {
                 var billing = await billingResponse.Content.ReadFromJsonAsync<BillingSummary>();

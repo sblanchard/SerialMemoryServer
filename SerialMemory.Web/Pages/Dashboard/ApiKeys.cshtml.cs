@@ -168,14 +168,69 @@ public sealed class ApiKeysModel : PageModel
 
             if (response.IsSuccessStatusCode)
             {
-                var keys = await response.Content.ReadFromJsonAsync<List<ApiKeyInfo>>();
-                ApiKeys = keys ?? [];
+                // API returns { keys: [...], total: X }
+                var result = await response.Content.ReadFromJsonAsync<ApiKeysResponse>();
+                ApiKeys = result?.Keys?.Select(k => new ApiKeyInfo
+                {
+                    Id = k.Id,
+                    Name = k.Name,
+                    Description = null, // Not returned by API
+                    KeyPrefix = k.KeyPrefix,
+                    CreatedAt = k.CreatedAt,
+                    LastUsedAt = k.LastUsedAt,
+                    ExpiresAt = k.ExpiresAt,
+                    IsRevoked = k.Status == "revoked"
+                }).ToList() ?? [];
             }
         }
         catch (HttpRequestException)
         {
             // API unavailable
         }
+    }
+
+    // Response wrapper matching API format (camelCase from JSON)
+    private sealed class ApiKeysResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("keys")]
+        public List<ApiKeyDto>? Keys { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
+        public int Total { get; init; }
+    }
+
+    // DTO matching API response format (camelCase from JSON)
+    private sealed class ApiKeyDto
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public Guid Id { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; init; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("keyPrefix")]
+        public string KeyPrefix { get; init; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
+        public string[]? Scopes { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("createdBy")]
+        public string? CreatedBy { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("lastUsedAt")]
+        public DateTimeOffset? LastUsedAt { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("expiresAt")]
+        public DateTimeOffset? ExpiresAt { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("revokedAt")]
+        public DateTimeOffset? RevokedAt { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("createdAt")]
+        public DateTimeOffset CreatedAt { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; init; } = "active";
     }
 
     public sealed class ApiKeyInfo

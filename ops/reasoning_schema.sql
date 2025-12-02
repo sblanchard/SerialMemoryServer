@@ -1,332 +1,859 @@
 -- ============================================================================
--- Reasoning Execution Schema
--- Persists multi-model reasoning results with full trace history (DAG structure)
+-- FIX EVENT SOURCING COMPLETE - Multi-Tenant Event Pipeline
+-- ============================================================================
+-- This migration fixes ALL event sourcing issues:
+-- 1. Adds tenant_id to memory_events table
+-- 2. Creates event_log table for cross-cutting events
+-- 3. Fixes RLS policies with internal_admin bypass
+-- 4. Adds memory_timeline for time-travel replay
+-- 5. Adds mind_health table for dashboard metrics
+-- 6. Creates helper functions for event emission
 -- ============================================================================
 
--- Drop old tables if they exist (legacy schema)
-DROP TABLE IF EXISTS reasoning_findings CASCADE;
-DROP TABLE IF EXISTS reasoning_results CASCADE;
-DROP VIEW IF EXISTS reasoning_findings_summary CASCADE;
-DROP VIEW IF EXISTS reasoning_traces_view CASCADE;
+BEGIN;
 
--- Reasoning execution status enum
+-- ============================================================================
+-- STEP 1: Extend memory_event_type enum with missing types
+-- ============================================================================
+
+-- Add new event types if they don't exist
 DO $$ BEGIN
-    CREATE TYPE reasoning_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'LayerGenerated';
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- Reasoning role enum (matches ReasoningRole in C#)
 DO $$ BEGIN
-    CREATE TYPE reasoning_role AS ENUM ('structural', 'risk', 'optimization', 'contradiction', 'summary');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'KnowledgeNodeAdded';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'ConflictDetected';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'TimelineSnapshotCreated';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'ReasoningExecuted';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'MutationApplied';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'BranchCreated';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'BranchMerged';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'MemorySplit';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'MemoryExpired';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TYPE memory_event_type ADD VALUE IF NOT EXISTS 'HallucinationDetected';
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- ============================================================================
--- reasoning_executions: Parent table for reasoning runs
+-- STEP 2: Add tenant_id column to memory_events
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS reasoning_executions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    user_id         TEXT NOT NULL,
 
-    -- Input specification
-    input_type      TEXT NOT NULL CHECK (input_type IN ('memory', 'query', 'project', 'graph')),
-    input_reference TEXT,                    -- memory_id, query text, project name, etc.
-    input_hash      TEXT,                    -- SHA-256 of input for deduplication
+ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS tenant_id UUID;
 
-    -- Execution state
-    status          reasoning_status NOT NULL DEFAULT 'pending',
-    started_at      TIMESTAMPTZ,
-    completed_at    TIMESTAMPTZ,
+-- Create index on tenant_id for efficient queries
+CREATE INDEX IF NOT EXISTS idx_memory_events_tenant ON memory_events (tenant_id, created_at DESC);
 
-    -- Results summary (denormalized for quick access)
-    models_used     INT DEFAULT 0,
-    successful_models INT DEFAULT 0,
-    total_duration_ms INT DEFAULT 0,
-    overall_confidence REAL DEFAULT 0,
-    insight_count   INT DEFAULT 0,
-    disagreement_count INT DEFAULT 0,
+-- Create index for Recent Events query pattern
+CREATE INDEX IF NOT EXISTS idx_memory_events_tenant_global ON memory_events (tenant_id, global_sequence DESC);
 
-    -- Error handling
-    error_message   TEXT,
-    error_details   JSONB,
+-- ============================================================================
+-- STEP 3: Create event_log table for cross-cutting system events
+-- ============================================================================
 
-    -- Audit
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS event_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    event_type TEXT NOT NULL,
+    memory_id UUID,                           -- Optional: linked memory
+    actor TEXT NOT NULL DEFAULT 'system',     -- Who/what triggered the event
+    payload JSONB NOT NULL DEFAULT '{}',      -- Event data
+    seq BIGSERIAL,                            -- Per-tenant sequence number
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Searchable fields
+    severity TEXT DEFAULT 'info',             -- info, warning, error, critical
+    category TEXT DEFAULT 'memory',           -- memory, reasoning, graph, security, billing
+    correlation_id UUID                       -- For tracing related events
 );
 
--- Indexes for reasoning_executions
-CREATE INDEX IF NOT EXISTS idx_reasoning_executions_tenant_id ON reasoning_executions(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_executions_user_id ON reasoning_executions(tenant_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_executions_status ON reasoning_executions(status) WHERE status IN ('pending', 'running');
-CREATE INDEX IF NOT EXISTS idx_reasoning_executions_created_at ON reasoning_executions(tenant_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_reasoning_executions_input_hash ON reasoning_executions(tenant_id, input_hash) WHERE input_hash IS NOT NULL;
+-- Indexes for event_log
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_seq ON event_log (tenant_id, seq DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_created ON event_log (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_type ON event_log (tenant_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_event_log_memory ON event_log (memory_id) WHERE memory_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_log_category ON event_log (tenant_id, category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_correlation ON event_log (correlation_id) WHERE correlation_id IS NOT NULL;
 
 -- ============================================================================
--- reasoning_traces: Individual model execution steps (DAG nodes)
+-- STEP 4: Create memory_timeline table for time-travel snapshots
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS reasoning_traces (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    execution_id    UUID NOT NULL REFERENCES reasoning_executions(id) ON DELETE CASCADE,
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 
-    -- DAG structure
-    step_id         TEXT NOT NULL,           -- Unique within execution (e.g., "structural-1", "risk-1")
-    parent_step_ids TEXT[] DEFAULT '{}',     -- Parent steps this depends on (for DAG edges)
-    step_order      INT NOT NULL DEFAULT 0,  -- Execution order
+CREATE TABLE IF NOT EXISTS memory_timeline (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    memory_id UUID NOT NULL,
+    snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_id UUID,                            -- The event that triggered this snapshot
+    event_type TEXT NOT NULL,
 
-    -- Model information
-    role            reasoning_role NOT NULL,
-    model_name      TEXT NOT NULL,
-    model_version   TEXT,
+    -- Memory state at this point in time
+    content TEXT NOT NULL,
+    layer TEXT NOT NULL DEFAULT 'L0_RAW',
+    confidence_score DECIMAL(4,3) NOT NULL DEFAULT 1.000,
+    metadata JSONB DEFAULT '{}',
 
-    -- Execution details
-    started_at      TIMESTAMPTZ,
-    completed_at    TIMESTAMPTZ,
-    duration_ms     INT DEFAULT 0,
-    success         BOOLEAN DEFAULT FALSE,
+    -- Delta from previous snapshot (for efficient replay)
+    delta_type TEXT DEFAULT 'full',           -- full, patch, reference
+    delta_data JSONB,
 
-    -- Input/Output
-    input_context   JSONB,                   -- What was sent to the model
-    output_raw      TEXT,                    -- Raw model response
-    output_parsed   JSONB,                   -- Parsed/structured output
-
-    -- Error handling
-    error_message   TEXT,
-    error_code      TEXT,
-
-    -- Audit
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Indexes for reasoning_traces
-CREATE INDEX IF NOT EXISTS idx_reasoning_traces_execution_id ON reasoning_traces(execution_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_traces_tenant_id ON reasoning_traces(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_traces_role ON reasoning_traces(execution_id, role);
-CREATE INDEX IF NOT EXISTS idx_reasoning_traces_step_order ON reasoning_traces(execution_id, step_order);
+-- Indexes for timeline
+CREATE INDEX IF NOT EXISTS idx_memory_timeline_tenant_memory ON memory_timeline (tenant_id, memory_id, snapshot_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_timeline_event ON memory_timeline (event_id) WHERE event_id IS NOT NULL;
 
 -- ============================================================================
--- reasoning_insights: Merged insights from multiple models
+-- STEP 5: Create/update mind_health table
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS reasoning_insights (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    execution_id    UUID NOT NULL REFERENCES reasoning_executions(id) ON DELETE CASCADE,
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 
-    -- Insight content
-    insight_type    TEXT NOT NULL,           -- e.g., 'risk', 'optimization', 'structural'
-    content         TEXT NOT NULL,
-    confidence      REAL NOT NULL DEFAULT 0,
+CREATE TABLE IF NOT EXISTS mind_health (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Attribution
-    source_models   TEXT[] NOT NULL DEFAULT '{}',
-    agreement_count INT NOT NULL DEFAULT 1,
+    -- Health metrics
+    total_memories INT NOT NULL DEFAULT 0,
+    active_memories INT NOT NULL DEFAULT 0,
+    decayed_memories INT NOT NULL DEFAULT 0,
+    contradictions_detected INT NOT NULL DEFAULT 0,
+    hallucinations_flagged INT NOT NULL DEFAULT 0,
 
-    -- Related entities
-    related_entity_ids UUID[] DEFAULT '{}',
-    related_memory_ids UUID[] DEFAULT '{}',
+    -- Layer distribution
+    l0_count INT NOT NULL DEFAULT 0,
+    l1_count INT NOT NULL DEFAULT 0,
+    l2_count INT NOT NULL DEFAULT 0,
+    l3_count INT NOT NULL DEFAULT 0,
+    l4_count INT NOT NULL DEFAULT 0,
 
-    -- Metadata
-    metadata        JSONB,
+    -- Confidence metrics
+    avg_confidence DECIMAL(4,3) NOT NULL DEFAULT 1.000,
+    min_confidence DECIMAL(4,3) NOT NULL DEFAULT 1.000,
 
-    -- Audit
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    -- Graph health
+    entity_count INT NOT NULL DEFAULT 0,
+    relationship_count INT NOT NULL DEFAULT 0,
+    orphan_entity_count INT NOT NULL DEFAULT 0,
+
+    -- Event metrics
+    events_last_hour INT NOT NULL DEFAULT 0,
+    events_last_day INT NOT NULL DEFAULT 0,
+
+    -- Overall health score (0-100)
+    health_score INT NOT NULL DEFAULT 100,
+    health_status TEXT NOT NULL DEFAULT 'healthy',  -- healthy, warning, critical
+
+    metadata JSONB DEFAULT '{}'
 );
 
--- Indexes for reasoning_insights
-CREATE INDEX IF NOT EXISTS idx_reasoning_insights_execution_id ON reasoning_insights(execution_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_insights_tenant_id ON reasoning_insights(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_insights_type ON reasoning_insights(execution_id, insight_type);
-CREATE INDEX IF NOT EXISTS idx_reasoning_insights_confidence ON reasoning_insights(execution_id, confidence DESC);
+-- Only keep recent health snapshots per tenant
+CREATE INDEX IF NOT EXISTS idx_mind_health_tenant ON mind_health (tenant_id, computed_at DESC);
 
 -- ============================================================================
--- reasoning_disagreements: Model disagreements for analysis
+-- STEP 6: Create conflict_results table
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS reasoning_disagreements (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    execution_id    UUID NOT NULL REFERENCES reasoning_executions(id) ON DELETE CASCADE,
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 
-    -- Disagreement details
-    topic           TEXT NOT NULL,
-    model_a         TEXT NOT NULL,
-    position_a      TEXT NOT NULL,
-    model_b         TEXT NOT NULL,
-    position_b      TEXT NOT NULL,
-    severity        TEXT CHECK (severity IN ('low', 'medium', 'high')),
+CREATE TABLE IF NOT EXISTS conflict_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    scan_id UUID NOT NULL,                    -- Batch scan identifier
+    memory_a_id UUID NOT NULL,
+    memory_b_id UUID NOT NULL,
+    similarity_score DECIMAL(4,3) NOT NULL,
+    contradiction_type TEXT NOT NULL,         -- semantic, temporal, factual
+    explanation TEXT,
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    resolved_at TIMESTAMPTZ,
+    resolved_by TEXT,
+    resolution_action TEXT,                   -- merged, invalidated, kept_both, manual
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Resolution
-    resolved        BOOLEAN DEFAULT FALSE,
-    resolution      TEXT,
-    resolved_at     TIMESTAMPTZ,
-    resolved_by     TEXT,
-
-    -- Audit
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    CONSTRAINT unique_conflict_pair UNIQUE (tenant_id, memory_a_id, memory_b_id)
 );
 
--- Indexes for reasoning_disagreements
-CREATE INDEX IF NOT EXISTS idx_reasoning_disagreements_execution_id ON reasoning_disagreements(execution_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_disagreements_tenant_id ON reasoning_disagreements(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_reasoning_disagreements_unresolved ON reasoning_disagreements(execution_id) WHERE NOT resolved;
+CREATE INDEX IF NOT EXISTS idx_conflict_results_tenant ON conflict_results (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conflict_results_unresolved ON conflict_results (tenant_id, resolved) WHERE resolved = FALSE;
 
 -- ============================================================================
--- Row Level Security (RLS)
+-- STEP 7: Create branch_metadata table for shadow branches
 -- ============================================================================
 
--- Enable RLS on all reasoning tables
-ALTER TABLE reasoning_executions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE reasoning_traces ENABLE ROW LEVEL SECURITY;
-ALTER TABLE reasoning_insights ENABLE ROW LEVEL SECURITY;
-ALTER TABLE reasoning_disagreements ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS branch_metadata (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    branch_name TEXT NOT NULL,
+    description TEXT,
+    source_branch TEXT DEFAULT 'main',
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    merged_at TIMESTAMPTZ,
+    merged_by TEXT,
+    status TEXT NOT NULL DEFAULT 'active',    -- active, merged, abandoned
+    memory_count INT NOT NULL DEFAULT 0,
+    entity_count INT NOT NULL DEFAULT 0,
 
--- Drop existing policies if they exist
-DROP POLICY IF EXISTS reasoning_executions_tenant_isolation ON reasoning_executions;
-DROP POLICY IF EXISTS reasoning_traces_tenant_isolation ON reasoning_traces;
-DROP POLICY IF EXISTS reasoning_insights_tenant_isolation ON reasoning_insights;
-DROP POLICY IF EXISTS reasoning_disagreements_tenant_isolation ON reasoning_disagreements;
+    CONSTRAINT unique_branch_name UNIQUE (tenant_id, branch_name)
+);
 
--- reasoning_executions policies
-CREATE POLICY reasoning_executions_tenant_isolation ON reasoning_executions
-    FOR ALL
-    USING (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    )
-    WITH CHECK (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    );
-
--- reasoning_traces policies
-CREATE POLICY reasoning_traces_tenant_isolation ON reasoning_traces
-    FOR ALL
-    USING (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    )
-    WITH CHECK (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    );
-
--- reasoning_insights policies
-CREATE POLICY reasoning_insights_tenant_isolation ON reasoning_insights
-    FOR ALL
-    USING (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    )
-    WITH CHECK (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    );
-
--- reasoning_disagreements policies
-CREATE POLICY reasoning_disagreements_tenant_isolation ON reasoning_disagreements
-    FOR ALL
-    USING (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    )
-    WITH CHECK (
-        current_setting('app.role', true) = 'internal_admin'
-        OR tenant_id = current_setting('app.tenant_id', true)::uuid
-    );
+CREATE INDEX IF NOT EXISTS idx_branch_metadata_tenant ON branch_metadata (tenant_id, status, created_at DESC);
 
 -- ============================================================================
--- Updated_at trigger
+-- STEP 8: Enable RLS on all event-related tables
 -- ============================================================================
-CREATE OR REPLACE FUNCTION update_reasoning_executions_updated_at()
-RETURNS TRIGGER AS $$
+
+ALTER TABLE memory_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_timeline ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mind_health ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conflict_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_metadata ENABLE ROW LEVEL SECURITY;
+
+-- Force RLS for table owners (defense in depth)
+ALTER TABLE memory_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE event_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_timeline FORCE ROW LEVEL SECURITY;
+ALTER TABLE mind_health FORCE ROW LEVEL SECURITY;
+ALTER TABLE conflict_results FORCE ROW LEVEL SECURITY;
+ALTER TABLE branch_metadata FORCE ROW LEVEL SECURITY;
+
+-- ============================================================================
+-- STEP 9: Create is_internal_admin() check function
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION is_internal_admin()
+RETURNS BOOLEAN AS $$
 BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
+    RETURN COALESCE(current_setting('app.role', true), '') = 'internal_admin';
 END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_reasoning_executions_updated_at ON reasoning_executions;
-CREATE TRIGGER trg_reasoning_executions_updated_at
-    BEFORE UPDATE ON reasoning_executions
-    FOR EACH ROW
-    EXECUTE FUNCTION update_reasoning_executions_updated_at();
+$$ LANGUAGE plpgsql STABLE;
 
 -- ============================================================================
--- Helper function to get execution with full details (SECURITY DEFINER for RLS bypass)
+-- STEP 10: Create RLS policies with internal_admin bypass
 -- ============================================================================
-CREATE OR REPLACE FUNCTION get_reasoning_execution_details(p_execution_id UUID)
+
+-- MEMORY_EVENTS policies
+DROP POLICY IF EXISTS tenant_read_memory_events ON memory_events;
+DROP POLICY IF EXISTS internal_admin_memory_events ON memory_events;
+
+CREATE POLICY tenant_read_memory_events ON memory_events
+    FOR SELECT
+    USING (
+        tenant_id = current_setting('app.tenant_id', true)::uuid
+        OR tenant_id IS NULL  -- Legacy events without tenant_id
+    );
+
+CREATE POLICY internal_admin_memory_events ON memory_events
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- EVENT_LOG policies
+DROP POLICY IF EXISTS tenant_read_event_log ON event_log;
+DROP POLICY IF EXISTS internal_admin_event_log ON event_log;
+
+CREATE POLICY tenant_read_event_log ON event_log
+    FOR SELECT
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY internal_admin_event_log ON event_log
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- MEMORY_TIMELINE policies
+DROP POLICY IF EXISTS tenant_read_memory_timeline ON memory_timeline;
+DROP POLICY IF EXISTS internal_admin_memory_timeline ON memory_timeline;
+
+CREATE POLICY tenant_read_memory_timeline ON memory_timeline
+    FOR SELECT
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY internal_admin_memory_timeline ON memory_timeline
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- MIND_HEALTH policies
+DROP POLICY IF EXISTS tenant_read_mind_health ON mind_health;
+DROP POLICY IF EXISTS internal_admin_mind_health ON mind_health;
+
+CREATE POLICY tenant_read_mind_health ON mind_health
+    FOR SELECT
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY internal_admin_mind_health ON mind_health
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- CONFLICT_RESULTS policies
+DROP POLICY IF EXISTS tenant_read_conflict_results ON conflict_results;
+DROP POLICY IF EXISTS internal_admin_conflict_results ON conflict_results;
+
+CREATE POLICY tenant_read_conflict_results ON conflict_results
+    FOR SELECT
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY internal_admin_conflict_results ON conflict_results
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- BRANCH_METADATA policies
+DROP POLICY IF EXISTS tenant_isolation_branch_metadata ON branch_metadata;
+DROP POLICY IF EXISTS internal_admin_branch_metadata ON branch_metadata;
+
+CREATE POLICY tenant_isolation_branch_metadata ON branch_metadata
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY internal_admin_branch_metadata ON branch_metadata
+    FOR ALL
+    USING (is_internal_admin())
+    WITH CHECK (is_internal_admin());
+
+-- ============================================================================
+-- STEP 11: Create emit_memory_event() function for consistent event emission
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION emit_memory_event(
+    p_tenant_id UUID,
+    p_memory_id UUID,
+    p_event_type TEXT,
+    p_event_data JSONB,
+    p_actor TEXT DEFAULT 'system',
+    p_metadata JSONB DEFAULT '{}'
+) RETURNS UUID AS $$
+DECLARE
+    v_event_id UUID;
+    v_content_hash TEXT;
+    v_event_version BIGINT;
+BEGIN
+    -- Generate content hash
+    v_content_hash := encode(sha256(p_event_data::text::bytea), 'hex');
+
+    -- Get next version for this stream
+    SELECT COALESCE(MAX(event_version), 0) + 1 INTO v_event_version
+    FROM memory_events
+    WHERE stream_id = p_memory_id;
+
+    -- Insert into memory_events
+    INSERT INTO memory_events (
+        event_id,
+        stream_id,
+        tenant_id,
+        event_type,
+        event_version,
+        event_data,
+        metadata,
+        created_by,
+        content_hash
+    ) VALUES (
+        gen_random_uuid(),
+        p_memory_id,
+        p_tenant_id,
+        p_event_type::memory_event_type,
+        v_event_version,
+        p_event_data,
+        p_metadata,
+        p_actor,
+        v_content_hash
+    )
+    RETURNING event_id INTO v_event_id;
+
+    -- Also insert into event_log for cross-cutting queries
+    INSERT INTO event_log (
+        tenant_id,
+        event_type,
+        memory_id,
+        actor,
+        payload,
+        category
+    ) VALUES (
+        p_tenant_id,
+        p_event_type,
+        p_memory_id,
+        p_actor,
+        p_event_data,
+        'memory'
+    );
+
+    RETURN v_event_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- STEP 12: Create emit_system_event() function for non-memory events
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION emit_system_event(
+    p_tenant_id UUID,
+    p_event_type TEXT,
+    p_payload JSONB,
+    p_actor TEXT DEFAULT 'system',
+    p_category TEXT DEFAULT 'system',
+    p_severity TEXT DEFAULT 'info',
+    p_memory_id UUID DEFAULT NULL,
+    p_correlation_id UUID DEFAULT NULL
+) RETURNS UUID AS $$
+DECLARE
+    v_event_id UUID;
+BEGIN
+    INSERT INTO event_log (
+        tenant_id,
+        event_type,
+        memory_id,
+        actor,
+        payload,
+        category,
+        severity,
+        correlation_id
+    ) VALUES (
+        p_tenant_id,
+        p_event_type,
+        p_memory_id,
+        p_actor,
+        p_payload,
+        p_category,
+        p_severity,
+        p_correlation_id
+    )
+    RETURNING id INTO v_event_id;
+
+    RETURN v_event_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- STEP 13: Create create_timeline_snapshot() function
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION create_timeline_snapshot(
+    p_tenant_id UUID,
+    p_memory_id UUID,
+    p_event_id UUID,
+    p_event_type TEXT,
+    p_content TEXT,
+    p_layer TEXT,
+    p_confidence DECIMAL,
+    p_metadata JSONB DEFAULT '{}'
+) RETURNS UUID AS $$
+DECLARE
+    v_snapshot_id UUID;
+BEGIN
+    INSERT INTO memory_timeline (
+        tenant_id,
+        memory_id,
+        event_id,
+        event_type,
+        content,
+        layer,
+        confidence_score,
+        metadata,
+        delta_type
+    ) VALUES (
+        p_tenant_id,
+        p_memory_id,
+        p_event_id,
+        p_event_type,
+        p_content,
+        p_layer,
+        p_confidence,
+        p_metadata,
+        'full'
+    )
+    RETURNING id INTO v_snapshot_id;
+
+    RETURN v_snapshot_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- STEP 14: Create compute_mind_health() function
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION compute_mind_health(p_tenant_id UUID)
+RETURNS UUID AS $$
+DECLARE
+    v_health_id UUID;
+    v_total_memories INT;
+    v_active_memories INT;
+    v_decayed_memories INT;
+    v_contradictions INT;
+    v_l0 INT; v_l1 INT; v_l2 INT; v_l3 INT; v_l4 INT;
+    v_avg_conf DECIMAL;
+    v_min_conf DECIMAL;
+    v_entities INT;
+    v_relationships INT;
+    v_events_hour INT;
+    v_events_day INT;
+    v_health_score INT;
+    v_health_status TEXT;
+BEGIN
+    -- Count memories by status
+    SELECT
+        COUNT(*),
+        COUNT(*) FILTER (WHERE is_active = TRUE),
+        COUNT(*) FILTER (WHERE confidence_score < 0.3)
+    INTO v_total_memories, v_active_memories, v_decayed_memories
+    FROM memories WHERE tenant_id = p_tenant_id;
+
+    -- Count contradictions
+    SELECT COUNT(*) INTO v_contradictions
+    FROM conflict_results WHERE tenant_id = p_tenant_id AND resolved = FALSE;
+
+    -- Layer distribution
+    SELECT
+        COUNT(*) FILTER (WHERE layer = 'L0_RAW'),
+        COUNT(*) FILTER (WHERE layer = 'L1_CONTEXT'),
+        COUNT(*) FILTER (WHERE layer = 'L2_SUMMARY'),
+        COUNT(*) FILTER (WHERE layer = 'L3_KNOWLEDGE'),
+        COUNT(*) FILTER (WHERE layer = 'L4_HEURISTIC')
+    INTO v_l0, v_l1, v_l2, v_l3, v_l4
+    FROM memories WHERE tenant_id = p_tenant_id AND is_active = TRUE;
+
+    -- Confidence metrics
+    SELECT
+        COALESCE(AVG(confidence_score), 1.0),
+        COALESCE(MIN(confidence_score), 1.0)
+    INTO v_avg_conf, v_min_conf
+    FROM memories WHERE tenant_id = p_tenant_id AND is_active = TRUE;
+
+    -- Entity and relationship counts
+    SELECT COUNT(*) INTO v_entities FROM entities WHERE tenant_id = p_tenant_id;
+    SELECT COUNT(*) INTO v_relationships FROM entity_relationships WHERE tenant_id = p_tenant_id;
+
+    -- Event counts
+    SELECT COUNT(*) INTO v_events_hour
+    FROM event_log
+    WHERE tenant_id = p_tenant_id AND created_at > NOW() - INTERVAL '1 hour';
+
+    SELECT COUNT(*) INTO v_events_day
+    FROM event_log
+    WHERE tenant_id = p_tenant_id AND created_at > NOW() - INTERVAL '1 day';
+
+    -- Compute health score (simple heuristic)
+    v_health_score := 100;
+
+    -- Penalty for low confidence
+    IF v_avg_conf < 0.5 THEN v_health_score := v_health_score - 20; END IF;
+    IF v_avg_conf < 0.3 THEN v_health_score := v_health_score - 20; END IF;
+
+    -- Penalty for unresolved contradictions
+    v_health_score := v_health_score - LEAST(v_contradictions * 2, 30);
+
+    -- Penalty for high decay
+    IF v_total_memories > 0 AND (v_decayed_memories::DECIMAL / v_total_memories) > 0.3 THEN
+        v_health_score := v_health_score - 15;
+    END IF;
+
+    v_health_score := GREATEST(0, v_health_score);
+
+    v_health_status := CASE
+        WHEN v_health_score >= 80 THEN 'healthy'
+        WHEN v_health_score >= 50 THEN 'warning'
+        ELSE 'critical'
+    END;
+
+    -- Insert health record
+    INSERT INTO mind_health (
+        tenant_id,
+        total_memories, active_memories, decayed_memories, contradictions_detected,
+        l0_count, l1_count, l2_count, l3_count, l4_count,
+        avg_confidence, min_confidence,
+        entity_count, relationship_count,
+        events_last_hour, events_last_day,
+        health_score, health_status
+    ) VALUES (
+        p_tenant_id,
+        v_total_memories, v_active_memories, v_decayed_memories, v_contradictions,
+        v_l0, v_l1, v_l2, v_l3, v_l4,
+        v_avg_conf, v_min_conf,
+        v_entities, v_relationships,
+        v_events_hour, v_events_day,
+        v_health_score, v_health_status
+    )
+    RETURNING id INTO v_health_id;
+
+    -- Emit system event
+    PERFORM emit_system_event(
+        p_tenant_id,
+        'MindHealthComputed',
+        jsonb_build_object(
+            'health_score', v_health_score,
+            'health_status', v_health_status,
+            'total_memories', v_total_memories
+        ),
+        'mind_health_worker',
+        'health'
+    );
+
+    RETURN v_health_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- STEP 15: Create get_recent_events() function for dashboard
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION get_recent_events(
+    p_tenant_id UUID,
+    p_limit INT DEFAULT 50,
+    p_offset INT DEFAULT 0,
+    p_category TEXT DEFAULT NULL,
+    p_event_type TEXT DEFAULT NULL
+)
 RETURNS TABLE (
-    execution JSONB,
-    traces JSONB,
-    insights JSONB,
-    disagreements JSONB
+    id UUID,
+    seq BIGINT,
+    event_type TEXT,
+    memory_id UUID,
+    actor TEXT,
+    payload JSONB,
+    category TEXT,
+    severity TEXT,
+    created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        to_jsonb(e.*) AS execution,
-        COALESCE(
-            (SELECT jsonb_agg(to_jsonb(t.*) ORDER BY t.step_order)
-             FROM reasoning_traces t WHERE t.execution_id = p_execution_id),
-            '[]'::jsonb
-        ) AS traces,
-        COALESCE(
-            (SELECT jsonb_agg(to_jsonb(i.*) ORDER BY i.confidence DESC)
-             FROM reasoning_insights i WHERE i.execution_id = p_execution_id),
-            '[]'::jsonb
-        ) AS insights,
-        COALESCE(
-            (SELECT jsonb_agg(to_jsonb(d.*))
-             FROM reasoning_disagreements d WHERE d.execution_id = p_execution_id),
-            '[]'::jsonb
-        ) AS disagreements
-    FROM reasoning_executions e
-    WHERE e.id = p_execution_id;
+        el.id,
+        el.seq,
+        el.event_type,
+        el.memory_id,
+        el.actor,
+        el.payload,
+        el.category,
+        el.severity,
+        el.created_at
+    FROM event_log el
+    WHERE el.tenant_id = p_tenant_id
+      AND (p_category IS NULL OR el.category = p_category)
+      AND (p_event_type IS NULL OR el.event_type = p_event_type)
+    ORDER BY el.seq DESC
+    LIMIT p_limit
+    OFFSET p_offset;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- ============================================================================
+-- STEP 16: Create get_memory_timeline() function for replay
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION get_memory_timeline(
+    p_tenant_id UUID,
+    p_memory_id UUID,
+    p_from_time TIMESTAMPTZ DEFAULT NULL,
+    p_to_time TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS TABLE (
+    id UUID,
+    snapshot_at TIMESTAMPTZ,
+    event_type TEXT,
+    content TEXT,
+    layer TEXT,
+    confidence_score DECIMAL,
+    metadata JSONB
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        mt.id,
+        mt.snapshot_at,
+        mt.event_type,
+        mt.content,
+        mt.layer,
+        mt.confidence_score,
+        mt.metadata
+    FROM memory_timeline mt
+    WHERE mt.tenant_id = p_tenant_id
+      AND mt.memory_id = p_memory_id
+      AND (p_from_time IS NULL OR mt.snapshot_at >= p_from_time)
+      AND (p_to_time IS NULL OR mt.snapshot_at <= p_to_time)
+    ORDER BY mt.snapshot_at ASC;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- ============================================================================
+-- STEP 17: Create trigger to auto-emit events on memory changes
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION trigger_memory_event()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_event_type TEXT;
+    v_event_data JSONB;
+BEGIN
+    -- Skip if internal admin (worker will emit its own events)
+    IF is_internal_admin() THEN
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        v_event_type := 'MemoryCreated';
+        v_event_data := jsonb_build_object(
+            'content_length', LENGTH(NEW.content),
+            'source', NEW.source,
+            'layer', NEW.layer
+        );
+    ELSIF TG_OP = 'UPDATE' THEN
+        IF NEW.is_active = FALSE AND OLD.is_active = TRUE THEN
+            v_event_type := 'MemoryInvalidated';
+        ELSIF NEW.merged_into IS NOT NULL AND OLD.merged_into IS NULL THEN
+            v_event_type := 'MemoryMerged';
+        ELSIF NEW.confidence_score < OLD.confidence_score THEN
+            v_event_type := 'MemoryDecayed';
+        ELSIF NEW.confidence_score > OLD.confidence_score THEN
+            v_event_type := 'MemoryReinforced';
+        ELSE
+            v_event_type := 'MemoryUpdated';
+        END IF;
+        v_event_data := jsonb_build_object(
+            'old_confidence', OLD.confidence_score,
+            'new_confidence', NEW.confidence_score,
+            'old_layer', OLD.layer,
+            'new_layer', NEW.layer
+        );
+    END IF;
+
+    -- Emit event (only if tenant context is set)
+    IF NEW.tenant_id IS NOT NULL THEN
+        PERFORM emit_memory_event(
+            NEW.tenant_id,
+            NEW.id,
+            v_event_type,
+            v_event_data,
+            COALESCE(current_setting('app.user_id', true), 'system')
+        );
+    END IF;
+
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Grant execute to authenticated users
-GRANT EXECUTE ON FUNCTION get_reasoning_execution_details(UUID) TO PUBLIC;
+-- Drop existing trigger if any
+DROP TRIGGER IF EXISTS tr_memory_events ON memories;
+
+-- Create trigger (runs AFTER to ensure transaction succeeds first)
+CREATE TRIGGER tr_memory_events
+    AFTER INSERT OR UPDATE ON memories
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_memory_event();
 
 -- ============================================================================
--- View for recent executions with summary
+-- STEP 18: Backfill tenant_id for existing memory_events from stream_id
 -- ============================================================================
-CREATE OR REPLACE VIEW reasoning_executions_summary AS
+
+UPDATE memory_events me
+SET tenant_id = m.tenant_id
+FROM memories m
+WHERE me.stream_id = m.id
+  AND me.tenant_id IS NULL;
+
+-- ============================================================================
+-- STEP 19: Create view for easy Recent Events access
+-- ============================================================================
+
+CREATE OR REPLACE VIEW v_recent_events AS
 SELECT
-    e.id,
-    e.tenant_id,
-    e.user_id,
-    e.input_type,
-    e.input_reference,
-    e.status,
-    e.started_at,
-    e.completed_at,
-    e.models_used,
-    e.successful_models,
-    e.total_duration_ms,
-    e.overall_confidence,
-    e.insight_count,
-    e.disagreement_count,
-    e.error_message,
-    e.created_at,
-    COUNT(DISTINCT t.id) AS trace_count,
-    COUNT(DISTINCT CASE WHEN t.success THEN t.id END) AS successful_traces
-FROM reasoning_executions e
-LEFT JOIN reasoning_traces t ON t.execution_id = e.id
-GROUP BY e.id
-ORDER BY e.created_at DESC;
+    el.id,
+    el.tenant_id,
+    el.seq,
+    el.event_type,
+    el.memory_id,
+    el.actor,
+    el.payload,
+    el.category,
+    el.severity,
+    el.created_at,
+    m.content AS memory_content_preview
+FROM event_log el
+LEFT JOIN memories m ON el.memory_id = m.id
+ORDER BY el.created_at DESC;
+
+COMMENT ON VIEW v_recent_events IS 'Recent events with memory content preview for dashboard';
 
 -- ============================================================================
--- Comments for documentation
+-- STEP 20: Grant permissions
 -- ============================================================================
-COMMENT ON TABLE reasoning_executions IS 'Parent table for multi-model reasoning runs';
-COMMENT ON TABLE reasoning_traces IS 'Individual model execution steps forming a DAG';
-COMMENT ON TABLE reasoning_insights IS 'Merged insights from multiple models with confidence scores';
-COMMENT ON TABLE reasoning_disagreements IS 'Model disagreements requiring resolution';
 
-COMMENT ON COLUMN reasoning_traces.parent_step_ids IS 'Parent steps this depends on (forms DAG edges)';
-COMMENT ON COLUMN reasoning_traces.step_id IS 'Unique within execution, e.g., structural-1, risk-1';
-COMMENT ON COLUMN reasoning_insights.agreement_count IS 'Number of models that agreed on this insight';
+-- Grant execute on functions to service role
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION emit_memory_event TO serialmemory_service;
+    GRANT EXECUTE ON FUNCTION emit_system_event TO serialmemory_service;
+    GRANT EXECUTE ON FUNCTION create_timeline_snapshot TO serialmemory_service;
+    GRANT EXECUTE ON FUNCTION compute_mind_health TO serialmemory_service;
+    GRANT EXECUTE ON FUNCTION get_recent_events TO serialmemory_service;
+    GRANT EXECUTE ON FUNCTION get_memory_timeline TO serialmemory_service;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+-- Grant execute on functions to contextdb_app (API user)
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION emit_memory_event TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION emit_system_event TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION create_timeline_snapshot TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION compute_mind_health TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION get_recent_events TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION get_memory_timeline TO contextdb_app;
+    GRANT EXECUTE ON FUNCTION trigger_memory_event TO contextdb_app;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+COMMIT;
+
+-- ============================================================================
+-- VERIFICATION QUERIES (run manually to test)
+-- ============================================================================
+
+-- Test event emission:
+-- SELECT set_config('app.role', 'internal_admin', false);
+-- SELECT set_config('app.tenant_id', 'your-tenant-id-here', false);
+-- SELECT emit_system_event('your-tenant-id'::uuid, 'TestEvent', '{"test": true}'::jsonb);
+-- SELECT * FROM event_log WHERE event_type = 'TestEvent';
+
+-- Test Recent Events:
+-- SELECT * FROM get_recent_events('your-tenant-id'::uuid, 10);
+
+-- Test Mind Health:
+-- SELECT compute_mind_health('your-tenant-id'::uuid);
+-- SELECT * FROM mind_health WHERE tenant_id = 'your-tenant-id'::uuid ORDER BY computed_at DESC LIMIT 1;
