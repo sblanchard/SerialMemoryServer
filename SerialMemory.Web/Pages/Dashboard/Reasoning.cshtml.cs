@@ -6,25 +6,15 @@ using SerialMemory.Web.Services;
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public sealed class ReasoningModel : PageModel
+public sealed class ReasoningModel : DashboardPageModel
 {
     private readonly ApiClientService _apiClient;
-    private readonly AppConfig _appConfig;
 
     public ReasoningModel(ApiClientService apiClient, AppConfig appConfig)
+        : base(appConfig)
     {
         _apiClient = apiClient;
-        _appConfig = appConfig;
     }
-
-    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
-    public string DashboardApiBaseUrl => _appConfig.DashboardApiBaseUrl;
-
-    // SignalR access token (from InternalTokenMiddleware)
-    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
-
-    // Service API key for authenticated API calls
-    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
 
     [BindProperty(SupportsGet = true)]
     public string? Project { get; set; }

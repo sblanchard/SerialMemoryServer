@@ -6,19 +6,15 @@ using SerialMemory.Web.Services;
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public sealed class MutationsModel : PageModel
+public sealed class MutationsModel : DashboardPageModel
 {
     private readonly ApiClientService _apiClient;
-    private readonly AppConfig _appConfig;
 
     public MutationsModel(ApiClientService apiClient, AppConfig appConfig)
+        : base(appConfig)
     {
         _apiClient = apiClient;
-        _appConfig = appConfig;
     }
-
-    // Service API key for authenticated API calls
-    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
 
     public IReadOnlyList<PendingMutation> PendingMutations { get; set; } = [];
     public IReadOnlyList<RecentMutation> RecentMutations { get; set; } = [];

@@ -338,20 +338,18 @@
 </div>
 
 @section Scripts {
+<script src="~/js/dashboard-api.js"></script>
 <script>
+    // Configure DashboardApi with page model values
+    window.dashboardConfig = {
+        apiBaseUrl: '@Model.ApiBaseUrl',
+        serviceApiKey: '@Model.ServiceApiKey',
+        signalRToken: '@Model.SignalRToken'
+    };
+
     // Configuration - use same-origin paths to go through web admin's /api/* proxy
     const maxSequence = @Model.CurrentSequence;
-    const serviceApiKey = '@Model.ServiceApiKey';
     let isPredictiveMode = false;
-
-    // Helper to create headers with auth (consistent with other dashboard pages)
-    function getAuthHeaders() {
-        const headers = { 'Content-Type': 'application/json' };
-        if (serviceApiKey) {
-            headers['X-Api-Key'] = serviceApiKey;
-        }
-        return headers;
-    }
     let debounceTimer = null;
     let replayData = null;
     let predictData = null;
@@ -386,9 +384,7 @@
 
     async function loadEventRange() {
         try {
-            const response = await fetch('/api/mutations/range', {
-                headers: getAuthHeaders()
-            });
+            const response = await DashboardApi.get('/api/mutations/range');
             if (response.ok) {
                 const data = await response.json();
                 const slider = document.getElementById('timeSlider');
@@ -439,18 +435,11 @@
 
     async function loadReplay(fromSeq, toSeq) {
         try {
-            const response = await fetch('/api/mutations/replay', {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({ fromSequence: fromSeq, toSequence: toSeq })
+            replayData = await DashboardApi.postJson('/api/mutations/replay', {
+                fromSequence: fromSeq,
+                toSequence: toSeq
             });
-
-            if (response.ok) {
-                replayData = await response.json();
-                updateUI(replayData);
-            } else {
-                document.getElementById('replayStatus').textContent = 'Failed to load replay';
-            }
+            updateUI(replayData);
         } catch (e) {
             console.error('Replay error:', e);
             document.getElementById('replayStatus').textContent = 'Error: ' + e.message;
@@ -459,17 +448,10 @@
 
     async function loadPrediction() {
         try {
-            const horizonMinutes = 30;
-            const response = await fetch('/api/mutations/predict', {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({ horizonMinutes: horizonMinutes })
+            predictData = await DashboardApi.postJson('/api/mutations/predict', {
+                horizonMinutes: 30
             });
-
-            if (response.ok) {
-                predictData = await response.json();
-                updatePredictionUI(predictData);
-            }
+            updatePredictionUI(predictData);
         } catch (e) {
             console.error('Prediction error:', e);
         }
