@@ -241,14 +241,19 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 // MassTransit Configuration (optional - for event publishing)
 try
 {
+    var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
+    var rabbitUser = builder.Configuration["RabbitMq:User"] ?? "guest";
+    var rabbitPass = builder.Configuration["RabbitMq:Password"] ?? "guest";
+    var rabbitVHost = builder.Configuration["RabbitMq:VHost"] ?? "/";
+
     builder.Services.AddMassTransit(x =>
     {
         x.UsingRabbitMq((context, cfg) =>
         {
-            cfg.Host(builder.Configuration["RabbitMq:Host"] ?? "localhost", "/", h =>
+            cfg.Host(rabbitHost, rabbitVHost, h =>
             {
-                h.Username("guest");
-                h.Password("guest");
+                h.Username(rabbitUser);
+                h.Password(rabbitPass);
             });
             cfg.ConfigureEndpoints(context);
             cfg.UseMessageRetry(r => r.Exponential(5,
