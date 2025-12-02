@@ -81,7 +81,7 @@ public static class BillingEndpoints
         // POST /billing/create-checkout-session - Create Stripe checkout session (FIX #10)
         // =============================================================================
         group.MapPost("/create-checkout-session", async (
-            [FromBody] CreateCheckoutRequest request,
+            [FromBody] CheckoutSessionRequest request,
             ClaimsPrincipal user,
             NpgsqlDataSource dataSource,
             [FromServices] IBillingService? billingService,
@@ -509,7 +509,7 @@ public sealed class InvoiceDto
     public string? stripe_invoice_id { get; set; }
 }
 
-public sealed record CreateCheckoutRequest(
+public sealed record CheckoutSessionRequest(
     string? Plan,
     string? SuccessUrl = null,
     string? CancelUrl = null

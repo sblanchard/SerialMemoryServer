@@ -168,8 +168,16 @@ services:
       - JWT_AUDIENCE=${JWT_AUDIENCE:-serialmemory-api}
       - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:?INTERNAL_TOKEN_KEY is required}
       - SERVICE_API_KEY=${SERVICE_API_KEY:?SERVICE_API_KEY is required}
-      # Dashboard API URL
-      - DASHBOARD_API_URL=http://dashboard-api:8080
+      # Stripe (for billing endpoints)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-}
+      # Email (for signup/verification)
+      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
+      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
+      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.dev}
       # Deployment
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-true}
@@ -193,62 +201,12 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_healthy
-      dashboard-api:
-        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
-    networks:
-      - internal
-      - external
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-
-  # ---------------------------------------------------------------------------
-  # Dashboard API (Production)
-  # ---------------------------------------------------------------------------
-  dashboard-api:
-    build:
-      context: .
-      dockerfile: SerialMemory.Api.Dashboard/Dockerfile
-    container_name: serialmemory-dashboard-api
-    ports:
-      - "${DASHBOARD_API_PORT:-5001}:8080"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080
-      # Database
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=contextdb
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      # Security
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_ISSUER=${JWT_ISSUER:-serialmemory}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-serialmemory-api}
-      # Stripe
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY is required}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:?STRIPE_PUBLISHABLE_KEY is required}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:?STRIPE_WEBHOOK_SECRET is required}
-      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID}
-      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID}
-      # Email
-      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
-      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
-      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:?SERIALMEMORY_BASE_URL is required}
-      # Deployment
-      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
-      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-true}
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - internal
       - external
@@ -270,7 +228,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - API_BASE_URL=http://api:8080
-      - DASHBOARD_API_URL=http://dashboard-api:8080
+      - DASHBOARD_API_URL=http://api:8080
       - PUBLIC_API_URL=${PUBLIC_API_URL:?PUBLIC_API_URL is required}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
       - SERVICE_API_KEY=${SERVICE_API_KEY}
@@ -289,7 +247,6 @@ services:
       - web_admin_keys:/app/keys
     depends_on:
       - api
-      - dashboard-api
     networks:
       - internal
       - external

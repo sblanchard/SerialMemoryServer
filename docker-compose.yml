@@ -98,8 +98,16 @@ services:
       - JWT_AUDIENCE=serialmemory-api
       - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:-c2VyaWFsbWVtb3J5LWRldi1pbnRlcm5hbC10b2tlbi1rZXktMjAyNC1jaGFuZ2UtaW4tcHJvZHVjdGlvbi1ub3ctcGxlYXNlLWNoYW5nZS1tZQ==}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
-      # Dashboard API URL for auth forwarding
-      - DASHBOARD_API_URL=http://dashboard-api:8080
+      # Stripe (for billing endpoints)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_your_test_key_here}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_1SYsGUGmpXjmqv9HuNjnYAWA}
+      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_1SYsIAGmpXjmqv9HGeNnWSMZ}
+      # Email (for signup/verification)
+      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
+      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
+      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.dev}
       # Deployment Mode
       - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
       - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
@@ -124,56 +132,12 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_started
-      dashboard-api:
-        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # Dashboard API (Tenant Self-Service + Signup)
-  # ---------------------------------------------------------------------------
-  dashboard-api:
-    build:
-      context: .
-      dockerfile: SerialMemory.Api.Dashboard/Dockerfile
-    container_name: serialmemory-dashboard-api
-    ports:
-      - "5001:8080"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:8080
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=contextdb_app
-      - POSTGRES_PASSWORD=contextdb_app_secure_password_change_me
-      - POSTGRES_DB=contextdb
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
-      # Security
-      - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
-      - JWT_ISSUER=serialmemory
-      - JWT_AUDIENCE=serialmemory-api
-      # Stripe
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_your_test_key_here}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret_here}
-      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-price_1SYsGUGmpXjmqv9HuNjnYAWA}
-      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-price_1SYsIAGmpXjmqv9HGeNnWSMZ}
-      # Azure Communication Services for email
-      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
-      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
-      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.dev}
-      # Deployment Mode
-      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
-      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-false}
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -190,11 +154,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
       - API_BASE_URL=http://api:8080
-      - DASHBOARD_API_URL=http://dashboard-api:8080
+      - DASHBOARD_API_URL=http://api:8080
       - PUBLIC_API_URL=${PUBLIC_API_URL:-https://api.serialmemory.dev}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_your_publishable_key_here}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-sm_live_svc_serialmemory_admin_key_2024}
-      # JWT settings (must match dashboard-api)
+      # JWT settings (must match api)
       - JWT_SECRET=${JWT_SECRET:-default-development-secret-32chars!!}
       - JWT_ISSUER=serialmemory
       - JWT_AUDIENCE=serialmemory-api
@@ -209,7 +173,6 @@ services:
       - web_admin_keys:/app/keys
     depends_on:
       - api
-      - dashboard-api
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------

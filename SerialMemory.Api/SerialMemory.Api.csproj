@@ -11,6 +11,7 @@
         <ProjectReference Include="..\SerialMemory.Infrastructure\SerialMemory.Infrastructure.csproj" />
         <ProjectReference Include="..\SerialMemory.Contracts\SerialMemory.Contracts.csproj" />
         <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
+        <ProjectReference Include="..\SerialMemory.EventSourcing\SerialMemory.EventSourcing.csproj" />
     </ItemGroup>
 
     <ItemGroup>
