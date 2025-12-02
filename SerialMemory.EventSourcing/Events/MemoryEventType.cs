@@ -21,11 +21,18 @@ public enum MemoryEventType
     MemoryExpired,
     MemorySplit,
 
+    // Classification events
+    LayerGenerated,
+    LayerClassified,
+
     // Safety events
     ContradictionDetected,
     HallucinationFlagged,
     IntegrityCheckFailed,
 
     // Export events
-    ExportCompleted
+    ExportCompleted,
+
+    // Unknown/Legacy event types (for backwards compatibility)
+    Unknown
 }

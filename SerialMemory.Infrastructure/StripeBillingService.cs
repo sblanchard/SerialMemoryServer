@@ -12,7 +12,7 @@ namespace SerialMemory.Infrastructure;
 /// Stripe implementation of IBillingService.
 /// Handles checkout sessions, webhooks, and subscription management.
 /// </summary>
-public sealed class StripeBillingService : IBillingService, IMockableBillingService
+public sealed class StripeBillingService : IMockableBillingService
 {
     private readonly string _connectionString;
     private readonly ILogger<StripeBillingService> _logger;
@@ -945,7 +945,7 @@ public sealed class StripeBillingService : IBillingService, IMockableBillingServ
             new { TenantId = tenantId });
 
         // Grant credits for the new billing cycle
-        if (planName != null && invoice.PeriodStart != null && invoice.PeriodEnd != null)
+        if (planName != null)
         {
             // Get credit allocation for this plan
             var creditsPerCycle = await conn.QuerySingleOrDefaultAsync<decimal?>(

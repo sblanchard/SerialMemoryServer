@@ -12,30 +12,28 @@ namespace SerialMemory.Infrastructure;
 /// </summary>
 public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsConnection = true) : DbConnection
 {
-    private readonly NpgsqlConnection _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-
     /// <summary>
     /// Gets the underlying NpgsqlConnection for operations that require it directly.
     /// </summary>
-    public NpgsqlConnection Inner => _inner;
+    private NpgsqlConnection Inner { get; } = inner ?? throw new ArgumentNullException(nameof(inner));
 
     public override string ConnectionString
     {
-        get => _inner.ConnectionString;
-        set => _inner.ConnectionString = value;
+        get => Inner.ConnectionString;
+        set => Inner.ConnectionString = value;
     }
 
-    public override string Database => _inner.Database;
-    public override ConnectionState State => _inner.State;
-    public override string DataSource => _inner.DataSource;
-    public override string ServerVersion => _inner.ServerVersion;
+    public override string Database => Inner.Database;
+    public override ConnectionState State => Inner.State;
+    public override string DataSource => Inner.DataSource;
+    public override string ServerVersion => Inner.ServerVersion;
 
-    public override void ChangeDatabase(string databaseName) => _inner.ChangeDatabase(databaseName);
+    public override void ChangeDatabase(string databaseName) => Inner.ChangeDatabase(databaseName);
 
     public override void Close()
     {
         Metrics.ActiveDbConnections.Add(-1);
-        _inner.Close();
+        Inner.Close();
     }
 
     public override void Open()
@@ -43,7 +41,7 @@ public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsCo
         var sw = Stopwatch.StartNew();
         try
         {
-            _inner.Open();
+            Inner.Open();
             Metrics.ActiveDbConnections.Add(1);
         }
         catch (Exception ex)
@@ -63,7 +61,7 @@ public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsCo
         var sw = Stopwatch.StartNew();
         try
         {
-            await _inner.OpenAsync(cancellationToken);
+            await Inner.OpenAsync(cancellationToken);
             Metrics.ActiveDbConnections.Add(1);
         }
         catch (Exception ex)
@@ -80,23 +78,23 @@ public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsCo
 
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
     {
-        return _inner.BeginTransaction(isolationLevel);
+        return Inner.BeginTransaction(isolationLevel);
     }
 
     protected override DbCommand CreateDbCommand()
     {
-        return new InstrumentedDbCommand(_inner.CreateCommand(), this);
+        return new InstrumentedDbCommand(Inner.CreateCommand(), this);
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing && ownsConnection)
         {
-            if (_inner.State == ConnectionState.Open)
+            if (Inner.State == ConnectionState.Open)
             {
                 Metrics.ActiveDbConnections.Add(-1);
             }
-            _inner.Dispose();
+            Inner.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -105,11 +103,11 @@ public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsCo
     {
         if (ownsConnection)
         {
-            if (_inner.State == ConnectionState.Open)
+            if (Inner.State == ConnectionState.Open)
             {
                 Metrics.ActiveDbConnections.Add(-1);
             }
-            await _inner.DisposeAsync();
+            await Inner.DisposeAsync();
         }
         await base.DisposeAsync();
     }

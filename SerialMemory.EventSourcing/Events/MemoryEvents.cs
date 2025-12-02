@@ -274,3 +274,22 @@ public sealed record MemorySplitEvent : MemoryEventBase
     protected override string GetHashableContent() =>
         JsonSerializer.Serialize(new { ChildMemoryIds, SplitStrategy, Reason });
 }
+
+/// <summary>
+/// Event: Unknown or legacy event type that cannot be deserialized.
+/// Used for backwards compatibility when encountering event types
+/// that were added in newer versions or removed in older versions.
+/// </summary>
+public sealed record UnknownEvent : IMemoryEvent
+{
+    public Guid EventId { get; init; }
+    public Guid StreamId { get; init; }
+    public MemoryEventType EventType { get; init; }
+    public long EventVersion { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public string? CreatedBy { get; init; }
+    public string ContentHash { get; init; } = "";
+
+    /// <summary>Raw event data for debugging/logging</summary>
+    public string? RawEventData { get; init; }
+}

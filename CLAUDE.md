@@ -4,14 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-SerialMemoryServer is a **CORE-like temporal knowledge graph memory system** inspired by [getcore.me](https://getcore.me/). It provides:
+SerialMemoryServer is a temporal knowledge graph memory system. It provides:
 
 - Temporal knowledge graph with semantic search
 - Entity extraction and relationship tracking
 - Semantic embeddings (384-dim vectors)
 - PostgreSQL + pgvector for storage
 - MCP protocol for AI agent integration
-- **CORE import capability** for migrating from getcore.me
 
 ## Available Implementations
 

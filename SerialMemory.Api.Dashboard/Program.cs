@@ -218,6 +218,23 @@ var stripeConfig = new StripeConfig
 builder.Services.AddSingleton<IBillingService>(sp =>
     new StripeBillingService(connectionString, sp.GetRequiredService<ILogger<StripeBillingService>>(), stripeConfig));
 
+// =============================================================================
+// NEW SERVICE REGISTRATIONS (FIX #1-11)
+// =============================================================================
+
+// Conflict scanner service (FIX #2)
+builder.Services.AddSingleton<IConflictScanner>(sp =>
+    new SerialMemory.Infrastructure.Services.ConflictScannerService(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Services.ConflictScannerService>>()));
+
+// Admin status service (FIX #11)
+builder.Services.AddSingleton<IAdminStatusService>(sp =>
+    new SerialMemory.Infrastructure.Services.AdminStatusService(
+        sp.GetRequiredService<Npgsql.NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Services.AdminStatusService>>(),
+        selfHostedMode));
+
 builder.Services.AddAuthentication(options =>
     {
         // Default to JWT, but allow API key to authenticate as well
@@ -741,145 +758,10 @@ app.MapPost("/auth/magic-link/verify", async (
 .Produces(StatusCodes.Status400BadRequest);
 
 // =============================================================================
-// POST /api-keys - Create new API key
+// API KEYS ENDPOINTS - Mapped via ApiKeysEndpoints.cs extension method
+// See: app.MapApiKeysEndpoints(selfHostedMode) below
+// Includes: POST /api-keys, GET /api-keys, GET /api-keys/{id}, DELETE /api-keys/{id}, POST /api-keys/{id}/regenerate
 // =============================================================================
-app.MapPost("/api-keys", async (
-    [FromBody] CreateApiKeyRequest request,
-    ClaimsPrincipal user,
-    [FromServices] IApiKeyService apiKeyService,
-    CancellationToken ct) =>
-{
-    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
-
-    try
-    {
-        var result = await apiKeyService.CreateApiKeyAsync(tenantId, userId, request, ct);
-        return Results.Created($"/api-keys/{result.Id}", result);
-    }
-    catch (ArgumentException ex)
-    {
-        return Results.BadRequest(new { error = "validation_error", message = ex.Message });
-    }
-    catch (UnauthorizedAccessException)
-    {
-        return Results.Forbid();
-    }
-})
-.WithName("CreateApiKey")
-.WithDescription("Creates a new API key for the tenant")
-.RequireAuthorization()
-.Produces<ApiKeyCreateResult>(StatusCodes.Status201Created)
-.Produces(StatusCodes.Status400BadRequest)
-.Produces(StatusCodes.Status401Unauthorized)
-.Produces(StatusCodes.Status403Forbidden);
-
-// =============================================================================
-// GET /api-keys - List API keys
-// =============================================================================
-app.MapGet("/api-keys", async (
-    bool? includeRevoked,
-    ClaimsPrincipal user,
-    IApiKeyService apiKeyService,
-    CancellationToken ct) =>
-{
-    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-    var result = await apiKeyService.ListApiKeysAsync(tenantId, includeRevoked ?? false, ct);
-    return Results.Ok(result);
-})
-.WithName("ListApiKeys")
-.WithDescription("Lists all API keys for the tenant (secrets not included)")
-.RequireAuthorization()
-.Produces<IReadOnlyList<ApiKeyInfo>>(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status401Unauthorized);
-
-// =============================================================================
-// GET /api-keys/{id} - Get single API key
-// =============================================================================
-app.MapGet("/api-keys/{id:guid}", async (
-    Guid id,
-    ClaimsPrincipal user,
-    IApiKeyService apiKeyService,
-    CancellationToken ct) =>
-{
-    var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-    var result = await apiKeyService.GetApiKeyAsync(tenantId, id, ct);
-
-    if (result == null)
-        return Results.NotFound(new { error = "not_found", message = "API key not found" });
-
-    return Results.Ok(result);
-})
-.WithName("GetApiKey")
-.WithDescription("Gets details for a specific API key")
-.RequireAuthorization()
-.Produces<ApiKeyInfo>(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status401Unauthorized)
-.Produces(StatusCodes.Status404NotFound);
-
-// =============================================================================
-// DELETE /api-keys/{id} - Revoke API key
-// =============================================================================
-app.MapDelete("/api-keys/{id:guid}", async (
-    Guid id,
-    ClaimsPrincipal user,
-    IApiKeyService apiKeyService,
-    CancellationToken ct) =>
-{
-    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
-    var revoked = await apiKeyService.RevokeApiKeyAsync(tenantId, id, userId, ct);
-
-    if (!revoked)
-        return Results.NotFound(new { error = "not_found", message = "API key not found or already revoked" });
-
-    return Results.Ok(new { message = "API key revoked successfully", keyId = id });
-})
-.WithName("RevokeApiKey")
-.WithDescription("Revokes an API key (soft delete)")
-.RequireAuthorization()
-.Produces(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status401Unauthorized)
-.Produces(StatusCodes.Status404NotFound);
-
-// =============================================================================
-// POST /api-keys/{id}/rotate - Rotate API key (create new, revoke old)
-// =============================================================================
-app.MapPost("/api-keys/{id:guid}/rotate", async (
-    Guid id,
-    ClaimsPrincipal user,
-    IApiKeyService apiKeyService,
-    CancellationToken ct) =>
-{
-    var (tenantId, userId, _) = GetTenantContext(user, selfHostedMode);
-
-    // Get the existing key to copy its name
-    var existingKey = await apiKeyService.GetApiKeyAsync(tenantId, id, ct);
-    if (existingKey == null)
-        return Results.NotFound(new { error = "not_found", message = "API key not found" });
-
-    // Create a new key with the same name
-    var newKeyName = $"{existingKey.Name} (rotated)";
-    var createRequest = new CreateApiKeyRequest
-    {
-        Name = newKeyName
-    };
-    var createResult = await apiKeyService.CreateApiKeyAsync(tenantId, userId, createRequest, ct);
-
-    // Revoke the old key
-    await apiKeyService.RevokeApiKeyAsync(tenantId, id, userId, ct);
-
-    return Results.Ok(new
-    {
-        id = createResult.Id,
-        key = createResult.Key,
-        message = "API key rotated successfully. The old key has been revoked."
-    });
-})
-.WithName("RotateApiKey")
-.WithDescription("Rotates an API key - creates a new one and revokes the old one")
-.RequireAuthorization()
-.Produces(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status401Unauthorized)
-.Produces(StatusCodes.Status404NotFound);
 
 // =============================================================================
 // GET /tenant/limits - Get tenant limits for SDK error messages
@@ -959,7 +841,7 @@ app.MapPost("/billing/checkout", async (
     if (selfHostedMode)
         return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
 
-    var result = await billingService.CreateCheckoutSessionAsync(new CreateCheckoutRequest
+    var result = await billingService.CreateCheckoutSessionAsync(new SerialMemory.Core.Models.CreateCheckoutRequest
     {
         TenantId = tenantId.ToString(),
         PlanName = request.PlanName,
@@ -1191,6 +1073,21 @@ app.MapReasoningEndpoints(selfHostedMode);
 // SignalR Hub for Reasoning (Real-time DAG updates)
 // =============================================================================
 app.MapHub<ReasoningHub>("/hubs/reasoning");
+
+// =============================================================================
+// NEW DASHBOARD ENDPOINTS (FIX #1-11)
+// =============================================================================
+app.MapTracesEndpoints(selfHostedMode);       // FIX #1: Traces Page DESC order
+app.MapConflictsEndpoints(selfHostedMode);    // FIX #2: Run Detection Scan
+app.MapMutationsEndpoints(selfHostedMode);    // FIX #3: Mutation Console slider
+app.MapMindHealthEndpoints(selfHostedMode);   // FIX #4: 30-day trend, calibration
+app.MapPrivacyEndpoints(selfHostedMode);      // FIX #5: Full Chain Verification
+app.MapTimelineEndpoints(selfHostedMode);     // FIX #6: Time Travel
+app.MapBranchesEndpoints(selfHostedMode);     // FIX #7: Shadow Branches 404
+app.MapApiKeysEndpoints(selfHostedMode);      // FIX #9: API Keys copy/retrieve
+// Note: FIX #8 (Reasoning Hub) is SignalR hub mapped above
+// Note: FIX #10 (Billing) - uses existing /billing endpoints with fixes
+app.MapAdminEndpoints(selfHostedMode);        // FIX #11: Self-Host Admin Stats
 
 app.Run();
 

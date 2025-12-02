@@ -136,6 +136,55 @@
         z-index: 1000;
         opacity: 0.3;
     }
+    /* Demo Mode Styles */
+    .demo-banner {
+        background: linear-gradient(90deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1));
+        border: 1px solid rgba(245, 158, 11, 0.5);
+        border-radius: 4px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .demo-badge {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        background: rgba(245, 158, 11, 0.9);
+        color: #0a0a0f;
+        font-size: 0.6rem;
+        font-weight: 700;
+        padding: 0.15rem 0.4rem;
+        border-radius: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        z-index: 10;
+    }
+    .error-banner {
+        background: linear-gradient(90deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.1));
+        border: 1px solid rgba(239, 68, 68, 0.5);
+        border-radius: 4px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .hud-panel.demo-mode::after {
+        content: 'DEMO';
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        background: rgba(245, 158, 11, 0.9);
+        color: #0a0a0f;
+        font-size: 0.6rem;
+        font-weight: 700;
+        padding: 0.15rem 0.4rem;
+        border-radius: 2px;
+        text-transform: uppercase;
+        z-index: 10;
+    }
 </style>
 
 <div class="control-room">
@@ -158,6 +207,35 @@
                     <span>Version: <span class="text-soft-white">@(Model.Status?.Version ?? "—")</span></span>
                 </div>
             </div>
+        </div>
+
+        <!-- Demo Mode Banner - shown when displaying sample data -->
+        <div id="demoBanner" class="demo-banner hidden">
+            <svg class="w-5 h-5 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div class="flex-1">
+                <span class="text-amber-300 font-mono text-sm font-semibold">Demo Mode</span>
+                <span class="text-amber-200/80 font-mono text-xs ml-2">— Displaying sample data. These values do not reflect live system activity.</span>
+                <span id="demoReason" class="block text-amber-200/60 font-mono text-xs mt-1"></span>
+            </div>
+            <button onclick="retryMetricsConnection()" class="text-amber-400 hover:text-amber-200 text-xs font-mono transition">
+                [Retry Connection]
+            </button>
+        </div>
+
+        <!-- Error Banner - shown when metrics fetch fails -->
+        <div id="errorBanner" class="error-banner hidden">
+            <svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="flex-1">
+                <span class="text-red-300 font-mono text-sm font-semibold">Metrics Unavailable</span>
+                <span id="errorMessage" class="block text-red-200/80 font-mono text-xs mt-1"></span>
+            </div>
+            <button onclick="retryMetricsConnection()" class="text-red-400 hover:text-red-200 text-xs font-mono transition">
+                [Retry]
+            </button>
         </div>
 
         @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -866,6 +944,159 @@
         }
     }
 
+    // Track current metrics mode
+    let isInDemoMode = false;
+
+    // Show/hide demo mode banner and add badges
+    function setDemoMode(isDemoMode, reason = '') {
+        isInDemoMode = isDemoMode;
+        const demoBanner = document.getElementById('demoBanner');
+        const demoReason = document.getElementById('demoReason');
+        const errorBanner = document.getElementById('errorBanner');
+
+        if (isDemoMode) {
+            demoBanner.classList.remove('hidden');
+            errorBanner.classList.add('hidden');
+            if (reason) {
+                demoReason.textContent = reason;
+            }
+            // Add demo-mode class to scale prediction panels
+            document.querySelectorAll('.scale-panel').forEach(el => el.classList.add('demo-mode'));
+            appendLog('[DEMO] Metrics displayed are sample data', 'warning');
+        } else {
+            demoBanner.classList.add('hidden');
+            document.querySelectorAll('.scale-panel').forEach(el => el.classList.remove('demo-mode'));
+        }
+    }
+
+    // Show error state
+    function setErrorMode(errorMessage) {
+        const demoBanner = document.getElementById('demoBanner');
+        const errorBanner = document.getElementById('errorBanner');
+        const errorMessageEl = document.getElementById('errorMessage');
+
+        demoBanner.classList.add('hidden');
+        errorBanner.classList.remove('hidden');
+        errorMessageEl.textContent = errorMessage;
+        appendLog(`[ERROR] ${errorMessage}`, 'error');
+    }
+
+    // Clear all status banners
+    function clearStatusBanners() {
+        document.getElementById('demoBanner').classList.add('hidden');
+        document.getElementById('errorBanner').classList.add('hidden');
+    }
+
+    // Retry metrics connection
+    async function retryMetricsConnection() {
+        appendLog('Retrying metrics connection...', 'info');
+        await loadSelfHostMetrics();
+    }
+
+    // Load self-host metrics with proper demo mode handling
+    async function loadSelfHostMetrics() {
+        const apiBaseUrl = getApiBaseUrl();
+
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/selfhost/metrics`);
+
+            if (!response.ok) {
+                setErrorMode(`Metrics endpoint returned ${response.status}. Check API connectivity.`);
+                return;
+            }
+
+            const data = await response.json();
+
+            // Check for demo mode or error
+            if (data.hasError) {
+                setErrorMode(data.errorMessage || 'Failed to load metrics');
+                return;
+            }
+
+            if (data.isDemoMode) {
+                setDemoMode(true, data.demoModeReason || '');
+            } else {
+                setDemoMode(false);
+            }
+
+            // Update UI with metrics (demo or real)
+            updateMetricsDisplay(data);
+
+        } catch (err) {
+            setErrorMode(`Failed to fetch metrics: ${err.message}`);
+        }
+    }
+
+    // Update all metrics displays
+    function updateMetricsDisplay(data) {
+        const prefix = data.isDemoMode ? '(demo) ' : '';
+
+        // Scale Prediction
+        if (data.scalePrediction) {
+            const sp = data.scalePrediction;
+
+            // API Instances
+            document.getElementById('apiCurrentInstances').textContent = sp.currentApiInstances || 1;
+            document.getElementById('apiReason').textContent = prefix + (sp.apiReason || 'Load within normal parameters');
+
+            const apiIndicator = document.getElementById('apiScaleIndicator');
+            if (sp.recommendedApiInstances > sp.currentApiInstances) {
+                document.getElementById('apiRecommendedInstances').textContent = sp.recommendedApiInstances;
+                document.getElementById('apiRecommendedInstances').classList.remove('hidden', 'text-green-400');
+                document.getElementById('apiRecommendedInstances').classList.add('text-yellow-400');
+                document.getElementById('apiArrow').classList.remove('hidden');
+                apiIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+            } else {
+                document.getElementById('apiRecommendedInstances').classList.add('hidden');
+                document.getElementById('apiArrow').classList.add('hidden');
+                apiIndicator.innerHTML = '<span class="text-green-400">Stable</span>';
+            }
+
+            // Worker Instances
+            document.getElementById('workerCurrentInstances').textContent = sp.currentWorkerInstances || 1;
+            document.getElementById('workerReason').textContent = prefix + (sp.workerReason || 'Queue depth normal');
+
+            const workerIndicator = document.getElementById('workerScaleIndicator');
+            if (sp.recommendedWorkerInstances > sp.currentWorkerInstances) {
+                document.getElementById('workerRecommendedInstances').textContent = sp.recommendedWorkerInstances;
+                document.getElementById('workerRecommendedInstances').classList.remove('hidden', 'text-green-400');
+                document.getElementById('workerRecommendedInstances').classList.add('text-yellow-400');
+                document.getElementById('workerArrow').classList.remove('hidden');
+                workerIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+            } else {
+                document.getElementById('workerRecommendedInstances').classList.add('hidden');
+                document.getElementById('workerArrow').classList.add('hidden');
+                workerIndicator.innerHTML = '<span class="text-green-400">Stable</span>';
+            }
+
+            // Database Risk
+            const dbRiskBadge = document.getElementById('dbRiskBadge');
+            const utilPct = ((sp.dbConnectionUtilization || 0) * 100).toFixed(0);
+            document.getElementById('dbUtilization').textContent = utilPct + '%';
+            document.getElementById('dbUtilBar').style.width = utilPct + '%';
+            document.getElementById('dbSuggestion').textContent = prefix + (sp.dbSuggestion || 'Database capacity adequate');
+
+            dbRiskBadge.textContent = sp.dbRiskLevel || 'Low';
+            dbRiskBadge.className = 'px-2 py-0.5 text-xs rounded text-white ' +
+                (sp.dbRiskLevel === 'High' ? 'bg-red-600' :
+                 sp.dbRiskLevel === 'Medium' ? 'bg-yellow-600' : 'bg-green-600');
+        }
+
+        // Traffic metrics
+        if (data.traffic) {
+            document.getElementById('currentRps').textContent = (data.traffic.currentRps || 0).toFixed(1);
+        }
+        if (data.api) {
+            document.getElementById('p95Latency').textContent = (data.api.p95LatencyMs || 0).toFixed(0) + ' ms';
+        }
+        if (data.workers) {
+            document.getElementById('pendingTasks').textContent = data.workers.pendingTasks || 0;
+        }
+        if (data.database) {
+            document.getElementById('activeConns').textContent = data.database.activeConnections || 0;
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         // Initialize visualizations
         queryTracer = new QueryTracer('queryTracerCanvas');
@@ -880,22 +1111,14 @@
         initSignalR();
         setInterval(pollStatus, 30000);
 
-        // Load scale prediction on page load and refresh every 60s
-        loadScalePrediction();
-        setInterval(loadScalePrediction, 60000);
+        // Load self-host metrics on page load and refresh every 60s
+        // Uses new endpoint with proper demo mode handling
+        loadSelfHostMetrics();
+        setInterval(loadSelfHostMetrics, 60000);
 
-        // Demo mode: simulate queries if no real data (remove in production)
-        const demoInterval = setInterval(() => {
-            if (queryTracer && queryTracer.pulses.length === 0) {
-                // Add occasional demo pulses when idle
-                const operations = ['MemorySearch', 'EntityQuery', 'GraphTraversal', 'InsertMemory'];
-                queryTracer.addQuery({
-                    operation: operations[Math.floor(Math.random() * operations.length)],
-                    durationMs: Math.random() * 150,
-                    rows: Math.floor(Math.random() * 50)
-                });
-            }
-        }, 3000);
+        // NOTE: Removed silent demo data generation.
+        // Demo data is now only shown when IsDemoMode=true from the API,
+        // with a clear banner indicating sample data.
     });
 </script>
 }

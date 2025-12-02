@@ -130,7 +130,7 @@ public sealed class IntegrityWorker : BackgroundService
                         SELECT chain_hash FROM memories
                         WHERE tenant_id = @TenantId AND created_at < @CreatedAt AND chain_hash IS NOT NULL
                         ORDER BY created_at DESC LIMIT 1",
-                        new { TenantId = tenantId, memory.created_at }) ?? "GENESIS";
+                        new { TenantId = tenantId, CreatedAt = memory.created_at }) ?? "GENESIS";
                 }
 
                 var record = new MemoryIntegrityRecord

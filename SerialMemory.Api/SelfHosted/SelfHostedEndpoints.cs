@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 
@@ -183,6 +184,63 @@ public static class SelfHostedEndpoints
                     framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription
                 }
             });
+        });
+
+        // GET /api/selfhost/metrics - Self-host metrics with explicit demo mode flag
+        // IMPORTANT: This endpoint NEVER silently returns fake data.
+        // If IsDemoMode=true, the UI MUST show a clear indicator.
+        group.MapGet("/metrics", async (
+            IDeploymentContext deployment,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            if (!CanAccessSelfHostFeatures(deployment, http))
+            {
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
+            }
+
+            var metricsProvider = http.RequestServices.GetService<ISelfHostMetricsProvider>();
+            if (metricsProvider == null)
+            {
+                // No metrics provider configured - return explicit demo mode
+                return Results.Ok(new SelfHostMetricsResult
+                {
+                    IsDemoMode = true,
+                    DemoModeReason = "ISelfHostMetricsProvider not configured. Register it in DI to enable live metrics."
+                });
+            }
+
+            var metrics = await metricsProvider.GetMetricsAsync(ct);
+            return Results.Ok(metrics);
+        });
+
+        // GET /api/selfhost/metrics/current - Current load for real-time updates
+        group.MapGet("/metrics/current", async (
+            IDeploymentContext deployment,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            if (!CanAccessSelfHostFeatures(deployment, http))
+            {
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
+            }
+
+            var metricsProvider = http.RequestServices.GetService<ISelfHostMetricsProvider>();
+            if (metricsProvider == null)
+            {
+                return Results.Ok(new SelfHostLoadStatus
+                {
+                    IsDemoMode = true,
+                    CurrentRps = 0,
+                    P95LatencyMs = 0,
+                    PendingTasks = 0,
+                    ActiveConnections = 0,
+                    DbConnectionUtilization = 0
+                });
+            }
+
+            var load = await metricsProvider.GetCurrentLoadAsync(ct);
+            return Results.Ok(load);
         });
 
         return app;

@@ -50,6 +50,20 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'ExportCompleted' AND enumtypid = 'memory_event_type'::regtype) THEN
         ALTER TYPE memory_event_type ADD VALUE 'ExportCompleted';
     END IF;
+
+    -- Classification events
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'LayerGenerated' AND enumtypid = 'memory_event_type'::regtype) THEN
+        ALTER TYPE memory_event_type ADD VALUE 'LayerGenerated';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'LayerClassified' AND enumtypid = 'memory_event_type'::regtype) THEN
+        ALTER TYPE memory_event_type ADD VALUE 'LayerClassified';
+    END IF;
+
+    -- Unknown/legacy event type for backwards compatibility
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'Unknown' AND enumtypid = 'memory_event_type'::regtype) THEN
+        ALTER TYPE memory_event_type ADD VALUE 'Unknown';
+    END IF;
 END$$;
 
 -- Add new columns to memory_projections for extended lifecycle

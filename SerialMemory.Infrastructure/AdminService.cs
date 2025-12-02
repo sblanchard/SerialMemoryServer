@@ -167,7 +167,7 @@ public sealed class AdminService : IAdminService
             CreditsUsed = (decimal)(quota?.credits_used ?? 0),
             CreditsLimit = (decimal)(quota?.credits_limit ?? 100),
             PercentUsed = quota?.credits_limit > 0
-                ? (decimal)(quota?.credits_used ?? 0) / (decimal)quota.credits_limit * 100
+                ? (decimal)(quota?.credits_used ?? 0) / (decimal)(quota?.credits_limit ?? 0) * 100
                 : 0,
             MemoriesCount = (int)(quota?.memories_count ?? 0),
             MemoriesLimit = (int?)quota?.max_memories,

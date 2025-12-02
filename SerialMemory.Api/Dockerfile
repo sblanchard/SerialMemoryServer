@@ -19,8 +19,12 @@ RUN dotnet publish "SerialMemory.Api.csproj" -c Release -o /app/publish /p:UseAp
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# Install curl for health checks and Kerberos libraries for Npgsql GSSAPI auth
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libkrb5-3 \
+    libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 COPY --from=publish /app/publish .

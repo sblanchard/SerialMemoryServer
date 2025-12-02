@@ -20,6 +20,13 @@ RUN dotnet publish "SerialMemory.Worker.csproj" -c Release -o /app/publish /p:Us
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+
+# Install Kerberos libraries required by Npgsql for GSSAPI auth
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libkrb5-3 \
+    libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 8081
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "SerialMemory.Worker.dll"]

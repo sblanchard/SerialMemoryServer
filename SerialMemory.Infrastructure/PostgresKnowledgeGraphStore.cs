@@ -193,7 +193,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         while (await reader.ReadAsync(cancellationToken))
         {
             dynamic row = new ExpandoObject();
-            var dict = (IDictionary<string, object>)row;
+            var dict = (IDictionary<string, object?>)row;
             dict["id"] = reader.GetGuid(0);
             dict["content"] = reader.GetString(1);
             dict["created_at"] = reader.GetDateTime(2);
