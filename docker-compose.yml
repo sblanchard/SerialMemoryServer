@@ -172,7 +172,8 @@ services:
     volumes:
       - web_admin_keys:/app/keys
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
