@@ -339,8 +339,7 @@
 
 @section Scripts {
 <script>
-    // Configuration
-    const apiBaseUrl = '@(ViewContext.HttpContext.Request.Scheme)://' + window.location.hostname + ':5000';
+    // Configuration - use same-origin paths to go through web admin's /api/* proxy
     const maxSequence = @Model.CurrentSequence;
     let isPredictiveMode = false;
     let debounceTimer = null;
@@ -377,8 +376,8 @@
 
     async function loadEventRange() {
         try {
-            const response = await fetch(`${apiBaseUrl}/api/mutations/range`, {
-                headers: { 'X-Api-Key': 'sm_live_svc_serialmemory_admin_key_2024' }
+            const response = await fetch('/api/mutations/range', {
+                headers: { 'Content-Type': 'application/json' }
             });
             if (response.ok) {
                 const data = await response.json();
@@ -430,11 +429,10 @@
 
     async function loadReplay(fromSeq, toSeq) {
         try {
-            const response = await fetch(`${apiBaseUrl}/api/mutations/replay`, {
+            const response = await fetch('/api/mutations/replay', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'X-Api-Key': 'sm_live_svc_serialmemory_admin_key_2024'
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ fromSequence: fromSeq, toSequence: toSeq })
             });
@@ -454,11 +452,10 @@
     async function loadPrediction() {
         try {
             const horizonMinutes = 30;
-            const response = await fetch(`${apiBaseUrl}/api/mutations/predict`, {
+            const response = await fetch('/api/mutations/predict', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'X-Api-Key': 'sm_live_svc_serialmemory_admin_key_2024'
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ horizonMinutes: horizonMinutes })
             });

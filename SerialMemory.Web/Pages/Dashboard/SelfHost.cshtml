@@ -1,7 +1,7 @@
 @page "/dashboard/selfhost"
 @model SerialMemory.Web.Pages.Dashboard.SelfHostModel
 @{
-    ViewData["Title"] = "Self-Host Control Room";
+    ViewData["Title"] = "Host Admin";
 }
 
 @if (!Model.CanAccessSelfHostedFeatures)
@@ -604,11 +604,28 @@
     let topologyMap = null;
     const liveLog = document.getElementById('liveLog');
 
-    // API base URL injected from server configuration
+    // API base URL for SignalR (WebSocket needs direct public URL)
     const API_BASE_URL = '@Model.ApiBaseUrl';
+    const API_AUTH_TOKEN = '@Model.SignalRToken';
+    const SERVICE_API_KEY = '@Model.ServiceApiKey';
 
-    function getApiBaseUrl() {
-        return API_BASE_URL;
+    // For regular API calls, use same-origin paths to go through web admin's proxy
+    function getApiBasePath() {
+        return ''; // Empty string = same origin, goes through /api/* proxy
+    }
+
+    // Helper to create fetch options with auth headers
+    function getAuthHeaders() {
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (SERVICE_API_KEY) {
+            headers['X-Api-Key'] = SERVICE_API_KEY;
+        }
+        if (API_AUTH_TOKEN) {
+            headers['Authorization'] = `Bearer ${API_AUTH_TOKEN}`;
+        }
+        return headers;
     }
 
     function appendLog(message, level = 'info') {
@@ -663,7 +680,10 @@
     async function clearCaches() {
         appendLog('Clearing caches...', 'info');
         try {
-            const response = await fetch('/api/selfhost/maintenance/clear-cache', { method: 'POST' });
+            const response = await fetch(`${getApiBasePath()}/api/selfhost/maintenance/clear-cache`, {
+                method: 'POST',
+                headers: getAuthHeaders()
+            });
             if (response.ok) {
                 appendLog('Caches cleared successfully', 'success');
             } else {
@@ -783,7 +803,9 @@
     // Start polling for updates every 30s as fallback
     async function pollStatus() {
         try {
-            const response = await fetch('/api/selfhost/status');
+            const response = await fetch(`${getApiBasePath()}/api/selfhost/status`, {
+                headers: getAuthHeaders()
+            });
             if (response.ok) {
                 const data = await response.json();
                 updateStatus(data.status);
@@ -799,12 +821,11 @@
 
     async function loadScalePrediction() {
         const horizonMinutes = parseInt(document.getElementById('scaleHorizon').value);
-        const apiBaseUrl = getApiBaseUrl();
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/scale/predict`, {
+            const response = await fetch(`${getApiBasePath()}/api/scale/predict`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getAuthHeaders(),
                 body: JSON.stringify({ horizonMinutes })
             });
 
@@ -913,9 +934,10 @@
     }
 
     async function fetchCurrentLoadMetrics() {
-        const apiBaseUrl = getApiBaseUrl();
         try {
-            const response = await fetch(`${apiBaseUrl}/api/scale/current`);
+            const response = await fetch(`${getApiBasePath()}/api/scale/current`, {
+                headers: getAuthHeaders()
+            });
             if (response.ok) {
                 const load = await response.json();
                 document.getElementById('currentRps').textContent = (load.rpsMetrics?.currentRps || 0).toFixed(1);
@@ -995,10 +1017,10 @@
 
     // Load self-host metrics with proper demo mode handling
     async function loadSelfHostMetrics() {
-        const apiBaseUrl = getApiBaseUrl();
-
         try {
-            const response = await fetch(`${apiBaseUrl}/api/selfhost/metrics`);
+            const response = await fetch(`${getApiBasePath()}/api/selfhost/metrics`, {
+                headers: getAuthHeaders()
+            });
 
             if (!response.ok) {
                 setErrorMode(`Metrics endpoint returned ${response.status}. Check API connectivity.`);
