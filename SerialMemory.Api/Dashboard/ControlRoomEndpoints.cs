@@ -311,7 +311,7 @@ public static class ControlRoomEndpoints
         group.MapGet("/tenant/{tenantId}/quota", async (
             string tenantId,
             string? workspaceId,
-            IQuotaEnforcementService quotaService,
+            [FromServices] IQuotaEnforcementService quotaService,
             CancellationToken ct) =>
         {
             var status = await quotaService.GetStatusAsync(tenantId, workspaceId ?? "default", ct);
