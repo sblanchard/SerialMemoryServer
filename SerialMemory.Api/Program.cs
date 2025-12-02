@@ -18,6 +18,7 @@ using SerialMemory.Api.Auth;
 using SerialMemory.Api.SelfHosted;
 using SerialMemory.Api.LLM;
 using SerialMemory.Api.Endpoints;
+using SerialMemory.Api.Dashboard;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -510,6 +511,9 @@ builder.Services.AddOpenTelemetry()
         tb.AddHttpClientInstrumentation();
     });
 
+// Dashboard API services (consolidated from SerialMemory.Api.Dashboard)
+builder.Services.AddDashboardServices(builder.Configuration, pgConnectionString);
+
 var app = builder.Build();
 
 // Panic Switch Middleware - must be early to block requests
@@ -558,8 +562,11 @@ app.MapSelfHostedEndpoints();
 // LLM Endpoints (chat, embed, test)
 app.MapLlmEndpoints();
 
-// Auth Endpoints (forwards to Dashboard API for signup/verification)
+// Auth Endpoints (whoami only - signup/verification now in Dashboard endpoints)
 app.MapAuthEndpoints();
+
+// Dashboard API Endpoints (consolidated from SerialMemory.Api.Dashboard)
+app.MapDashboardEndpoints();
 
 // ============================================
 // HEALTH CHECK ENDPOINTS (for operators)
@@ -1616,7 +1623,7 @@ app.MapPost("/api/billing/stripe/webhook", async (
 
 // POST /api/billing/checkout - Create a Stripe checkout session
 app.MapPost("/api/billing/checkout", async (
-    CreateCheckoutRequest checkoutRequest,
+    SerialMemory.Core.Models.CreateCheckoutRequest checkoutRequest,
     IServiceProvider sp,
     ITenantContext tenantContext,
     ILogger<Program> logger,
@@ -1628,7 +1635,7 @@ app.MapPost("/api/billing/checkout", async (
         return Results.BadRequest(new { error = "billing_not_configured", message = "Stripe billing is not configured" });
     }
 
-    var request = new CreateCheckoutRequest
+    var request = new SerialMemory.Core.Models.CreateCheckoutRequest
     {
         TenantId = checkoutRequest.TenantId ?? tenantContext.TenantId,
         PlanName = checkoutRequest.PlanName,
@@ -1949,7 +1956,7 @@ app.MapPost("/api/billing/plan/change", async (
 
     logger.LogInformation("Plan change requested: {TenantId} -> {TargetPlan}", tenantContext.TenantId, request.TargetPlan);
 
-    var checkoutRequest = new CreateCheckoutRequest
+    var checkoutRequest = new SerialMemory.Core.Models.CreateCheckoutRequest
     {
         TenantId = tenantContext.TenantId,
         PlanName = request.TargetPlan,
@@ -2531,7 +2538,7 @@ app.MapPost("/api/reasoning/run", async (
     }
 
     // Convert findings to insights for response
-    var insights = result.Findings.Select(f => new ReasoningInsightDto
+    var insights = result.Findings.Select(f => new SerialMemory.Core.Interfaces.ReasoningInsightDto
     {
         Id = f.Id,
         Type = f.Type,
@@ -5465,7 +5472,7 @@ app.MapGet("/api/mutations/range", async (IReplayService replayService) =>
 });
 
 // POST /api/mutations/replay - Replay events and compute diff
-app.MapPost("/api/mutations/replay", async (ReplayRequest request, IReplayService replayService) =>
+app.MapPost("/api/mutations/replay", async (SerialMemory.Api.Analysis.ReplayRequest request, IReplayService replayService) =>
 {
     var result = await replayService.ReplayAsync(request);
     return Results.Ok(result);
