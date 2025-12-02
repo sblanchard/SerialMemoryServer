@@ -15,7 +15,7 @@ public static class TimelineEndpoints
 {
     public static void MapTimelineEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/timeline")
+        var group = app.MapGroup("/api/timeline")
             .WithTags("Timeline")
             .RequireAuthorization();
 

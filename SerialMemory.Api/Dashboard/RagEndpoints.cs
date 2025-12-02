@@ -14,7 +14,7 @@ public static class RagEndpoints
 {
     public static void MapRagEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/rag")
+        var group = app.MapGroup("/api/rag")
             .WithTags("RAG")
             .RequireAuthorization();
 

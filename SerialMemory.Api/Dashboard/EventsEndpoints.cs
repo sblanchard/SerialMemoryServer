@@ -14,7 +14,7 @@ public static class EventsEndpoints
 {
     public static void MapEventsEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/events")
+        var group = app.MapGroup("/api/events")
             .WithTags("Events")
             .RequireAuthorization();
 

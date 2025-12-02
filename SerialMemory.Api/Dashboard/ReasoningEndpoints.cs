@@ -13,7 +13,7 @@ public static class ReasoningEndpoints
 {
     public static void MapReasoningEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/reasoning")
+        var group = app.MapGroup("/api/reasoning")
             .WithTags("Reasoning")
             .RequireAuthorization();
 

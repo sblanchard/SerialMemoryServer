@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using SerialMemory.Core.Deployment;
@@ -75,7 +76,11 @@ public sealed class ApiKeyAuthMiddleware
             "/api/tenants/signup",
             "/onboarding",
             "/swagger",
-            "/"
+            "/",
+            // Dashboard auth endpoints (forms post to these)
+            "/login",
+            "/signup",
+            "/logout"
         };
     }
 
@@ -97,6 +102,13 @@ public sealed class ApiKeyAuthMiddleware
         // Get API key from header
         var xApiKey = context.Request.Headers["X-Api-Key"].FirstOrDefault();
         var bearerToken = context.Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");
+
+        _logger.LogInformation(
+            "AUTH_DEBUG: Path={Path}, HasXApiKey={HasXApiKey}, XApiKeyPrefix={XApiKeyPrefix}, HasBearer={HasBearer}",
+            path,
+            !string.IsNullOrEmpty(xApiKey),
+            xApiKey?.Length > 10 ? xApiKey[..10] + "..." : xApiKey ?? "(null)",
+            !string.IsNullOrEmpty(bearerToken));
 
         // Check if this is a trusted dashboard request (service API key + tenant headers)
         if (!string.IsNullOrEmpty(_serviceApiKey) && xApiKey == _serviceApiKey)
@@ -140,15 +152,21 @@ public sealed class ApiKeyAuthMiddleware
         }
 
         // Validate API key
+        _logger.LogInformation("AUTH_DEBUG: Validating API key with prefix {Prefix}",
+            apiKey.Length > 10 ? apiKey[..10] + "..." : apiKey);
+
         var validationResult = await apiKeyService.ValidateApiKeyAsync(apiKey, context.RequestAborted);
 
         if (validationResult == null)
         {
-            _logger.LogWarning("Request to {Path} rejected: Invalid API key", path);
+            _logger.LogWarning("AUTH_FAILED: Request to {Path} rejected: Invalid API key (prefix={Prefix})",
+                path, apiKey.Length > 10 ? apiKey[..10] + "..." : apiKey);
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsJsonAsync(new { error = "Invalid or expired API key", code = "INVALID_API_KEY" });
             return;
         }
+
+        _logger.LogInformation("AUTH_SUCCESS: API key validated for tenant {TenantId}", validationResult.TenantId);
 
         // Determine if this is a lab mode key (prefix starts with "lab_")
         var isLabMode = apiKey.StartsWith("lab_", StringComparison.OrdinalIgnoreCase);
@@ -174,6 +192,13 @@ public sealed class ApiKeyAuthMiddleware
         context.Items["TenantSlug"] = validationResult.TenantSlug;
         context.Items["Scopes"] = validationResult.Scopes;
         context.Items["IsLabMode"] = isLabMode;
+
+        // Set ClaimsPrincipal for ASP.NET Core Authorization
+        context.User = CreateClaimsPrincipal(
+            tenantId: validationResult.TenantId.ToString(),
+            userId: validationResult.CreatedBy,
+            role: "member", // API keys default to member role
+            scopes: validationResult.Scopes?.ToArray());
 
         try
         {
@@ -258,6 +283,15 @@ public sealed class ApiKeyAuthMiddleware
                 context.Items["IsInternalAuth"] = true;
                 context.Items["IsRootAdmin"] = isRootAdmin;
 
+                // Set ClaimsPrincipal for ASP.NET Core Authorization
+                context.User = CreateClaimsPrincipal(
+                    tenantId: claims.TenantId,
+                    userId: claims.UserId,
+                    role: claims.Role,
+                    email: claims.Email,
+                    isRootAdmin: isRootAdmin,
+                    scopes: new[] { "dashboard" });
+
                 _logger.LogDebug(
                     "Authenticated internal request for tenant {TenantId}, user {UserId}, role={Role}, isRootAdmin={IsRootAdmin}",
                     claims.TenantId, claims.UserId, claims.Role, isRootAdmin);
@@ -298,6 +332,15 @@ public sealed class ApiKeyAuthMiddleware
             context.Items["TenantId"] = Guid.TryParse(tenantId, out var tid) ? tid : Guid.Empty;
             context.Items["IsInternalAuth"] = true;
             context.Items["IsRootAdmin"] = isRootAdmin;
+
+            // Set ClaimsPrincipal for ASP.NET Core Authorization
+            context.User = CreateClaimsPrincipal(
+                tenantId: tenantId,
+                userId: userId,
+                role: userRole ?? "member",
+                email: userEmail,
+                isRootAdmin: isRootAdmin,
+                scopes: new[] { "dashboard" });
 
             return true;
         }
@@ -419,6 +462,40 @@ public sealed class ApiKeyAuthMiddleware
         // For now, return "default" - in the future, look up from tenant_workspaces
         // This could be extended to support X-Workspace-Id header for multi-workspace scenarios
         return await Task.FromResult("default");
+    }
+
+    /// <summary>
+    /// Creates a ClaimsPrincipal for ASP.NET Core Authorization middleware.
+    /// </summary>
+    private static ClaimsPrincipal CreateClaimsPrincipal(
+        string tenantId,
+        string userId,
+        string role,
+        string? email = null,
+        bool isRootAdmin = false,
+        string[]? scopes = null)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, userId),
+            new("tenant_id", tenantId),
+            new(ClaimTypes.Role, role)
+        };
+
+        if (!string.IsNullOrEmpty(email))
+            claims.Add(new Claim(ClaimTypes.Email, email));
+
+        if (isRootAdmin)
+            claims.Add(new Claim("is_root_admin", "true"));
+
+        if (scopes != null)
+        {
+            foreach (var scope in scopes)
+                claims.Add(new Claim("scope", scope));
+        }
+
+        var identity = new ClaimsIdentity(claims, "ApiKey");
+        return new ClaimsPrincipal(identity);
     }
 }
 

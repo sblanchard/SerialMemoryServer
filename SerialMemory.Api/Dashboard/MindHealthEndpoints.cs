@@ -15,7 +15,7 @@ public static class MindHealthEndpoints
 {
     public static void MapMindHealthEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/mind")
+        var group = app.MapGroup("/api/mind")
             .WithTags("Mind Health")
             .RequireAuthorization();
 

@@ -15,7 +15,7 @@ public static class ConflictsEndpoints
 {
     public static void MapConflictsEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/conflicts")
+        var group = app.MapGroup("/api/conflicts")
             .WithTags("Conflicts")
             .RequireAuthorization();
 
