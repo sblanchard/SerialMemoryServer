@@ -23,6 +23,9 @@ public sealed class ReasoningModel : PageModel
     // SignalR access token (from InternalTokenMiddleware)
     public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
 
+    // Service API key for authenticated API calls
+    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
+
     [BindProperty(SupportsGet = true)]
     public string? Project { get; set; }
 
@@ -71,7 +74,7 @@ public sealed class ReasoningModel : PageModel
         {
             // Use Dashboard API's reasoning executions endpoint
             var client = _apiClient.CreateClient("DashboardApi");
-            var response = await client.GetAsync("/reasoning/executions?limit=20");
+            var response = await client.GetAsync("/api/reasoning/executions?limit=20");
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<ReasoningExecutionsResponse>();

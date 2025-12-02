@@ -45,6 +45,9 @@ public sealed class SelfHostModel : PageModel
     // SignalR access token (from InternalTokenMiddleware)
     public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
 
+    // Service API key for authenticated API calls (only exposed to admins on this page)
+    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
+
     // Status Panel
     public SelfHostStatus? Status { get; set; }
 

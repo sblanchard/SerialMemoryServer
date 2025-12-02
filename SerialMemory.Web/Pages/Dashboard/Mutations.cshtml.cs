@@ -9,11 +9,16 @@ namespace SerialMemory.Web.Pages.Dashboard;
 public sealed class MutationsModel : PageModel
 {
     private readonly ApiClientService _apiClient;
+    private readonly AppConfig _appConfig;
 
-    public MutationsModel(ApiClientService apiClient)
+    public MutationsModel(ApiClientService apiClient, AppConfig appConfig)
     {
         _apiClient = apiClient;
+        _appConfig = appConfig;
     }
+
+    // Service API key for authenticated API calls
+    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
 
     public IReadOnlyList<PendingMutation> PendingMutations { get; set; } = [];
     public IReadOnlyList<RecentMutation> RecentMutations { get; set; } = [];
