@@ -8,26 +8,24 @@ using SerialMemory.Web.Services;
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public sealed class SelfHostModel : PageModel
+public sealed class SelfHostModel : DashboardPageModel
 {
     private readonly ApiClientService _apiClient;
-    private readonly AppConfig _appConfig;
-
     private readonly ILogger<SelfHostModel> _logger;
 
     public SelfHostModel(ApiClientService apiClient, AppConfig appConfig, ILogger<SelfHostModel> logger)
+        : base(appConfig)
     {
         _apiClient = apiClient;
-        _appConfig = appConfig;
         _logger = logger;
     }
 
-    public bool IsSelfHosted => _appConfig.IsSelfHosted;
+    public bool IsSelfHosted => AppConfig.IsSelfHosted;
     public bool CanAccessSelfHostedFeatures
     {
         get
         {
-            var isSelfHosted = _appConfig.IsSelfHosted;
+            var isSelfHosted = AppConfig.IsSelfHosted;
             var isRootAdmin = HttpContext.IsRootAdmin();
             var isRootAdminClaim = HttpContext.User?.FindFirst("is_root_admin")?.Value;
             var emailClaim = HttpContext.User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
@@ -40,13 +38,6 @@ public sealed class SelfHostModel : PageModel
             return isSelfHosted || isRootAdmin;
         }
     }
-    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
-
-    // SignalR access token (from InternalTokenMiddleware)
-    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
-
-    // Service API key for authenticated API calls (only exposed to admins on this page)
-    public string ServiceApiKey => _appConfig.ServiceApiKey ?? string.Empty;
 
     // Status Panel
     public SelfHostStatus? Status { get; set; }

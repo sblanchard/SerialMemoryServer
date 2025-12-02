@@ -98,7 +98,7 @@
     {
         <div class="mb-8">
             <h3 class="text-lg font-semibold mb-4">Upgrade Your Plan</h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 @if (Model.CurrentPlan?.ToLowerInvariant() != "free")
                 {
                     <div class="card border-2 @(Model.CurrentPlan?.ToLowerInvariant() == "free" ? "border-indigo-600" : "border-gray-200")">
@@ -122,7 +122,7 @@
                         <span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded mb-2">Recommended</span>
                     }
                     <h4 class="text-lg font-semibold">Pro</h4>
-                    <div class="text-3xl font-bold my-4">€19.99<span class="text-sm font-normal text-graphite">/mo</span></div>
+                    <div class="text-3xl font-bold my-4">€19<span class="text-sm font-normal text-graphite">/mo</span></div>
                     <ul class="text-sm text-graphite space-y-2 mb-6">
                         <li>5,000 credits/month</li>
                         <li>50,000 memories</li>
@@ -145,15 +145,41 @@
                     }
                 </div>
 
+                <div class="card border-2 @(Model.CurrentPlan?.ToLowerInvariant() == "pro_plus" ? "border-indigo-600" : "border-gray-200")">
+                    <h4 class="text-lg font-semibold">Pro Plus</h4>
+                    <div class="text-3xl font-bold my-4">€49<span class="text-sm font-normal text-graphite">/mo</span></div>
+                    <ul class="text-sm text-graphite space-y-2 mb-6">
+                        <li>200,000 credits/month</li>
+                        <li>500,000 memories</li>
+                        <li>No rate limits</li>
+                        <li>Priority support</li>
+                        <li>SSO</li>
+                    </ul>
+                    @if (Model.CurrentPlan?.ToLowerInvariant() == "pro_plus")
+                    {
+                        <span class="block text-center py-2 bg-slate/50 text-graphite rounded-md">Current Plan</span>
+                    }
+                    else
+                    {
+                        <form method="post" asp-page-handler="Checkout">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="plan" value="pro_plus" />
+                            <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-md">
+                                Upgrade to Pro Plus
+                            </button>
+                        </form>
+                    }
+                </div>
+
                 <div class="card border-2 @(Model.CurrentPlan?.ToLowerInvariant() == "enterprise" ? "border-indigo-600" : "border-gray-200")">
                     <h4 class="text-lg font-semibold">Enterprise</h4>
-                    <div class="text-3xl font-bold my-4">€49.99<span class="text-sm font-normal text-graphite">/mo</span></div>
+                    <div class="text-3xl font-bold my-4">€299<span class="text-sm font-normal text-graphite">/mo</span></div>
                     <ul class="text-sm text-graphite space-y-2 mb-6">
                         <li>Unlimited credits</li>
                         <li>Unlimited memories</li>
-                        <li>No rate limits</li>
-                        <li>Self-hosted option</li>
-                        <li>Dedicated support</li>
+                        <li>Dedicated infrastructure</li>
+                        <li>24/7 premium support</li>
+                        <li>Custom SLA</li>
                     </ul>
                     @if (Model.CurrentPlan?.ToLowerInvariant() == "enterprise")
                     {

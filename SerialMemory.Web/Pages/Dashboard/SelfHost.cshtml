@@ -596,32 +596,21 @@
 
 @section Scripts {
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script src="~/js/dashboard-api.js"></script>
 <script src="~/js/query-tracer.js"></script>
 <script src="~/js/topology-map.js"></script>
 <script>
+    // Configure DashboardApi with page model values
+    window.dashboardConfig = {
+        apiBaseUrl: '@Model.ApiBaseUrl',
+        serviceApiKey: '@Model.ServiceApiKey',
+        signalRToken: '@Model.SignalRToken'
+    };
+
     let connection = null;
     let queryTracer = null;
     let topologyMap = null;
     const liveLog = document.getElementById('liveLog');
-
-    // API base URL for SignalR (WebSocket needs direct public URL)
-    const API_BASE_URL = '@Model.ApiBaseUrl';
-    const API_AUTH_TOKEN = '@Model.SignalRToken';
-    const SERVICE_API_KEY = '@Model.ServiceApiKey';
-
-    // Helper to create fetch options with auth headers
-    function getAuthHeaders() {
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-        if (SERVICE_API_KEY) {
-            headers['X-Api-Key'] = SERVICE_API_KEY;
-        }
-        if (API_AUTH_TOKEN) {
-            headers['Authorization'] = `Bearer ${API_AUTH_TOKEN}`;
-        }
-        return headers;
-    }
 
     function appendLog(message, level = 'info') {
         const entry = document.createElement('div');
@@ -675,10 +664,7 @@
     async function clearCaches() {
         appendLog('Clearing caches...', 'info');
         try {
-            const response = await fetch('/api/selfhost/maintenance/clear-cache', {
-                method: 'POST',
-                headers: getAuthHeaders()
-            });
+            const response = await DashboardApi.post('/api/selfhost/maintenance/clear-cache');
             if (response.ok) {
                 appendLog('Caches cleared successfully', 'success');
             } else {
@@ -693,15 +679,8 @@
         const indicator = document.getElementById('signalrIndicator');
         const statusText = document.getElementById('signalrStatus');
 
-        const apiBaseUrl = getApiBaseUrl();
-        const signalRToken = '@Model.SignalRToken';
-        connection = new signalR.HubConnectionBuilder()
-            .withUrl(apiBaseUrl + "/hubs/live", {
-                accessTokenFactory: () => signalRToken
-            })
-            .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
-            .configureLogging(signalR.LogLevel.Warning)
-            .build();
+        // Create SignalR connection (includes withAutomaticReconnect and build)
+        connection = DashboardApi.createSignalRConnection("/hubs/live");
 
         connection.on("SelfHostStatus", (data) => {
             appendLog(`Status update: ${data.status}`, 'info');
@@ -798,14 +777,9 @@
     // Start polling for updates every 30s as fallback
     async function pollStatus() {
         try {
-            const response = await fetch('/api/selfhost/status', {
-                headers: getAuthHeaders()
-            });
-            if (response.ok) {
-                const data = await response.json();
-                updateStatus(data.status);
-                if (data.uptime) document.getElementById('uptime').textContent = data.uptime;
-            }
+            const data = await DashboardApi.getJson('/api/selfhost/status');
+            updateStatus(data.status);
+            if (data.uptime) document.getElementById('uptime').textContent = data.uptime;
         } catch (err) {
             // Silent fail for polling
         }
@@ -818,21 +792,9 @@
         const horizonMinutes = parseInt(document.getElementById('scaleHorizon').value);
 
         try {
-            const response = await fetch('/api/scale/predict', {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({ horizonMinutes })
-            });
-
-            if (!response.ok) {
-                appendLog(`Scale prediction failed: ${response.status}`, 'error');
-                return;
-            }
-
-            const data = await response.json();
+            const data = await DashboardApi.postJson('/api/scale/predict', { horizonMinutes });
             updateScalePrediction(data);
             cachedAutoscalerYaml = data.autoscalerHint?.exampleConfigYaml || null;
-
         } catch (err) {
             appendLog(`Scale prediction error: ${err.message}`, 'error');
         }
@@ -930,16 +892,11 @@
 
     async function fetchCurrentLoadMetrics() {
         try {
-            const response = await fetch('/api/scale/current', {
-                headers: getAuthHeaders()
-            });
-            if (response.ok) {
-                const load = await response.json();
-                document.getElementById('currentRps').textContent = (load.rpsMetrics?.currentRps || 0).toFixed(1);
-                document.getElementById('p95Latency').textContent = (load.latencyMetrics?.p95Ms || 0).toFixed(0) + ' ms';
-                document.getElementById('pendingTasks').textContent = load.queueMetrics?.pendingTasks || 0;
-                document.getElementById('activeConns').textContent = load.databaseMetrics?.activeConnections || 0;
-            }
+            const load = await DashboardApi.getJson('/api/scale/current');
+            document.getElementById('currentRps').textContent = (load.rpsMetrics?.currentRps || 0).toFixed(1);
+            document.getElementById('p95Latency').textContent = (load.latencyMetrics?.p95Ms || 0).toFixed(0) + ' ms';
+            document.getElementById('pendingTasks').textContent = load.queueMetrics?.pendingTasks || 0;
+            document.getElementById('activeConns').textContent = load.databaseMetrics?.activeConnections || 0;
         } catch (err) {
             // Silent fail
         }
@@ -1013,9 +970,7 @@
     // Load self-host metrics with proper demo mode handling
     async function loadSelfHostMetrics() {
         try {
-            const response = await fetch('/api/selfhost/metrics', {
-                headers: getAuthHeaders()
-            });
+            const response = await DashboardApi.get('/api/selfhost/metrics');
 
             if (!response.ok) {
                 setErrorMode(`Metrics endpoint returned ${response.status}. Check API connectivity.`);
