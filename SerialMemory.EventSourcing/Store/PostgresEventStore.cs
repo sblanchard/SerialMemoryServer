@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -25,7 +26,8 @@ public sealed class PostgresEventStore : IEventStore
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false
+            WriteIndented = false,
+            Converters = { new JsonStringEnumConverter() }
         };
     }
 

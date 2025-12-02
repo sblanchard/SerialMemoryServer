@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -68,16 +67,35 @@ public sealed class LoginModel : PageModel
         {
             // Use Dashboard API for authentication (it has the /me endpoint)
             var client = _httpClientFactory.CreateClient("DashboardApi");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+
+            _logger.LogInformation(
+                "LOGIN_ATTEMPT: BaseAddress={BaseAddress}, ApiKeyPrefix={Prefix}, ApiKeyLength={Length}",
+                client.BaseAddress,
+                ApiKey.Length > 10 ? ApiKey[..10] + "..." : "(short)",
+                ApiKey.Length);
+
+            // Send raw API key in X-Api-Key header (not Bearer token)
+            // This matches how MCP clients and curl authenticate
+            client.DefaultRequestHeaders.Add("X-Api-Key", ApiKey);
 
             // Use a 15-second timeout for the auth request
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var response = await client.GetAsync("/me", cts.Token);
 
+            _logger.LogInformation(
+                "LOGIN_RESPONSE: StatusCode={StatusCode}, ReasonPhrase={Reason}",
+                (int)response.StatusCode, response.ReasonPhrase);
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                ErrorMessage = "Invalid API key. Please check and try again.";
+                _logger.LogWarning(
+                    "Login failed with status {StatusCode}: {Error}",
+                    response.StatusCode, errorContent);
+
+                ErrorMessage = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    ? "Invalid API key. Please check and try again."
+                    : $"Authentication failed: {response.StatusCode}";
                 return Page();
             }
 

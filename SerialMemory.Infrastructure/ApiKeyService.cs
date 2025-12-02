@@ -393,10 +393,17 @@ public sealed class ApiKeyService : IApiKeyService
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            _logger.LogWarning("APIKEY_VALIDATE: Empty API key provided");
             return null;
+        }
 
         var hash = ApiKeyGenerator.ComputeHash(apiKey);
         var prefix = ApiKeyGenerator.ExtractPrefix(apiKey);
+
+        _logger.LogInformation(
+            "APIKEY_VALIDATE: Checking key with prefix={Prefix}, hash={HashStart}...",
+            prefix, hash.Length > 16 ? hash[..16] : hash);
 
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
@@ -417,7 +424,12 @@ public sealed class ApiKeyService : IApiKeyService
             new { Hash = hash, Prefix = prefix });
 
         if (key == null)
+        {
+            _logger.LogWarning(
+                "APIKEY_VALIDATE: No matching key found for prefix={Prefix}, hash={HashStart}...",
+                prefix, hash.Length > 16 ? hash[..16] : hash);
             return null;
+        }
 
         // Check if revoked
         if (key.revoked_at.HasValue)

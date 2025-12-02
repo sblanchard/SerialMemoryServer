@@ -143,15 +143,16 @@ public sealed class ApiClientService(
         client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
         client.DefaultRequestHeaders.Add("X-User-Id", userId);
 
-        // Add service API key for server-to-server communication with main API
-        if (!string.IsNullOrEmpty(_serviceApiKey) && clientName == "Api")
+        // Add service API key for server-to-server communication with API backends
+        // Both "Api" and "DashboardApi" clients need this for authenticated endpoints
+        if (!string.IsNullOrEmpty(_serviceApiKey) && (clientName == "Api" || clientName == "DashboardApi"))
         {
             client.DefaultRequestHeaders.Add("X-Api-Key", _serviceApiKey);
             logger.LogInformation(
                 "API_KEY_ADDED: Added X-Api-Key header for {ClientName} client (key length: {KeyLength})",
                 clientName, _serviceApiKey.Length);
         }
-        else if (clientName == "Api")
+        else if (clientName == "Api" || clientName == "DashboardApi")
         {
             logger.LogError(
                 "API_KEY_MISSING: SERVICE_API_KEY is null/empty! Cannot add X-Api-Key header. " +

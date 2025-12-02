@@ -145,8 +145,8 @@ public sealed class MemorySelfHealingEngine(
 
         // Get the memory's embedding and entities
         const string getMemorySql = """
-
-                                                SELECT m.content, m.embedding, array_agg(e.id) as entity_ids
+                                                SELECT m.content, m.embedding,
+                                                       array_agg(e.id) FILTER (WHERE e.id IS NOT NULL) as entity_ids
                                                 FROM memories m
                                                 LEFT JOIN memory_entities me ON m.id = me.memory_id
                                                 LEFT JOIN entities e ON me.entity_id = e.id

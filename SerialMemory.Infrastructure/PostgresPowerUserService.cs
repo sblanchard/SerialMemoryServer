@@ -990,22 +990,22 @@ public sealed class PostgresPowerUserService(string connectionString, ILogger<Po
 
         var mutations = await conn.QueryAsync<MutationRow>("""
             SELECT
-                id AS mutation_id,
+                event_id AS mutation_id,
                 0::bigint AS sequence_number,
                 event_type AS mutation_type,
                 node_id,
                 edge_id,
-                NULL::uuid AS source_node_id,
-                NULL::uuid AS target_node_id,
-                node_type AS node_name,
+                source_node_id,
+                target_node_id,
+                node_name,
                 edge_type,
-                created_utc AS timestamp,
-                NULL::text AS previous_state,
-                metadata::text AS new_state,
-                tenant_id AS triggered_by
+                occurred_at AS timestamp,
+                previous_state::text,
+                new_state::text,
+                triggered_by
             FROM graph_events
-            WHERE (@Since IS NULL OR created_utc > @Since)
-            ORDER BY created_utc DESC
+            WHERE (@Since IS NULL OR occurred_at > @Since)
+            ORDER BY occurred_at DESC
             LIMIT @Limit
             """, new { Since = since, Limit = limit });
 

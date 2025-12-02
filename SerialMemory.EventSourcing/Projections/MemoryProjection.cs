@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -29,7 +30,8 @@ public sealed class MemoryProjection : IProjection
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Converters = { new JsonStringEnumConverter() }
         };
     }
 

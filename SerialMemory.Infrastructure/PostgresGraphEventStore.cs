@@ -13,6 +13,17 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+    /// <summary>
+    /// Converts PascalCase enum to snake_case for PostgreSQL CHECK constraint.
+    /// e.g., "NodeCreated" -> "node_created"
+    /// </summary>
+    private static string ToSnakeCase(GraphEventType eventType)
+    {
+        var pascal = eventType.ToString();
+        return string.Concat(pascal.Select((c, i) =>
+            i > 0 && char.IsUpper(c) ? "_" + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString()));
+    }
+
     private NpgsqlConnection CreateConnection() => new(connectionString);
 
     public async Task<Guid> LogEventAsync(GraphEvent graphEvent, CancellationToken ct = default)
@@ -42,7 +53,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         return await conn.ExecuteScalarAsync<Guid>(sql, new
         {
             graphEvent.EventId,
-            EventType = graphEvent.EventType.ToString(),
+            EventType = ToSnakeCase(graphEvent.EventType),
             graphEvent.NodeId,
             graphEvent.NodeName,
             graphEvent.NodeType,
@@ -94,7 +105,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 await conn.ExecuteAsync(sql, new
                 {
                     evt.EventId,
-                    EventType = evt.EventType.ToString(),
+                    EventType = ToSnakeCase(evt.EventType),
                     evt.NodeId,
                     evt.NodeName,
                     evt.NodeType,
@@ -129,14 +140,14 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        // Use actual database schema (id, created_utc, event_type as text)
+        // Use actual database schema (event_id, occurred_at, event_type as text)
         var sql = """
-            SELECT id as event_id, event_type,
+            SELECT event_id, event_type,
                    node_id, node_type,
                    edge_id, edge_type,
-                   created_utc as occurred_at, metadata
+                   occurred_at, metadata
             FROM graph_events
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             LIMIT @Limit
             """;
 
@@ -162,13 +173,13 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         };
 
         var sql = """
-            SELECT id as event_id, event_type,
+            SELECT event_id, event_type,
                    node_id, node_type,
                    edge_id, edge_type,
-                   created_utc as occurred_at, metadata
+                   occurred_at, metadata
             FROM graph_events
             WHERE event_type = @EventType
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             LIMIT @Limit
             """;
 
@@ -182,13 +193,13 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await conn.OpenAsync(ct);
 
         var sql = """
-            SELECT id as event_id, event_type,
+            SELECT event_id, event_type,
                    node_id, node_type,
                    edge_id, edge_type,
-                   created_utc as occurred_at, metadata
+                   occurred_at, metadata
             FROM graph_events
             WHERE node_id = @NodeId
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             """;
 
         var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { NodeId = nodeId });
@@ -201,13 +212,13 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await conn.OpenAsync(ct);
 
         var sql = """
-            SELECT id as event_id, event_type,
+            SELECT event_id, event_type,
                    node_id, node_type,
                    edge_id, edge_type,
-                   created_utc as occurred_at, metadata
+                   occurred_at, metadata
             FROM graph_events
             WHERE edge_id = @EdgeId
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             """;
 
         var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { EdgeId = edgeId });
@@ -220,13 +231,13 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await conn.OpenAsync(ct);
 
         var sql = """
-            SELECT id as event_id, event_type,
+            SELECT event_id, event_type,
                    node_id, node_type,
                    edge_id, edge_type,
-                   created_utc as occurred_at, metadata
+                   occurred_at, metadata
             FROM graph_events
-            WHERE created_utc BETWEEN @From AND @To
-            ORDER BY created_utc DESC
+            WHERE occurred_at BETWEEN @From AND @To
+            ORDER BY occurred_at DESC
             """;
 
         var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { From = from, To = to });
@@ -372,13 +383,13 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 
         // Growth metrics from graph_events (using actual column names)
         stats.NodesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND created_utc > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.EdgesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND created_utc > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.NodesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND created_utc > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '7 days'");
         stats.EdgesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND created_utc > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '7 days'");
 
         // Store snapshot
         var insertSql = """
@@ -487,7 +498,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         var countsSql = """
             SELECT event_type, COUNT(*)::int as count
             FROM graph_events
-            WHERE created_utc BETWEEN @From AND @To
+            WHERE occurred_at BETWEEN @From AND @To
             GROUP BY event_type
             """;
 
@@ -509,12 +520,12 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 
         // Time-based metrics (using actual column name)
         metrics.EventsLastHour = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE created_utc > NOW() - INTERVAL '1 hour'");
+            "SELECT COUNT(*) FROM graph_events WHERE occurred_at > NOW() - INTERVAL '1 hour'");
         metrics.EventsLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE created_utc > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE occurred_at > NOW() - INTERVAL '24 hours'");
 
         metrics.LastEventAt = await conn.ExecuteScalarAsync<DateTimeOffset?>(
-            "SELECT MAX(created_utc) FROM graph_events");
+            "SELECT MAX(occurred_at) FROM graph_events");
 
         return metrics;
     }

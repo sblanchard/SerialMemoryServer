@@ -100,11 +100,11 @@
                                         <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
                                         <a href="/dashboard/control-room" class="block px-4 py-2 text-sm text-red-400 hover:bg-slate">Control Room</a>
                                     }
-                                    @* Self-Host Admin: only for root admin OR self-hosted mode *@
+                                    @* Host Admin: only for root admin OR self-hosted mode *@
                                     @if (isRootAdmin || AppConfig.IsSelfHosted)
                                     {
                                         <div class="border-t border-slate my-1"></div>
-                                        <a href="/dashboard/selfhost" class="block px-4 py-2 text-sm text-cyan hover:bg-slate">Self-Host Admin</a>
+                                        <a href="/dashboard/selfhost" class="block px-4 py-2 text-sm text-cyan hover:bg-slate">Host Admin</a>
                                     }
                                 </div>
                             </div>
