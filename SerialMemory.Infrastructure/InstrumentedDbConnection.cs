@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Npgsql;
 using SerialMemory.Core.Telemetry;
 
@@ -17,10 +18,11 @@ public sealed class InstrumentedDbConnection(NpgsqlConnection inner, bool ownsCo
     /// </summary>
     private NpgsqlConnection Inner { get; } = inner ?? throw new ArgumentNullException(nameof(inner));
 
+    [AllowNull]
     public override string ConnectionString
     {
         get => Inner.ConnectionString;
-        set => Inner.ConnectionString = value;
+        set => Inner.ConnectionString = value ?? string.Empty;
     }
 
     public override string Database => Inner.Database;
@@ -121,10 +123,11 @@ public sealed class InstrumentedDbCommand(NpgsqlCommand inner, InstrumentedDbCon
 {
     private readonly NpgsqlCommand _inner = inner ?? throw new ArgumentNullException(nameof(inner));
 
+    [AllowNull]
     public override string CommandText
     {
         get => _inner.CommandText;
-        set => _inner.CommandText = value ?? throw new ArgumentNullException(nameof(value));
+        set => _inner.CommandText = value ?? string.Empty;
     }
 
     public override int CommandTimeout
