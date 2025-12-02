@@ -140,13 +140,29 @@
     let currentEdges = [];
 
     const apiBaseUrl = '@Model.ApiBaseUrl';
-    const dashboardApiUrl = '@Model.DashboardApiBaseUrl';
+    // Use same-origin for API calls (goes through web admin's /api/* proxy)
+    // This ensures browser can reach the endpoints through the proxy
     const signalRToken = '@Model.SignalRToken';
+    const serviceApiKey = '@Model.ServiceApiKey';
 
-    // Initialize SignalR for ReasoningHub (connects to Dashboard API)
+    // Helper to create headers with auth
+    function getAuthHeaders() {
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (serviceApiKey) {
+            headers['X-Api-Key'] = serviceApiKey;
+        }
+        if (signalRToken) {
+            headers['Authorization'] = `Bearer ${signalRToken}`;
+        }
+        return headers;
+    }
+
+    // Initialize SignalR for ReasoningHub (connects to public API URL)
     async function initSignalR() {
         connection = new signalR.HubConnectionBuilder()
-            .withUrl(dashboardApiUrl + "/hubs/reasoning", {
+            .withUrl(apiBaseUrl + "/hubs/reasoning", {
                 accessTokenFactory: () => signalRToken
             })
             .withAutomaticReconnect()
@@ -221,13 +237,10 @@
         btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Running...';
 
         try {
-            // Use Dashboard API's reasoning endpoints
-            const response = await fetch(dashboardApiUrl + '/reasoning/run/query', {
+            // Use same-origin proxy for API calls (/api/* forwards to internal API)
+            const response = await fetch('/api/reasoning/run/query', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + signalRToken
-                },
+                headers: getAuthHeaders(),
                 body: JSON.stringify({
                     query: "Analyze the knowledge graph for insights",
                     maxDurationMs: 30000
@@ -281,11 +294,9 @@
 
     async function loadRunDetails(runId) {
         try {
-            // Use Dashboard API's reasoning endpoints
-            const response = await fetch(dashboardApiUrl + `/reasoning/executions/${runId}`, {
-                headers: {
-                    'Authorization': 'Bearer ' + signalRToken
-                }
+            // Use same-origin proxy for API calls
+            const response = await fetch(`/api/reasoning/executions/${runId}`, {
+                headers: getAuthHeaders()
             });
 
             if (!response.ok) {
