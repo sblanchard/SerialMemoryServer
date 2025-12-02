@@ -534,7 +534,7 @@ public static class DashboardExtensions
                 ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
                 : Results.Ok(new { sessionId = result.SessionId, checkoutUrl = result.CheckoutUrl });
         })
-        .WithName("CreateCheckoutSession")
+        .WithName("DashboardCreateCheckoutSession")
         .RequireAuthorization("Member");
 
         // POST /billing/portal
