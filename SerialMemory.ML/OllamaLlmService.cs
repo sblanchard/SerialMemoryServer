@@ -103,10 +103,11 @@ public sealed class OllamaLlmService(
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
 
-        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(cancellationToken);
-            if (string.IsNullOrEmpty(line)) continue;
+            if (line is null) break; // End of stream
+            if (line.Length == 0) continue;
 
             var chunk = JsonSerializer.Deserialize<OllamaChatResponse>(line);
             if (!string.IsNullOrEmpty(chunk?.Message?.Content))
