@@ -417,35 +417,35 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         const string sql = @"
             -- Mutation counts
             SELECT
-                COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 minute') AS mutations_last_min,
-                COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 hour') AS mutations_last_hour,
-                (SELECT id FROM graph_events ORDER BY created_utc DESC LIMIT 1) AS last_id
+                COUNT(*) FILTER (WHERE occurred_at > NOW() - INTERVAL '1 minute') AS mutations_last_min,
+                COUNT(*) FILTER (WHERE occurred_at > NOW() - INTERVAL '1 hour') AS mutations_last_hour,
+                (SELECT event_id FROM graph_events ORDER BY occurred_at DESC LIMIT 1) AS last_id
             FROM graph_events
-            WHERE created_utc > NOW() - INTERVAL '1 hour';
+            WHERE occurred_at > NOW() - INTERVAL '1 hour';
 
             -- Recent mutations
             SELECT
-                id AS mutation_id,
+                event_id AS mutation_id,
                 event_type AS mutation_type,
                 node_id,
                 edge_id,
                 node_type,
                 edge_type,
-                created_utc AS timestamp,
+                occurred_at AS timestamp,
                 tenant_id
             FROM graph_events
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             LIMIT 20;
 
             -- Stats from entities and relationships
             SELECT
                 (SELECT COUNT(*) FROM entities) AS total_nodes,
                 (SELECT COUNT(*) FROM entity_relationships) AS total_edges,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'node_%' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_updated' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_deleted' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'edge_%' AND created_utc > NOW() - INTERVAL '24 hours') AS edges_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_deleted' AND created_utc > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
+                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'node_%' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_updated' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_deleted' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'edge_%' AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_deleted' AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
         ";
 
         await using var multi = await conn.QueryMultipleAsync(sql);

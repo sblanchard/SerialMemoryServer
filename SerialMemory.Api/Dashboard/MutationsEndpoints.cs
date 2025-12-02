@@ -16,7 +16,7 @@ public static class MutationsEndpoints
 {
     public static void MapMutationsEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/mutations")
+        var group = app.MapGroup("/api/mutations")
             .WithTags("Mutations")
             .RequireAuthorization();
 

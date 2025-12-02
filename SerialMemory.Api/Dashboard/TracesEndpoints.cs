@@ -15,7 +15,7 @@ public static class TracesEndpoints
 {
     public static void MapTracesEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/traces")
+        var group = app.MapGroup("/api/traces")
             .WithTags("Traces")
             .RequireAuthorization();
 

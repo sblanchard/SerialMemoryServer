@@ -51,6 +51,12 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient(); // For auth endpoint forwarding to Dashboard API
 
+// Configure JSON to serialize enums as strings (required for Web frontend)
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
+
 // CORS for web frontend and SignalR
 builder.Services.AddCors(options =>
 {
@@ -519,6 +525,41 @@ builder.Services.AddOpenTelemetry()
 // Dashboard API services (consolidated from SerialMemory.Api.Dashboard)
 builder.Services.AddDashboardServices(builder.Configuration, pgConnectionString);
 
+// Authentication and Authorization services
+// The actual auth is handled by ApiKeyAuthMiddleware which populates ClaimsPrincipal
+builder.Services.AddAuthentication("ApiKey")
+    .AddCookie("ApiKey", options =>
+    {
+        options.LoginPath = "/api/auth/login";
+        options.Events.OnRedirectToLogin = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    // Default policy requires authenticated user
+    // NOTE: Don't specify authentication scheme - ApiKeyAuthMiddleware sets context.User directly
+    options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+
+    // Role-based policies - don't require specific auth scheme, just check context.User
+    options.AddPolicy("Admin", policy => policy
+        .RequireAuthenticatedUser()
+        .RequireRole("admin", "owner"));
+
+    options.AddPolicy("Member", policy => policy
+        .RequireAuthenticatedUser()
+        .RequireRole("member", "admin", "owner"));
+
+    options.AddPolicy("Owner", policy => policy
+        .RequireAuthenticatedUser()
+        .RequireRole("owner"));
+});
+
 var app = builder.Build();
 
 // Panic Switch Middleware - must be early to block requests
@@ -554,6 +595,11 @@ app.UseSwaggerUI();
 // API Key Authentication Middleware
 // Validates X-Api-Key header and sets tenant context for all requests
 app.UseApiKeyAuth();
+
+// ASP.NET Core Authentication/Authorization (required for .RequireAuthorization() on endpoints)
+// The ApiKeyAuthMiddleware already populates context.User, these middleware enable policy enforcement
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Power Mode Access Control Middleware
 // Blocks /api/power/* and /api/mutations/* in SaaS mode for non-lab tenants

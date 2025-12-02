@@ -16,7 +16,7 @@ public static class BranchesEndpoints
 {
     public static void MapBranchesEndpoints(this WebApplication app, bool selfHostedMode)
     {
-        var group = app.MapGroup("/branches")
+        var group = app.MapGroup("/api/shadow/branches")
             .WithTags("Shadow Branches")
             .RequireAuthorization();
 
