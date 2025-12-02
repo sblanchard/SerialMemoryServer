@@ -341,7 +341,17 @@
 <script>
     // Configuration - use same-origin paths to go through web admin's /api/* proxy
     const maxSequence = @Model.CurrentSequence;
+    const serviceApiKey = '@Model.ServiceApiKey';
     let isPredictiveMode = false;
+
+    // Helper to create headers with auth (consistent with other dashboard pages)
+    function getAuthHeaders() {
+        const headers = { 'Content-Type': 'application/json' };
+        if (serviceApiKey) {
+            headers['X-Api-Key'] = serviceApiKey;
+        }
+        return headers;
+    }
     let debounceTimer = null;
     let replayData = null;
     let predictData = null;
@@ -377,7 +387,7 @@
     async function loadEventRange() {
         try {
             const response = await fetch('/api/mutations/range', {
-                headers: { 'Content-Type': 'application/json' }
+                headers: getAuthHeaders()
             });
             if (response.ok) {
                 const data = await response.json();
@@ -431,9 +441,7 @@
         try {
             const response = await fetch('/api/mutations/replay', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: getAuthHeaders(),
                 body: JSON.stringify({ fromSequence: fromSeq, toSequence: toSeq })
             });
 
@@ -454,9 +462,7 @@
             const horizonMinutes = 30;
             const response = await fetch('/api/mutations/predict', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: getAuthHeaders(),
                 body: JSON.stringify({ horizonMinutes: horizonMinutes })
             });
 
