@@ -491,7 +491,7 @@ public static class DashboardExtensions
                 ? Results.Ok(result)
                 : Results.NotFound(new { error = "not_found", message = "No billing info found" });
         })
-        .WithName("GetBillingSummary")
+        .WithName("DashboardGetBillingSummary")
         .RequireAuthorization();
 
         // GET /billing/history
@@ -508,7 +508,7 @@ public static class DashboardExtensions
             var result = await billingService.GetPaymentHistoryAsync(tenantId.ToString(), limit ?? 10, ct);
             return Results.Ok(result);
         })
-        .WithName("GetPaymentHistory")
+        .WithName("DashboardGetPaymentHistory")
         .RequireAuthorization();
 
         // POST /billing/checkout
@@ -558,7 +558,7 @@ public static class DashboardExtensions
                 ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
                 : Results.Ok(new { portalUrl = result.PortalUrl });
         })
-        .WithName("CreatePortalSession")
+        .WithName("DashboardCreatePortalSession")
         .RequireAuthorization("Member");
 
         // POST /billing/cancel
@@ -576,7 +576,7 @@ public static class DashboardExtensions
                 ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
                 : Results.Ok(new { message = "Subscription will be cancelled at the end of the billing period" });
         })
-        .WithName("CancelSubscription")
+        .WithName("DashboardCancelSubscription")
         .RequireAuthorization("Owner");
 
         // POST /billing/resume
@@ -594,7 +594,7 @@ public static class DashboardExtensions
                 ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
                 : Results.Ok(new { message = "Subscription resumed" });
         })
-        .WithName("ResumeSubscription")
+        .WithName("DashboardResumeSubscription")
         .RequireAuthorization("Owner");
 
         // POST /webhook/stripe

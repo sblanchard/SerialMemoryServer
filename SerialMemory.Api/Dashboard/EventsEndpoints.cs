@@ -129,7 +129,7 @@ public static class EventsEndpoints
                 snapshots = snapshots.ToList()
             });
         })
-        .WithName("GetMemoryTimeline")
+        .WithName("EventsGetMemoryTimeline")
         .WithDescription("Gets timeline snapshots for memory replay/time-travel")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized);
@@ -223,7 +223,7 @@ public static class EventsEndpoints
 
             return Results.Ok(health);
         })
-        .WithName("GetMindHealth")
+        .WithName("EventsGetMindHealth")
         .WithDescription("Gets the current mind health metrics for the tenant")
         .Produces<MindHealthDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized);
@@ -243,7 +243,7 @@ public static class EventsEndpoints
 
             return Results.Ok(new { health_id = healthId, message = "Mind health computed successfully" });
         })
-        .WithName("ComputeMindHealth")
+        .WithName("EventsComputeMindHealth")
         .WithDescription("Triggers a fresh computation of mind health metrics")
         .RequireAuthorization("Admin")
         .Produces(StatusCodes.Status200OK)
@@ -375,7 +375,7 @@ public static class EventsEndpoints
                 message = "Branch created successfully"
             });
         })
-        .WithName("CreateBranch")
+        .WithName("EventsCreateBranch")
         .WithDescription("Creates a new shadow branch")
         .RequireAuthorization("Admin")
         .Produces(StatusCodes.Status201Created)
