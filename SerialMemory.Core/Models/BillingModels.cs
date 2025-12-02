@@ -86,7 +86,7 @@ public sealed class StripePriceMapping
 /// </summary>
 public sealed class CreateCheckoutRequest
 {
-    public required string TenantId { get; init; }
+    public string? TenantId { get; init; }
     public required string PlanName { get; init; }
     public string? SuccessUrl { get; init; }
     public string? CancelUrl { get; init; }
