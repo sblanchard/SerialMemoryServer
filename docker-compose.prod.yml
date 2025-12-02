@@ -58,6 +58,7 @@ services:
       - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
       - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
       - ./ops/classification_schema.sql:/docker-entrypoint-initdb.d/12-classification.sql:ro
+      - ./ops/fix_memories_columns.sql:/docker-entrypoint-initdb.d/13-fix-memories-columns.sql:ro
       - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/98-rls-fix.sql:ro
       - ./ops/init-grants.sh:/docker-entrypoint-initdb.d/99-grants.sh:ro
       - postgres_data:/var/lib/postgresql/data

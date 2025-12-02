@@ -211,7 +211,7 @@ public static class BillingEndpoints
                 return Results.Problem(detail: ex.Message, title: "Stripe error", statusCode: 400);
             }
         })
-        .WithName("CreateCheckoutSession")
+        .WithName("BillingCreateCheckoutSession")
         .WithDescription("Creates a Stripe checkout session for plan upgrade")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
