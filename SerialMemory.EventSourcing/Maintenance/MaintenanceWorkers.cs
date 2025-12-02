@@ -422,11 +422,14 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
                     new { TaskId = (Guid)task.task_id },
                     cancellationToken: cancellationToken));
 
-                // Process based on task type
-                var success = task.task_type switch
+                // Process based on task type (handle both snake_case and PascalCase)
+                string taskType = task.task_type;
+                var success = taskType switch
                 {
-                    "merge_duplicates" => await ProcessMergeDuplicatesAsync(conn, task, cancellationToken),
-                    "resolve_contradiction" => await ProcessResolveContradictionAsync(conn, task, cancellationToken),
+                    "merge_duplicates" or "MergeDuplicates" => await ProcessMergeDuplicatesAsync(conn, task, cancellationToken),
+                    "resolve_contradiction" or "DetectContradictions" => await ProcessResolveContradictionAsync(conn, task, cancellationToken),
+                    // ApplyDecay is handled by MemoryMaintenanceWorker's periodic cycle, mark as done
+                    "ApplyDecay" or "apply_decay" => true,
                     _ => false
                 };
 
@@ -455,8 +458,11 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
 
     private async Task<bool> ProcessMergeDuplicatesAsync(NpgsqlConnection conn, dynamic task, CancellationToken cancellationToken)
     {
+        // Bootstrap tasks (from schema seed) have no memory_ids - mark as completed
+        if (task.memory_ids == null) return true;
+
         var memoryIds = (Guid[])task.memory_ids;
-        if (memoryIds.Length < 2) return false;
+        if (memoryIds.Length < 2) return true; // Nothing to merge
 
         // Get both memories (query only)
         var memories = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore, int AccessCount)>(new CommandDefinition(@"
@@ -492,8 +498,11 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
 
     private async Task<bool> ProcessResolveContradictionAsync(NpgsqlConnection conn, dynamic task, CancellationToken cancellationToken)
     {
+        // Bootstrap tasks (from schema seed) have no memory_ids - mark as completed
+        if (task.memory_ids == null) return true;
+
         var memoryIds = (Guid[])task.memory_ids;
-        if (memoryIds.Length < 2) return false;
+        if (memoryIds.Length < 2) return true; // Nothing to resolve
 
         // Get confidence scores to determine which memory to invalidate
         var memories = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore, int AccessCount)>(new CommandDefinition(@"

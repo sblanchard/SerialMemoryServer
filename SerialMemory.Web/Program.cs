@@ -102,7 +102,8 @@ builder.Services.AddSingleton(new AppConfig
     IsSelfHosted = deploymentContext.IsSelfHosted,
     DeploymentMode = deploymentContext.Mode.ToString(),
     PowerModeEnabled = !deploymentContext.PowerModeGloballyDisabled,
-    QuotasEnabled = deploymentContext.QuotasEnabled
+    QuotasEnabled = deploymentContext.QuotasEnabled,
+    ServiceApiKey = serviceApiKey // For admin dashboard API calls
 });
 
 var app = builder.Build();
@@ -217,4 +218,5 @@ public sealed class AppConfig
     public string DeploymentMode { get; init; } = "";
     public bool PowerModeEnabled { get; init; }
     public bool QuotasEnabled { get; init; }
+    public string? ServiceApiKey { get; init; }
 }
