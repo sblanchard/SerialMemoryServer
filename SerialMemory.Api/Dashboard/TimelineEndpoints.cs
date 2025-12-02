@@ -107,7 +107,7 @@ public static class TimelineEndpoints
                 }
             });
         })
-        .WithName("GetMemoryTimeline")
+        .WithName("TimelineGetMemoryTimeline")
         .WithDescription("Gets timeline entries for a memory with time range filtering")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)

@@ -319,7 +319,7 @@ public static class BillingEndpoints
                 return Results.Problem(detail: ex.Message, title: "Stripe error");
             }
         })
-        .WithName("CreatePortalSession")
+        .WithName("BillingCreatePortalSession")
         .WithDescription("Creates a Stripe customer portal session")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
