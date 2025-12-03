@@ -1,164 +1,213 @@
--- ============================================================================
--- Fix graph_events table schema mismatch
--- The table was created with 'id' and 'created_utc' but code expects 'event_id' and 'occurred_at'
--- Also adds missing columns needed by PostgresGraphEventStore.LogEventAsync
--- ============================================================================
+-- Shadow Memory Schema
+-- Isolated memory branches for speculative reasoning, sandboxing, and branching paths
+-- NEVER pollutes main memory until explicitly promoted
 
-BEGIN;
+-- Branch type enum
+CREATE TYPE shadow_branch_type AS ENUM (
+    'speculative',  -- Speculative reasoning - may or may not be correct
+    'sandbox',      -- Sandbox for testing without risk
+    'branch',       -- Alternative reasoning path
+    'draft'         -- Draft awaiting validation
+);
 
--- Check if the table exists but has wrong column names
-DO $$
-BEGIN
-    -- If table has 'id' column but not 'event_id', rename it
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name = 'graph_events' AND column_name = 'id')
-       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'graph_events' AND column_name = 'event_id') THEN
-        ALTER TABLE graph_events RENAME COLUMN id TO event_id;
-        RAISE NOTICE 'Renamed id to event_id';
-    END IF;
+-- Branch status enum
+CREATE TYPE shadow_branch_status AS ENUM (
+    'active',       -- Accepting new memories
+    'frozen',       -- No new memories allowed
+    'promoted',     -- Memories promoted to main
+    'discarded',    -- Branch discarded
+    'merged'        -- Merged with another branch
+);
 
-    -- If table has 'created_utc' column but not 'occurred_at', rename it
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name = 'graph_events' AND column_name = 'created_utc')
-       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'graph_events' AND column_name = 'occurred_at') THEN
-        ALTER TABLE graph_events RENAME COLUMN created_utc TO occurred_at;
-        RAISE NOTICE 'Renamed created_utc to occurred_at';
-    END IF;
-END $$;
+-- Shadow branches table
+CREATE TABLE shadow_branches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(100) NOT NULL DEFAULT 'self',
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    branch_type shadow_branch_type NOT NULL,
+    status shadow_branch_status NOT NULL DEFAULT 'active',
 
--- Add missing columns if they don't exist
-DO $$
-BEGIN
-    -- node_name
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'node_name') THEN
-        ALTER TABLE graph_events ADD COLUMN node_name VARCHAR(500);
-        RAISE NOTICE 'Added node_name column';
-    END IF;
+    -- Hierarchy
+    parent_branch_id UUID REFERENCES shadow_branches(id) ON DELETE CASCADE,
+    source_memory_id UUID,  -- Main memory that spawned this branch
 
-    -- source_node_id
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'source_node_id') THEN
-        ALTER TABLE graph_events ADD COLUMN source_node_id UUID;
-        RAISE NOTICE 'Added source_node_id column';
-    END IF;
+    -- Confidence and reasoning
+    confidence REAL NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
+    hypothesis TEXT,
+    reasoning_context TEXT,
 
-    -- target_node_id
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'target_node_id') THEN
-        ALTER TABLE graph_events ADD COLUMN target_node_id UUID;
-        RAISE NOTICE 'Added target_node_id column';
-    END IF;
+    -- Lifecycle
+    ttl_hours INTEGER,
+    auto_discard_threshold REAL CHECK (auto_discard_threshold IS NULL OR (auto_discard_threshold >= 0 AND auto_discard_threshold <= 1)),
+    expires_at TIMESTAMPTZ,
 
-    -- source_node_name
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'source_node_name') THEN
-        ALTER TABLE graph_events ADD COLUMN source_node_name VARCHAR(500);
-        RAISE NOTICE 'Added source_node_name column';
-    END IF;
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    frozen_at TIMESTAMPTZ,
+    promoted_at TIMESTAMPTZ,
+    discarded_at TIMESTAMPTZ,
 
-    -- target_node_name
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'target_node_name') THEN
-        ALTER TABLE graph_events ADD COLUMN target_node_name VARCHAR(500);
-        RAISE NOTICE 'Added target_node_name column';
-    END IF;
+    -- Metadata
+    metadata JSONB
+);
 
-    -- previous_state
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'previous_state') THEN
-        ALTER TABLE graph_events ADD COLUMN previous_state JSONB;
-        RAISE NOTICE 'Added previous_state column';
-    END IF;
+-- Shadow memories table (isolated from main memories)
+CREATE TABLE shadow_memories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id UUID NOT NULL REFERENCES shadow_branches(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(100) NOT NULL DEFAULT 'self',
+    content TEXT NOT NULL,
+    embedding vector(768),  -- Same dimension as main memories
 
-    -- new_state
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'new_state') THEN
-        ALTER TABLE graph_events ADD COLUMN new_state JSONB;
-        RAISE NOTICE 'Added new_state column';
-    END IF;
+    -- Confidence
+    confidence REAL NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
 
-    -- confidence
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'confidence') THEN
-        ALTER TABLE graph_events ADD COLUMN confidence DECIMAL(4,3);
-        RAISE NOTICE 'Added confidence column';
-    END IF;
+    -- References
+    shadows_memory_id UUID,  -- Main memory this shadows (if any)
+    reasoning_step INTEGER,
+    supporting_memory_ids UUID[],
+    contradicting_memory_ids UUID[],
 
-    -- triggered_by
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'triggered_by') THEN
-        ALTER TABLE graph_events ADD COLUMN triggered_by VARCHAR(255) DEFAULT 'system';
-        RAISE NOTICE 'Added triggered_by column';
-    END IF;
+    -- Metadata
+    source VARCHAR(100),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB
+);
 
-    -- memory_id
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'memory_id') THEN
-        ALTER TABLE graph_events ADD COLUMN memory_id UUID;
-        RAISE NOTICE 'Added memory_id column';
-    END IF;
+-- Shadow entities table
+CREATE TABLE shadow_entities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id UUID NOT NULL REFERENCES shadow_branches(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(100) NOT NULL DEFAULT 'self',
+    name VARCHAR(500) NOT NULL,
+    entity_type VARCHAR(100) NOT NULL,
+    canonical_name VARCHAR(500),
 
-    -- session_id
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'session_id') THEN
-        ALTER TABLE graph_events ADD COLUMN session_id UUID;
-        RAISE NOTICE 'Added session_id column';
-    END IF;
+    -- References
+    shadows_entity_id UUID,  -- Main entity this shadows
+    confidence REAL NOT NULL DEFAULT 0.5,
 
-    -- occurred_at (in case table was created without it and we didn't rename)
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'graph_events' AND column_name = 'occurred_at') THEN
-        ALTER TABLE graph_events ADD COLUMN occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-        RAISE NOTICE 'Added occurred_at column';
-    END IF;
-END $$;
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
--- Create the graph_event_type enum if it doesn't exist
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'graph_event_type') THEN
-        CREATE TYPE graph_event_type AS ENUM (
-            'NodeCreated',
-            'NodeUpdated',
-            'NodeDeleted',
-            'EdgeCreated',
-            'EdgeUpdated',
-            'EdgeDeleted',
-            'NodeMerged',
-            'EdgeStrengthened'
-        );
-        RAISE NOTICE 'Created graph_event_type enum';
-    END IF;
-END $$;
+-- Shadow relationships table
+CREATE TABLE shadow_relationships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id UUID NOT NULL REFERENCES shadow_branches(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(100) NOT NULL DEFAULT 'self',
+    source_entity_id UUID NOT NULL,
+    target_entity_id UUID NOT NULL,
+    relationship_type VARCHAR(100) NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
 
--- Update event_type column to use enum if it's currently text
--- First check what type it is
-DO $$
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Promotion log - tracks what was promoted from shadow to main
+CREATE TABLE shadow_promotion_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id UUID NOT NULL,
+    tenant_id VARCHAR(100) NOT NULL DEFAULT 'self',
+
+    -- What was promoted
+    shadow_memory_id UUID,
+    shadow_entity_id UUID,
+    shadow_relationship_id UUID,
+
+    -- Where it went in main memory
+    main_memory_id UUID,
+    main_entity_id UUID,
+    main_relationship_id UUID,
+
+    promoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    promoted_by VARCHAR(100)
+);
+
+-- Indexes for shadow_branches
+CREATE INDEX idx_shadow_branches_tenant ON shadow_branches(tenant_id);
+CREATE INDEX idx_shadow_branches_status ON shadow_branches(status) WHERE status = 'active';
+CREATE INDEX idx_shadow_branches_parent ON shadow_branches(parent_branch_id);
+CREATE INDEX idx_shadow_branches_expires ON shadow_branches(expires_at) WHERE expires_at IS NOT NULL AND status = 'active';
+CREATE INDEX idx_shadow_branches_confidence ON shadow_branches(confidence) WHERE status = 'active';
+
+-- Indexes for shadow_memories
+CREATE INDEX idx_shadow_memories_branch ON shadow_memories(branch_id);
+CREATE INDEX idx_shadow_memories_tenant ON shadow_memories(tenant_id);
+CREATE INDEX idx_shadow_memories_embedding ON shadow_memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX idx_shadow_memories_shadows ON shadow_memories(shadows_memory_id) WHERE shadows_memory_id IS NOT NULL;
+
+-- Indexes for shadow_entities
+CREATE INDEX idx_shadow_entities_branch ON shadow_entities(branch_id);
+CREATE INDEX idx_shadow_entities_name ON shadow_entities(canonical_name);
+
+-- Indexes for shadow_relationships
+CREATE INDEX idx_shadow_relationships_branch ON shadow_relationships(branch_id);
+CREATE INDEX idx_shadow_relationships_source ON shadow_relationships(source_entity_id);
+CREATE INDEX idx_shadow_relationships_target ON shadow_relationships(target_entity_id);
+
+-- Indexes for promotion log
+CREATE INDEX idx_shadow_promotion_branch ON shadow_promotion_log(branch_id);
+CREATE INDEX idx_shadow_promotion_main_memory ON shadow_promotion_log(main_memory_id);
+
+-- Function to auto-expire branches
+CREATE OR REPLACE FUNCTION expire_shadow_branches()
+RETURNS INTEGER AS $$
 DECLARE
-    col_type TEXT;
+    expired_count INTEGER;
 BEGIN
-    SELECT data_type INTO col_type
-    FROM information_schema.columns
-    WHERE table_name = 'graph_events' AND column_name = 'event_type';
+    UPDATE shadow_branches
+    SET status = 'discarded',
+        discarded_at = NOW()
+    WHERE status = 'active'
+        AND expires_at IS NOT NULL
+        AND expires_at < NOW();
 
-    IF col_type = 'character varying' OR col_type = 'text' THEN
-        -- Need to convert - but be careful with existing data
-        RAISE NOTICE 'event_type is currently %, may need manual conversion to enum', col_type;
-    ELSIF col_type = 'USER-DEFINED' THEN
-        RAISE NOTICE 'event_type is already an enum type';
-    END IF;
-END $$;
+    GET DIAGNOSTICS expired_count = ROW_COUNT;
+    RETURN expired_count;
+END;
+$$ LANGUAGE plpgsql;
 
-COMMIT;
+-- Function to auto-discard low confidence branches
+CREATE OR REPLACE FUNCTION discard_low_confidence_branches()
+RETURNS INTEGER AS $$
+DECLARE
+    discarded_count INTEGER;
+BEGIN
+    UPDATE shadow_branches
+    SET status = 'discarded',
+        discarded_at = NOW()
+    WHERE status = 'active'
+        AND auto_discard_threshold IS NOT NULL
+        AND confidence < auto_discard_threshold;
 
--- Verification
-SELECT
-    column_name,
-    data_type,
-    is_nullable
-FROM information_schema.columns
-WHERE table_name = 'graph_events'
-ORDER BY ordinal_position;
+    GET DIAGNOSTICS discarded_count = ROW_COUNT;
+    RETURN discarded_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get branch statistics
+CREATE OR REPLACE FUNCTION get_shadow_branch_stats(p_branch_id UUID)
+RETURNS TABLE (
+    branch_id UUID,
+    memory_count BIGINT,
+    entity_count BIGINT,
+    relationship_count BIGINT,
+    avg_confidence REAL,
+    child_branch_count BIGINT,
+    oldest_memory TIMESTAMPTZ,
+    newest_memory TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        p_branch_id,
+        (SELECT COUNT(*) FROM shadow_memories WHERE shadow_memories.branch_id = p_branch_id),
+        (SELECT COUNT(*) FROM shadow_entities WHERE shadow_entities.branch_id = p_branch_id),
+        (SELECT COUNT(*) FROM shadow_relationships WHERE shadow_relationships.branch_id = p_branch_id),
+        (SELECT AVG(shadow_memories.confidence)::REAL FROM shadow_memories WHERE shadow_memories.branch_id = p_branch_id),
+        (SELECT COUNT(*) FROM shadow_branches WHERE parent_branch_id = p_branch_id),
+        (SELECT MIN(created_at) FROM shadow_memories WHERE shadow_memories.branch_id = p_branch_id),
+        (SELECT MAX(created_at) FROM shadow_memories WHERE shadow_memories.branch_id = p_branch_id);
+END;
+$$ LANGUAGE plpgsql;

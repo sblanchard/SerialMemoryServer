@@ -161,7 +161,7 @@ public sealed class PlansModel : PageModel
                 CreditPooling = true,
                 SeatsIncluded = 5
             },
-            Pricing = new PlanPricing { Monthly = 79, Quarterly = 213.30m, Annual = 758.40m }  // €79/month
+            Pricing = new PlanPricing { Monthly = 49, Quarterly = 132.30m, Annual = 470.40m }  // €49/month
         },
         new PlanInfo
         {

@@ -315,6 +315,18 @@
                             </span>
                         </div>
                         <div class="flex justify-between text-xs font-mono mt-2">
+                            <span class="text-graphite">Cache Hit Ratio</span>
+                            <span id="cacheHitRatio" class="text-cyan">—%</span>
+                        </div>
+                        <div class="flex justify-between text-xs font-mono mt-2">
+                            <span class="text-graphite">DB Size</span>
+                            <span id="dbSize" class="text-cyan">—</span>
+                        </div>
+                        <div class="flex justify-between text-xs font-mono mt-2">
+                            <span class="text-graphite">Connections</span>
+                            <span id="totalConns" class="text-cyan">—</span>
+                        </div>
+                        <div class="flex justify-between text-xs font-mono mt-2">
                             <span class="text-graphite">Processors</span>
                             <span class="text-cyan">@(Model.Diagnostics?.System?.ProcessorCount ?? 0) cores</span>
                         </div>
@@ -921,44 +933,58 @@
     // Track current metrics mode
     let isInDemoMode = false;
 
+    // Clear all status banners - always call before setting new state
+    // NOTE: Using inline style.display because CSS .demo-banner/.error-banner have
+    // display:flex which overrides Tailwind's .hidden class
+    function clearStatusBanners() {
+        console.log('[Banners] Clearing all status banners');
+        const demoBanner = document.getElementById('demoBanner');
+        const errorBanner = document.getElementById('errorBanner');
+
+        if (demoBanner) {
+            demoBanner.style.display = 'none';
+            console.log('[Banners] Demo banner hidden via style.display');
+        }
+        if (errorBanner) {
+            errorBanner.style.display = 'none';
+            console.log('[Banners] Error banner hidden via style.display');
+        }
+
+        // Remove demo-mode class from any panels that have it
+        document.querySelectorAll('.demo-mode').forEach(el => el.classList.remove('demo-mode'));
+    }
+
     // Show/hide demo mode banner and add badges
     function setDemoMode(isDemoMode, reason = '') {
+        console.log('[Banners] setDemoMode called:', isDemoMode, reason);
         isInDemoMode = isDemoMode;
         const demoBanner = document.getElementById('demoBanner');
         const demoReason = document.getElementById('demoReason');
-        const errorBanner = document.getElementById('errorBanner');
+
+        // Always clear both banners first to prevent overlap
+        clearStatusBanners();
 
         if (isDemoMode) {
-            demoBanner.classList.remove('hidden');
-            errorBanner.classList.add('hidden');
+            demoBanner.style.display = 'flex';  // Show with flex layout
             if (reason) {
                 demoReason.textContent = reason;
             }
-            // Add demo-mode class to scale prediction panels
-            document.querySelectorAll('.scale-panel').forEach(el => el.classList.add('demo-mode'));
             appendLog('[DEMO] Metrics displayed are sample data', 'warning');
-        } else {
-            demoBanner.classList.add('hidden');
-            document.querySelectorAll('.scale-panel').forEach(el => el.classList.remove('demo-mode'));
         }
     }
 
     // Show error state
     function setErrorMode(errorMessage) {
-        const demoBanner = document.getElementById('demoBanner');
+        console.log('[Banners] setErrorMode called:', errorMessage);
         const errorBanner = document.getElementById('errorBanner');
         const errorMessageEl = document.getElementById('errorMessage');
 
-        demoBanner.classList.add('hidden');
-        errorBanner.classList.remove('hidden');
+        // Always clear both banners first to prevent overlap
+        clearStatusBanners();
+
+        errorBanner.style.display = 'flex';  // Show with flex layout
         errorMessageEl.textContent = errorMessage;
         appendLog(`[ERROR] ${errorMessage}`, 'error');
-    }
-
-    // Clear all status banners
-    function clearStatusBanners() {
-        document.getElementById('demoBanner').classList.add('hidden');
-        document.getElementById('errorBanner').classList.add('hidden');
     }
 
     // Retry metrics connection
@@ -970,38 +996,92 @@
     // Load self-host metrics with proper demo mode handling
     async function loadSelfHostMetrics() {
         try {
+            console.log('[Metrics] Fetching /api/selfhost/metrics...');
             const response = await DashboardApi.get('/api/selfhost/metrics');
 
             if (!response.ok) {
-                setErrorMode(`Metrics endpoint returned ${response.status}. Check API connectivity.`);
+                let errorDetail = `HTTP ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) errorDetail = errorData.error;
+                } catch {}
+
+                console.error('[Metrics] API error:', response.status, errorDetail);
+
+                if (response.status === 401) {
+                    setErrorMode(`Authentication failed (${errorDetail}). Session may have expired.`);
+                } else if (response.status === 404) {
+                    setErrorMode(`Endpoint not found. Ensure self-hosted mode is enabled.`);
+                } else {
+                    setErrorMode(`Metrics endpoint returned ${response.status}: ${errorDetail}`);
+                }
                 return;
             }
 
             const data = await response.json();
+            console.log('[Metrics] Response received:', {
+                isDemoMode: data.isDemoMode,
+                hasError: data.hasError,
+                hasScalePrediction: !!data.scalePrediction,
+                hasApi: !!data.api,
+                hasWorkers: !!data.workers,
+                hasDatabase: !!data.database,
+                hasTraffic: !!data.traffic
+            });
 
-            // Check for demo mode or error
+            // Check for error first
             if (data.hasError) {
-                setErrorMode(data.errorMessage || 'Failed to load metrics');
+                console.warn('[Metrics] API returned error:', data.errorMessage);
+                setErrorMode(data.errorMessage || 'Failed to load metrics from database');
                 return;
             }
 
-            if (data.isDemoMode) {
-                setDemoMode(true, data.demoModeReason || '');
+            // Check for demo mode
+            if (data.isDemoMode === true) {
+                console.log('[Metrics] Demo mode active, reason:', data.demoModeReason);
+                // Fetch config diagnostics to help troubleshoot
+                let configInfo = '';
+                try {
+                    const configResp = await DashboardApi.get('/api/selfhost/metrics/config');
+                    if (configResp.ok) {
+                        const cfg = await configResp.json();
+                        configInfo = ` [Mode: ${cfg.mode}, Provider: ${cfg.providerRegistered ? 'OK' : 'Missing'}]`;
+                        if (cfg.troubleshooting) {
+                            configInfo += ` — ${cfg.troubleshooting}`;
+                        }
+                    }
+                } catch {}
+
+                const reason = (data.demoModeReason || 'Metrics provider not configured') + configInfo;
+                setDemoMode(true, reason);
             } else {
-                setDemoMode(false);
+                // LIVE MODE - Clear all status banners
+                console.log('[Metrics] Live mode - clearing banners');
+                clearStatusBanners();
+                appendLog('[METRICS] Live metrics loaded successfully', 'success');
             }
 
             // Update UI with metrics (demo or real)
             updateMetricsDisplay(data);
 
         } catch (err) {
-            setErrorMode(`Failed to fetch metrics: ${err.message}`);
+            console.error('[Metrics] Network error:', err);
+            setErrorMode(`Network error: ${err.message}. Check if API is running.`);
         }
     }
 
     // Update all metrics displays
     function updateMetricsDisplay(data) {
         const prefix = data.isDemoMode ? '(demo) ' : '';
+
+        // Log what we received for debugging
+        console.log('[Metrics] Received data:', JSON.stringify(data, null, 2));
+
+        // Core Status Panel - API RPS
+        if (data.api) {
+            const apiRps = data.api.currentRps || 0;
+            document.getElementById('apiRps').textContent = apiRps.toFixed(1);
+        }
 
         // Scale Prediction
         if (data.scalePrediction) {
@@ -1018,6 +1098,12 @@
                 document.getElementById('apiRecommendedInstances').classList.add('text-yellow-400');
                 document.getElementById('apiArrow').classList.remove('hidden');
                 apiIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+            } else if (sp.recommendedApiInstances < sp.currentApiInstances) {
+                document.getElementById('apiRecommendedInstances').textContent = sp.recommendedApiInstances;
+                document.getElementById('apiRecommendedInstances').classList.remove('hidden', 'text-yellow-400');
+                document.getElementById('apiRecommendedInstances').classList.add('text-green-400');
+                document.getElementById('apiArrow').classList.remove('hidden');
+                apiIndicator.innerHTML = '<span class="text-green-400">Scale Down</span>';
             } else {
                 document.getElementById('apiRecommendedInstances').classList.add('hidden');
                 document.getElementById('apiArrow').classList.add('hidden');
@@ -1035,6 +1121,12 @@
                 document.getElementById('workerRecommendedInstances').classList.add('text-yellow-400');
                 document.getElementById('workerArrow').classList.remove('hidden');
                 workerIndicator.innerHTML = '<span class="text-yellow-400">Scale Up</span>';
+            } else if (sp.recommendedWorkerInstances < sp.currentWorkerInstances) {
+                document.getElementById('workerRecommendedInstances').textContent = sp.recommendedWorkerInstances;
+                document.getElementById('workerRecommendedInstances').classList.remove('hidden', 'text-yellow-400');
+                document.getElementById('workerRecommendedInstances').classList.add('text-green-400');
+                document.getElementById('workerArrow').classList.remove('hidden');
+                workerIndicator.innerHTML = '<span class="text-green-400">Scale Down</span>';
             } else {
                 document.getElementById('workerRecommendedInstances').classList.add('hidden');
                 document.getElementById('workerArrow').classList.add('hidden');
@@ -1052,20 +1144,69 @@
             dbRiskBadge.className = 'px-2 py-0.5 text-xs rounded text-white ' +
                 (sp.dbRiskLevel === 'High' ? 'bg-red-600' :
                  sp.dbRiskLevel === 'Medium' ? 'bg-yellow-600' : 'bg-green-600');
+
+            // Update bar color based on risk
+            const dbUtilBar = document.getElementById('dbUtilBar');
+            if (sp.dbRiskLevel === 'High') {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-red-500 to-orange-500 transition-all';
+            } else if (sp.dbRiskLevel === 'Medium') {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-yellow-500 to-orange-500 transition-all';
+            } else {
+                dbUtilBar.className = 'h-full bg-gradient-to-r from-green-500 to-cyan-500 transition-all';
+            }
         }
 
-        // Traffic metrics
+        // Traffic metrics - Load Metrics Summary section
         if (data.traffic) {
             document.getElementById('currentRps').textContent = (data.traffic.currentRps || 0).toFixed(1);
+        } else if (data.api) {
+            // Fallback to API metrics if traffic not available
+            document.getElementById('currentRps').textContent = (data.api.currentRps || 0).toFixed(1);
         }
+
         if (data.api) {
             document.getElementById('p95Latency').textContent = (data.api.p95LatencyMs || 0).toFixed(0) + ' ms';
         }
+
         if (data.workers) {
             document.getElementById('pendingTasks').textContent = data.workers.pendingTasks || 0;
         }
+
         if (data.database) {
             document.getElementById('activeConns').textContent = data.database.activeConnections || 0;
+
+            // Update DB status in System Health panel if connected
+            const dbStatusEl = document.getElementById('dbStatus');
+            if (dbStatusEl && data.database.status) {
+                dbStatusEl.textContent = data.database.status.toUpperCase();
+                dbStatusEl.className = data.database.status === 'connected'
+                    ? 'text-green-400'
+                    : 'text-red-400';
+            }
+
+            // Update cache hit ratio if element exists
+            const cacheHitEl = document.getElementById('cacheHitRatio');
+            if (cacheHitEl && data.database.cacheHitRatio !== undefined) {
+                cacheHitEl.textContent = data.database.cacheHitRatio.toFixed(1) + '%';
+            }
+
+            // Update database size if element exists
+            const dbSizeEl = document.getElementById('dbSize');
+            if (dbSizeEl && data.database.databaseSizeBytes !== undefined) {
+                const sizeMb = (data.database.databaseSizeBytes / 1024 / 1024).toFixed(1);
+                dbSizeEl.textContent = sizeMb + ' MB';
+            }
+
+            // Update connection pool info if elements exist
+            const totalConnsEl = document.getElementById('totalConns');
+            if (totalConnsEl) {
+                totalConnsEl.textContent = `${data.database.activeConnections || 0}/${data.database.maxConnections || 100}`;
+            }
+        }
+
+        // Update server status based on overall health
+        if (!data.hasError && !data.isDemoMode) {
+            updateStatus('healthy');
         }
     }
 

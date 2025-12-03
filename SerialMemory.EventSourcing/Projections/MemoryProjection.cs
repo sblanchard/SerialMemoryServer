@@ -90,6 +90,14 @@ public sealed class MemoryProjection : IProjection
     {
         var @event = JsonSerializer.Deserialize<MemoryCreatedEvent>(storedEvent.EventData, _jsonOptions)!;
 
+        // Skip events with empty content (legacy/malformed events)
+        if (string.IsNullOrEmpty(@event.Content))
+        {
+            _logger.LogDebug("Skipping MemoryCreated event {EventId} with empty content for stream {StreamId}",
+                storedEvent.EventId, storedEvent.StreamId);
+            return;
+        }
+
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO memory_projections
                 (memory_id, content, content_hash, embedding, layer, confidence_score, half_life_days,
@@ -125,6 +133,14 @@ public sealed class MemoryProjection : IProjection
     private async Task ApplyMemoryUpdated(NpgsqlConnection conn, StoredEvent storedEvent, CancellationToken ct)
     {
         var @event = JsonSerializer.Deserialize<MemoryUpdatedEvent>(storedEvent.EventData, _jsonOptions)!;
+
+        // Skip events with empty content (legacy/malformed events)
+        if (string.IsNullOrEmpty(@event.NewContent))
+        {
+            _logger.LogDebug("Skipping MemoryUpdated event {EventId} with empty content for stream {StreamId}",
+                storedEvent.EventId, storedEvent.StreamId);
+            return;
+        }
 
         if (@event.NewEmbedding != null && @event.NewEmbedding.Length > 0)
         {

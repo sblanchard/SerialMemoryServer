@@ -214,7 +214,9 @@ public sealed class ReasoningRunService : IReasoningRunService
             execution.ErrorMessage,
             ErrorDetails = execution.ErrorDetails != null
                 ? JsonSerializer.Serialize(execution.ErrorDetails)
-                : null
+                : null,
+            execution.CreatedAt,
+            execution.UpdatedAt
         });
     }
 
@@ -324,7 +326,8 @@ public sealed class ReasoningRunService : IReasoningRunService
                     ? JsonSerializer.Serialize(reasoningTrace.OutputParsed)
                     : null,
                 reasoningTrace.ErrorMessage,
-                reasoningTrace.ErrorCode
+                reasoningTrace.ErrorCode,
+                reasoningTrace.CreatedAt
             });
 
             reasoningTraces.Add(reasoningTrace);
@@ -385,7 +388,8 @@ public sealed class ReasoningRunService : IReasoningRunService
                 RelatedMemoryIds = reasoningInsight.RelatedMemoryIds.ToArray(),
                 Metadata = reasoningInsight.Metadata != null
                     ? JsonSerializer.Serialize(reasoningInsight.Metadata)
-                    : null
+                    : null,
+                reasoningInsight.CreatedAt
             });
         }
     }
@@ -447,7 +451,8 @@ public sealed class ReasoningRunService : IReasoningRunService
                 reasoningDisagreement.Resolved,
                 reasoningDisagreement.Resolution,
                 reasoningDisagreement.ResolvedAt,
-                reasoningDisagreement.ResolvedBy
+                reasoningDisagreement.ResolvedBy,
+                reasoningDisagreement.CreatedAt
             });
         }
     }

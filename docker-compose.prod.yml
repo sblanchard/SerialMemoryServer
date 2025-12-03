@@ -54,12 +54,17 @@ services:
       - ./ops/admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin-actions.sql:ro
       - ./ops/job_supervision_schema.sql:/docker-entrypoint-initdb.d/07-job-supervision.sql:ro
       - ./ops/telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
+      - ./ops/graph_events_schema.sql:/docker-entrypoint-initdb.d/08b-graph-events.sql:ro
+      - ./ops/power_user_schema.sql:/docker-entrypoint-initdb.d/08c-power-user.sql:ro
       - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
       - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
       - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
       - ./ops/classification_schema.sql:/docker-entrypoint-initdb.d/12-classification.sql:ro
       - ./ops/fix_memories_columns.sql:/docker-entrypoint-initdb.d/13-fix-memories-columns.sql:ro
       - ./ops/email_verification_schema.sql:/docker-entrypoint-initdb.d/14-email-verification.sql:ro
+      - ./ops/shadow_memory_schema.sql:/docker-entrypoint-initdb.d/15-shadow-memory.sql:ro
+      - ./ops/migrations/20251201_comprehensive_fixes_v1.sql:/docker-entrypoint-initdb.d/16-comprehensive-fixes.sql:ro
+      - ./ops/migrations/20251203_fix_memory_events_schema.sql:/docker-entrypoint-initdb.d/17-fix-memory-events.sql:ro
       - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/98-rls-fix.sql:ro
       - ./ops/init-grants.sh:/docker-entrypoint-initdb.d/99-grants.sh:ro
       - postgres_data:/var/lib/postgresql/data
@@ -196,6 +201,7 @@ services:
       - FEATURE_TIME_TRAVEL=${FEATURE_TIME_TRAVEL:-true}
       - FEATURE_OBSERVE_ONLY_MODE=${FEATURE_OBSERVE_ONLY_MODE:-false}
       - FEATURE_MIN_TIER=${FEATURE_MIN_TIER:-free}
+      - SELF_HOST_METRICS_MODE=${SELF_HOST_METRICS_MODE:-live}
     depends_on:
       postgres:
         condition: service_healthy

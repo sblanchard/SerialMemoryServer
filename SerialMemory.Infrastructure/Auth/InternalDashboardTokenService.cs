@@ -17,8 +17,8 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
     private readonly string _audience;
     private readonly ILogger<InternalDashboardTokenService> _logger;
 
-    // Internal tokens are short-lived (5 minutes by default)
-    private static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromMinutes(5);
+    // Internal tokens are medium-lived (30 minutes by default)
+    private static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromMinutes(30);
 
     public InternalDashboardTokenService(
         string secretKey,

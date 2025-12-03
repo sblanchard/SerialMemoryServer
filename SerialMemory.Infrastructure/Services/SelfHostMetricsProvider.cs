@@ -122,10 +122,11 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         // Force demo mode if configured
         if (_config.Mode.Equals("demo", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Returning demo metrics (mode=demo)");
-            return GetDemoMetrics("Demo mode enabled via configuration");
+            _logger.LogInformation("Returning demo metrics - SELF_HOST_METRICS_MODE is set to 'demo'");
+            return GetDemoMetrics("Demo mode enabled via configuration (SELF_HOST_METRICS_MODE=demo)");
         }
 
+        _logger.LogDebug("Fetching live metrics (mode={Mode})", _config.Mode);
         var sw = Stopwatch.StartNew();
 
         try
@@ -136,22 +137,13 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             await using var conn = await _dataSource.OpenConnectionAsync(cts.Token);
             await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
-            // Fetch all metrics in parallel
-            var rpsTask = GetRpsMetricsAsync(conn, cts.Token);
-            var latencyTask = GetLatencyMetricsAsync(conn, cts.Token);
-            var queueTask = GetQueueMetricsAsync(conn, cts.Token);
-            var dbTask = GetDatabaseMetricsAsync(conn, cts.Token);
-            var apiStatsTask = GetApiStatsAsync(conn, cts.Token);
-            var trendsTask = GetLoadTrendsAsync(conn, cts.Token);
-
-            await Task.WhenAll(rpsTask, latencyTask, queueTask, dbTask, apiStatsTask, trendsTask);
-
-            var rps = await rpsTask;
-            var latency = await latencyTask;
-            var queue = await queueTask;
-            var db = await dbTask;
-            var apiStats = await apiStatsTask;
-            var trends = await trendsTask;
+            // Fetch all metrics sequentially (Npgsql doesn't support concurrent operations on same connection)
+            var rps = await GetRpsMetricsAsync(conn, cts.Token);
+            var latency = await GetLatencyMetricsAsync(conn, cts.Token);
+            var queue = await GetQueueMetricsAsync(conn, cts.Token);
+            var db = await GetDatabaseMetricsAsync(conn, cts.Token);
+            var apiStats = await GetApiStatsAsync(conn, cts.Token);
+            var trends = await GetLoadTrendsAsync(conn, cts.Token);
 
             sw.Stop();
             _logger.LogDebug("Fetched live metrics in {ElapsedMs}ms", sw.ElapsedMilliseconds);
@@ -229,14 +221,15 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch self-host metrics");
+            _logger.LogError(ex, "Failed to fetch self-host metrics: {ErrorType} - {ErrorMessage}",
+                ex.GetType().Name, ex.Message);
 
             // If auto mode and we can't connect, return error (not demo)
             return new SelfHostMetricsResult
             {
                 IsDemoMode = false,
                 HasError = true,
-                ErrorMessage = $"Failed to fetch metrics: {ex.Message}"
+                ErrorMessage = $"Database error ({ex.GetType().Name}): {ex.Message}"
             };
         }
     }
@@ -414,9 +407,9 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
                     (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') AS MaxConnections,
                     pg_database_size(current_database()) AS DatabaseSizeBytes,
                     COALESCE((SELECT ROUND(
-                        CASE WHEN (blks_hit + blks_read) > 0
-                        THEN blks_hit::float / (blks_hit + blks_read) * 100
-                        ELSE 0 END, 2)
+                        (CASE WHEN (blks_hit + blks_read) > 0
+                        THEN blks_hit::numeric / (blks_hit + blks_read) * 100
+                        ELSE 0 END)::numeric, 2)::double precision
                     FROM pg_stat_database WHERE datname = current_database()), 0) AS CacheHitRatio
                 FROM pg_stat_activity
                 WHERE datname = current_database()");

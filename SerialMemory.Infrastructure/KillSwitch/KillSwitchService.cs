@@ -335,8 +335,7 @@ public sealed class KillSwitchService : IKillSwitchService
             """
             UPDATE tenant_api_keys
             SET revoked_at = NOW(),
-                revoked_reason = @Reason,
-                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disabled_by', @DisabledBy)
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disabled_by', @DisabledBy, 'revoked_reason', @Reason)
             WHERE id = @ApiKeyId::uuid
             """,
             new { ApiKeyId = apiKeyId, Reason = reason, DisabledBy = disabledBy });
@@ -361,8 +360,7 @@ public sealed class KillSwitchService : IKillSwitchService
             """
             UPDATE tenant_api_keys
             SET revoked_at = NULL,
-                revoked_reason = NULL,
-                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('enabled_by', @EnabledBy, 'enabled_at', NOW()::text)
+                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('enabled_by', @EnabledBy, 'enabled_at', NOW()::text) - 'revoked_reason'
             WHERE id = @ApiKeyId::uuid
             """,
             new { ApiKeyId = apiKeyId, EnabledBy = enabledBy });
@@ -428,11 +426,13 @@ public sealed class KillSwitchService : IKillSwitchService
             ExpiresAt = tc.ends_at
         }).ToList();
 
-        // Get disabled API keys
+        // Get disabled API keys (revoked_reason stored in metadata jsonb)
         var disabledKeys = await conn.QueryAsync<DisabledKeyDto>(
             """
-            SELECT ak.id AS api_key_id, ak.tenant_id, ak.key_prefix, ak.revoked_reason AS reason, ak.revoked_at AS disabled_at,
-                   COALESCE(ak.metadata->>'disabled_by', 'unknown') AS disabled_by
+            SELECT ak.id AS api_key_id, ak.tenant_id, ak.key_prefix,
+                   ak.metadata->>'revoked_reason' AS reason,
+                   ak.revoked_at AS disabled_at,
+                   COALESCE(ak.metadata->>'disabled_by', 'admin') AS disabled_by
             FROM tenant_api_keys ak
             WHERE ak.revoked_at IS NOT NULL
             ORDER BY ak.revoked_at DESC

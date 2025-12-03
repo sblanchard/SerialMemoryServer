@@ -40,24 +40,25 @@ public static class TracesEndpoints
             // CRITICAL FIX: Always DESC order by default, frontend should NOT re-sort
             var orderBy = (sortOrder?.ToLowerInvariant() == "asc") ? "ASC" : "DESC";
 
+            // Handle both eventsourcing schema (global_sequence, stream_id) and dashboard schema (sequence_number, memory_id)
             var events = await conn.QueryAsync<TraceEventDto>(
                 $"""
                 SELECT
-                    me.id,
-                    me.memory_id,
-                    me.event_type,
-                    me.event_data,
-                    me.created_at,
-                    me.actor_id,
-                    me.sequence_number,
+                    COALESCE(me.id, me.event_id) AS id,
+                    COALESCE(me.memory_id, me.stream_id) AS memory_id,
+                    me.event_type::text AS event_type,
+                    COALESCE(me.event_data, me.payload) AS event_data,
+                    COALESCE(me.created_at, me.timestamp) AS created_at,
+                    COALESCE(me.actor_id, me.created_by) AS actor_id,
+                    COALESCE(me.sequence_number, me.global_sequence) AS sequence_number,
                     m.content AS memory_content,
                     m.layer AS memory_layer
                 FROM memory_events me
-                LEFT JOIN memories m ON me.memory_id = m.id
-                WHERE me.tenant_id = @TenantId
-                    AND (@Category IS NULL OR me.event_type LIKE @Category || '%')
-                    AND (@EventType IS NULL OR me.event_type = @EventType)
-                ORDER BY me.created_at {orderBy}, me.sequence_number {orderBy}
+                LEFT JOIN memories m ON COALESCE(me.memory_id, me.stream_id) = m.id
+                WHERE (me.tenant_id = @TenantId OR me.tenant_id IS NULL)
+                    AND (@Category IS NULL OR me.event_type::text LIKE @Category || '%')
+                    AND (@EventType IS NULL OR me.event_type::text = @EventType)
+                ORDER BY COALESCE(me.created_at, me.timestamp) {orderBy}, COALESCE(me.sequence_number, me.global_sequence) {orderBy}
                 LIMIT @Limit
                 OFFSET @Offset
                 """,
@@ -122,13 +123,21 @@ public static class TracesEndpoints
             if (memory == null)
                 return Results.NotFound(new { error = "not_found", message = "Memory not found" });
 
-            // Get all events for this memory in DESC order
+            // Get all events for this memory in DESC order (handle both schema versions)
             var events = await conn.QueryAsync<TraceEventDto>(
                 """
-                SELECT id, memory_id, event_type, event_data, created_at, actor_id, sequence_number
+                SELECT
+                    COALESCE(id, event_id) AS id,
+                    COALESCE(memory_id, stream_id) AS memory_id,
+                    event_type::text AS event_type,
+                    COALESCE(event_data, payload) AS event_data,
+                    COALESCE(created_at, timestamp) AS created_at,
+                    COALESCE(actor_id, created_by) AS actor_id,
+                    COALESCE(sequence_number, global_sequence) AS sequence_number
                 FROM memory_events
-                WHERE memory_id = @MemoryId AND tenant_id = @TenantId
-                ORDER BY created_at DESC, sequence_number DESC
+                WHERE COALESCE(memory_id, stream_id) = @MemoryId
+                    AND (tenant_id = @TenantId OR tenant_id IS NULL)
+                ORDER BY COALESCE(created_at, timestamp) DESC, COALESCE(sequence_number, global_sequence) DESC
                 """,
                 new { MemoryId = memoryId, TenantId = tenantId });
 
@@ -178,23 +187,24 @@ public static class TracesEndpoints
             if (!exists)
                 return Results.NotFound(new { error = "not_found", message = "Memory not found" });
 
-            // Get full event trace with all details
+            // Get full event trace with all details (handle both schema versions)
             var trace = await conn.QueryAsync<TraceDetailDto>(
                 """
                 SELECT
-                    me.id,
-                    me.memory_id,
-                    me.event_type,
-                    me.event_data,
-                    me.created_at,
-                    me.actor_id,
-                    me.sequence_number,
+                    COALESCE(me.id, me.event_id) AS id,
+                    COALESCE(me.memory_id, me.stream_id) AS memory_id,
+                    me.event_type::text AS event_type,
+                    COALESCE(me.event_data, me.payload) AS event_data,
+                    COALESCE(me.created_at, me.timestamp) AS created_at,
+                    COALESCE(me.actor_id, me.created_by) AS actor_id,
+                    COALESCE(me.sequence_number, me.global_sequence) AS sequence_number,
                     me.version,
-                    LAG(me.event_data) OVER (ORDER BY me.sequence_number) AS previous_event_data,
-                    LEAD(me.event_data) OVER (ORDER BY me.sequence_number) AS next_event_data
+                    LAG(COALESCE(me.event_data, me.payload)) OVER (ORDER BY COALESCE(me.sequence_number, me.global_sequence)) AS previous_event_data,
+                    LEAD(COALESCE(me.event_data, me.payload)) OVER (ORDER BY COALESCE(me.sequence_number, me.global_sequence)) AS next_event_data
                 FROM memory_events me
-                WHERE me.memory_id = @MemoryId AND me.tenant_id = @TenantId
-                ORDER BY me.created_at DESC, me.sequence_number DESC
+                WHERE COALESCE(me.memory_id, me.stream_id) = @MemoryId
+                    AND (me.tenant_id = @TenantId OR me.tenant_id IS NULL)
+                ORDER BY COALESCE(me.created_at, me.timestamp) DESC, COALESCE(me.sequence_number, me.global_sequence) DESC
                 """,
                 new { MemoryId = memoryId, TenantId = tenantId });
 
@@ -227,12 +237,12 @@ public static class TracesEndpoints
             var categories = await conn.QueryAsync<EventCategoryDto>(
                 """
                 SELECT
-                    SPLIT_PART(event_type, '_', 1) AS category,
+                    SPLIT_PART(event_type::text, '_', 1) AS category,
                     COUNT(*) AS event_count,
-                    MAX(created_at) AS last_event_at
+                    MAX(COALESCE(created_at, timestamp)) AS last_event_at
                 FROM memory_events
-                WHERE tenant_id = @TenantId
-                GROUP BY SPLIT_PART(event_type, '_', 1)
+                WHERE tenant_id = @TenantId OR tenant_id IS NULL
+                GROUP BY SPLIT_PART(event_type::text, '_', 1)
                 ORDER BY event_count DESC
                 """,
                 new { TenantId = tenantId });

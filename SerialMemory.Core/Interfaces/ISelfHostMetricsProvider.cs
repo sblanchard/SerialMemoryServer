@@ -183,7 +183,7 @@ public sealed class SelfHostMetricsConfig
     /// <summary>
     /// Metrics mode: "live", "demo", or "auto" (auto-detect).
     /// </summary>
-    public string Mode { get; set; } = "auto";
+    public string Mode { get; set; } = "live";
 
     /// <summary>
     /// Prometheus URL for metrics scraping (optional).

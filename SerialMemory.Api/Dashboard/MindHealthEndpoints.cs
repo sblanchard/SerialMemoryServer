@@ -19,84 +19,8 @@ public static class MindHealthEndpoints
             .WithTags("Mind Health")
             .RequireAuthorization();
 
-        // =============================================================================
-        // GET /mind/health - Get current mind health status
-        // =============================================================================
-        group.MapGet("/health", async (
-            ClaimsPrincipal user,
-            NpgsqlDataSource dataSource,
-            CancellationToken ct) =>
-        {
-            var tenantId = GetTenantId(user, selfHostedMode);
-
-            await using var conn = await dataSource.OpenConnectionAsync(ct);
-            await conn.SetInternalAdminWithTenantAsync(tenantId);
-
-            // Get latest daily score
-            var latestScore = await conn.QueryFirstOrDefaultAsync<MindHealthDailyDto>(
-                """
-                SELECT id, date, overall_score, confidence_drift, l3_fact_stability,
-                       entity_consistency, memory_decay_rate, anomaly_count, total_memories,
-                       active_contradictions, hallucination_rate, created_at
-                FROM mind_health_daily
-                WHERE tenant_id = @TenantId
-                ORDER BY date DESC
-                LIMIT 1
-                """,
-                new { TenantId = tenantId });
-
-            // Get current calibration
-            var calibration = await conn.QueryFirstOrDefaultAsync<MindCalibrationDto>(
-                """
-                SELECT id, calibration_date, baseline_confidence, decay_half_life_days,
-                       hallucination_threshold, contradiction_threshold, auto_resolve_enabled,
-                       calibration_method, model_version, notes
-                FROM mind_calibration
-                WHERE tenant_id = @TenantId
-                ORDER BY calibration_date DESC
-                LIMIT 1
-                """,
-                new { TenantId = tenantId });
-
-            // Calculate health status
-            var healthStatus = "healthy";
-            var overallScore = latestScore?.overall_score ?? 0.8f;
-
-            if (overallScore < 0.5f)
-                healthStatus = "critical";
-            else if (overallScore < 0.7f)
-                healthStatus = "warning";
-
-            return Results.Ok(new
-            {
-                status = healthStatus,
-                overallScore,
-                lastUpdated = latestScore?.date ?? DateOnly.FromDateTime(DateTime.UtcNow),
-                metrics = latestScore ?? new MindHealthDailyDto
-                {
-                    overall_score = 0.8f,
-                    confidence_drift = 0,
-                    l3_fact_stability = 1.0f,
-                    entity_consistency = 1.0f,
-                    memory_decay_rate = 0,
-                    anomaly_count = 0,
-                    total_memories = 0
-                },
-                calibration = calibration ?? new MindCalibrationDto
-                {
-                    baseline_confidence = 0.5f,
-                    decay_half_life_days = 30,
-                    hallucination_threshold = 0.1f,
-                    contradiction_threshold = 0.85f,
-                    auto_resolve_enabled = false,
-                    calibration_method = "default"
-                }
-            });
-        })
-        .WithName("GetMindHealth")
-        .WithDescription("Gets current mind health status")
-        .Produces(StatusCodes.Status200OK)
-        .Produces(StatusCodes.Status401Unauthorized);
+        // NOTE: GET /api/mind/health is defined in Program.cs to avoid duplicate registration
+        // The Program.cs endpoint uses IMindHealthService for proper response format
 
         // =============================================================================
         // GET /mind/health/trend - Get 30-day health trend (FIX #4)

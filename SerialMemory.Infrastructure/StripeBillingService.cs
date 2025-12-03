@@ -49,11 +49,15 @@ public sealed class StripeBillingService : IMockableBillingService
             var priceId = await GetPriceIdForPlanAsync(request.PlanName, cancellationToken);
             if (priceId == null)
             {
+                _logger.LogWarning(
+                    "No Stripe price configured for plan {Plan}. Set STRIPE_{PlanUpper}_PRICE_ID env var or add to stripe_price_mapping table.",
+                    request.PlanName, request.PlanName.ToUpperInvariant());
+
                 return new CheckoutSessionResult
                 {
                     Success = false,
-                    ErrorCode = "invalid_plan",
-                    ErrorMessage = $"No Stripe price configured for plan: {request.PlanName}"
+                    ErrorCode = "plan_not_configured",
+                    ErrorMessage = $"Plan '{request.PlanName}' not configured. Set STRIPE_{request.PlanName.ToUpperInvariant()}_PRICE_ID environment variable."
                 };
             }
 
@@ -534,12 +538,21 @@ public sealed class StripeBillingService : IMockableBillingService
             "free" => _config.FreePriceId,
             "pro" => _config.ProPriceId,
             "pro_plus" => _config.ProPlusPriceId,
+            "team" => _config.TeamPriceId,
             "enterprise" => _config.EnterprisePriceId,
             _ => null
         };
 
-        // Return null if empty (not configured)
-        return string.IsNullOrEmpty(configPriceId) ? null : configPriceId;
+        // Return null if empty or placeholder (not configured)
+        // Stripe price IDs start with "price_" followed by alphanumeric chars
+        if (string.IsNullOrEmpty(configPriceId))
+            return null;
+
+        // Reject placeholder price IDs that aren't real Stripe IDs
+        if (configPriceId.EndsWith("_monthly") || configPriceId.EndsWith("_yearly"))
+            return null;
+
+        return configPriceId;
     }
 
     private async Task<string> GetOrCreateStripeCustomerAsync(string tenantId, CancellationToken cancellationToken)
