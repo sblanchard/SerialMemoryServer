@@ -62,7 +62,7 @@ public static class MutationsEndpoints
                 {
                     TenantId = tenantId,
                     MemoryId = memoryId,
-                    Limit = limit ?? 100
+                    Limit = limit ?? 500
                 });
 
             var maxSeq = await conn.ExecuteScalarAsync<long?>(

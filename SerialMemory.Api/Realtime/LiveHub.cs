@@ -225,6 +225,21 @@ public sealed class LiveHub : Hub
     }
 
     /// <summary>
+    /// Subscribe to cognitive layer events (promotions, transitions, queue changes).
+    /// </summary>
+    public async Task SubscribeLayerEvents()
+    {
+        var tenantId = Context.Items["TenantId"] as string ?? _tenantContext.TenantId;
+        var stream = $"tenant.{tenantId}.layers";
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+
+        _logger.LogDebug("Client {ConnectionId} subscribed to layer events for tenant {TenantId}",
+            Context.ConnectionId, tenantId);
+        await Clients.Caller.SendAsync("SubscribedLayerEvents", stream);
+    }
+
+    /// <summary>
     /// Ping method for connection health checks.
     /// </summary>
     public async Task Ping()

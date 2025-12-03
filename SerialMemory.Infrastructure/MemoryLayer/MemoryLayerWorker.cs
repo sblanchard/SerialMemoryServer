@@ -1,9 +1,11 @@
 using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.MemoryLayer;
 
@@ -30,6 +32,8 @@ public sealed class MemoryLayerWorker : BackgroundService
         _serviceProvider = serviceProvider;
         _connectionString = configuration.GetConnectionString("Postgres")
             ?? BuildConnectionString();
+
+        // ILiveEventEmitter is obtained via _serviceProvider when needed (scoped service)
 
         _config = new MemoryLayerWorkerConfig
         {
@@ -226,10 +230,16 @@ public sealed class MemoryLayerWorker : BackgroundService
             _logger.LogInformation(
                 "Completed transition {TransitionId}: {FromLayer} → {ToLayer}",
                 transition.Id, transition.FromLayer, transition.ToLayer);
+
+            // Broadcast via SignalR
+            await BroadcastTransitionAsync(transition, "completed", null);
         }
         else
         {
             await MarkTransitionFailedAsync(conn, transition.Id, "Transition processing returned false", ct);
+
+            // Broadcast failure via SignalR
+            await BroadcastTransitionAsync(transition, "failed", "Transition processing returned false");
         }
     }
 
@@ -381,12 +391,12 @@ public sealed class MemoryLayerWorker : BackgroundService
                 m.tenant_id,
                 'L0_RAW' as from_layer,
                 'L1_CONTEXT' as to_layer,
-                COALESCE(m.access_count, 0) + EXTRACT(DAY FROM NOW() - m.created_at) as score
+                COALESCE(m.access_count, 0) + EXTRACT(EPOCH FROM NOW() - m.created_at) / 3600 as score
             FROM memories m
             WHERE m.tenant_id = @TenantId::uuid
               AND m.layer = 'L0_RAW'
-              AND m.created_at < NOW() - INTERVAL '1 day'
-              AND COALESCE(m.access_count, 0) >= 2
+              AND m.created_at < NOW() - INTERVAL '5 minutes'
+              AND COALESCE(m.access_count, 0) >= 0
               AND NOT EXISTS (
                   SELECT 1 FROM layer_transition_queue q
                   WHERE q.memory_id = m.id
@@ -461,12 +471,12 @@ public sealed class MemoryLayerWorker : BackgroundService
                 m.tenant_id,
                 'L2_SUMMARY' as from_layer,
                 'L3_KNOWLEDGE' as to_layer,
-                COALESCE(m.access_count, 0) * COALESCE((m.metadata->>'confidence')::float, 0.5) as score
+                COALESCE(m.access_count, 0) * COALESCE((m.metadata->>'confidence')::float, 0.5) + 1 as score
             FROM memories m
             WHERE m.tenant_id = @TenantId::uuid
               AND m.layer = 'L2_SUMMARY'
-              AND COALESCE(m.access_count, 0) >= 5
-              AND COALESCE((m.metadata->>'confidence')::float, 0) >= 0.7
+              AND COALESCE(m.access_count, 0) >= 0
+              AND COALESCE((m.metadata->>'confidence')::float, 0.5) >= 0.3
               AND NOT EXISTS (
                   SELECT 1 FROM layer_transition_queue q
                   WHERE q.memory_id = m.id
@@ -593,6 +603,88 @@ public sealed class MemoryLayerWorker : BackgroundService
                 updated_at = NOW()
             WHERE id = @Id::uuid
             """, new { Id = transitionId, Error = error });
+    }
+
+    /// <summary>
+    /// Broadcasts a layer transition event via SignalR.
+    /// </summary>
+    private async Task BroadcastTransitionAsync(TransitionQueueItem transition, string status, string? errorMessage)
+    {
+        try
+        {
+            var emitter = _serviceProvider.GetService<ILiveEventEmitter>();
+            if (emitter == null) return;
+
+            await emitter.EmitLayerTransitionAsync(new LayerTransitionBroadcast
+            {
+                TransitionId = transition.Id,
+                TenantId = transition.TenantId.ToString(),
+                MemoryId = transition.MemoryId,
+                FromLayer = transition.FromLayer,
+                ToLayer = transition.ToLayer,
+                Status = status,
+                ErrorMessage = errorMessage,
+                Timestamp = DateTimeOffset.UtcNow
+            });
+
+            // Also broadcast updated stats after each batch of transitions
+            await BroadcastLayerStatsAsync(transition.TenantId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast layer transition event");
+        }
+    }
+
+    /// <summary>
+    /// Broadcasts updated layer statistics for a tenant.
+    /// </summary>
+    private async Task BroadcastLayerStatsAsync(Guid tenantId)
+    {
+        try
+        {
+            var emitter = _serviceProvider.GetService<ILiveEventEmitter>();
+            if (emitter == null) return;
+
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var stats = await conn.QueryAsync<(string Layer, int Count)>("""
+                SELECT COALESCE(layer, 'L0_RAW') as layer, COUNT(*)::int as count
+                FROM memories
+                WHERE tenant_id = @TenantId::uuid
+                GROUP BY layer
+                """, new { TenantId = tenantId });
+
+            var layerCounts = stats.ToDictionary(s => s.Layer, s => s.Count);
+
+            var queueStats = await conn.QueryFirstOrDefaultAsync<(int Pending, int Processing, int CompletedHour)>("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending')::int as pending,
+                    COUNT(*) FILTER (WHERE status = 'processing')::int as processing,
+                    COUNT(*) FILTER (WHERE status = 'completed' AND completed_at > NOW() - INTERVAL '1 hour')::int as completed_hour
+                FROM layer_transition_queue
+                WHERE tenant_id = @TenantId::uuid
+                """, new { TenantId = tenantId });
+
+            await emitter.EmitLayerStatsUpdateAsync(new LayerStatsUpdateBroadcast
+            {
+                TenantId = tenantId.ToString(),
+                L0Count = layerCounts.GetValueOrDefault("L0_RAW", 0),
+                L1Count = layerCounts.GetValueOrDefault("L1_CONTEXT", 0),
+                L2Count = layerCounts.GetValueOrDefault("L2_SUMMARY", 0),
+                L3Count = layerCounts.GetValueOrDefault("L3_KNOWLEDGE", 0),
+                L4Count = layerCounts.GetValueOrDefault("L4_HEURISTIC", 0),
+                QueuePending = queueStats.Pending,
+                QueueProcessing = queueStats.Processing,
+                CompletedLastHour = queueStats.CompletedHour,
+                Timestamp = DateTimeOffset.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast layer stats update");
+        }
     }
 
     private async Task CleanupStaleTransitionsAsync(CancellationToken ct)

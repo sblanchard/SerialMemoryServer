@@ -212,11 +212,14 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Metrics fetch timed out after {Timeout}", _config.FetchTimeout);
+            // Still try to get database stats (they use system tables that always exist)
+            var dbStats = await TryGetDatabaseStatsAsync(ct);
             return new SelfHostMetricsResult
             {
                 IsDemoMode = false,
                 HasError = true,
-                ErrorMessage = "Metrics fetch timed out. Check database connectivity."
+                ErrorMessage = "Metrics fetch timed out. Check database connectivity.",
+                Database = dbStats
             };
         }
         catch (Exception ex)
@@ -224,12 +227,14 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             _logger.LogError(ex, "Failed to fetch self-host metrics: {ErrorType} - {ErrorMessage}",
                 ex.GetType().Name, ex.Message);
 
-            // If auto mode and we can't connect, return error (not demo)
+            // Still try to get database stats (they use system tables that always exist)
+            var dbStats = await TryGetDatabaseStatsAsync(ct);
             return new SelfHostMetricsResult
             {
                 IsDemoMode = false,
                 HasError = true,
-                ErrorMessage = $"Database error ({ex.GetType().Name}): {ex.Message}"
+                ErrorMessage = $"Database error ({ex.GetType().Name}): {ex.Message}",
+                Database = dbStats
             };
         }
     }
@@ -541,6 +546,45 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         catch
         {
             return (0, 100);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to get database stats even when other metrics fail.
+    /// Uses only PostgreSQL system tables which always exist.
+    /// </summary>
+    private async Task<SelfHostDatabaseMetrics> TryGetDatabaseStatsAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3)); // Short timeout for fallback
+
+            await using var conn = await _dataSource.OpenConnectionAsync(cts.Token);
+            var db = await GetDatabaseMetricsAsync(conn, cts.Token);
+
+            return new SelfHostDatabaseMetrics
+            {
+                ActiveConnections = db.ActiveConnections,
+                IdleConnections = db.IdleConnections,
+                TotalConnections = db.TotalConnections,
+                MaxConnections = db.MaxConnections,
+                ConnectionUtilization = db.MaxConnections > 0
+                    ? (double)db.ActiveConnections / db.MaxConnections
+                    : 0,
+                DatabaseSizeBytes = db.DatabaseSizeBytes,
+                CacheHitRatio = db.CacheHitRatio,
+                Status = "connected"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get database stats in fallback mode");
+            return new SelfHostDatabaseMetrics
+            {
+                Status = "error",
+                MaxConnections = 100
+            };
         }
     }
 

@@ -154,7 +154,7 @@ public sealed class MutationsModel : DashboardPageModel
             var client = _apiClient.CreateClient("Api");
 
             // Get mutations from the power/mutations endpoint (may get 403)
-            var mutationsHttpResponse = await client.GetAsync("/api/power/mutations?limit=100");
+            var mutationsHttpResponse = await client.GetAsync("/api/power/mutations?limit=500");
             if (mutationsHttpResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
                 PowerModeRequired = true;
