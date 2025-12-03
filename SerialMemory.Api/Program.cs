@@ -181,11 +181,13 @@ var stripePublishableKey = builder.Configuration["Stripe:PublishableKey"]
 var stripeWebhookSecret = builder.Configuration["Stripe:WebhookSecret"]
     ?? Environment.GetEnvironmentVariable("STRIPE_WEBHOOK_SECRET");
 var stripeProPriceId = builder.Configuration["Stripe:ProPriceId"]
-    ?? Environment.GetEnvironmentVariable("STRIPE_PRO_PRICE_ID")
-    ?? "price_pro_monthly";
+    ?? Environment.GetEnvironmentVariable("STRIPE_PRO_PRICE_ID");
+var stripeProPlusPriceId = builder.Configuration["Stripe:ProPlusPriceId"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_PRO_PLUS_PRICE_ID");
+var stripeTeamPriceId = builder.Configuration["Stripe:TeamPriceId"]
+    ?? Environment.GetEnvironmentVariable("STRIPE_TEAM_PRICE_ID");
 var stripeEnterprisePriceId = builder.Configuration["Stripe:EnterprisePriceId"]
-    ?? Environment.GetEnvironmentVariable("STRIPE_ENTERPRISE_PRICE_ID")
-    ?? "price_enterprise_monthly";
+    ?? Environment.GetEnvironmentVariable("STRIPE_ENTERPRISE_PRICE_ID");
 
 if (!string.IsNullOrEmpty(stripeSecretKey) && !string.IsNullOrEmpty(stripeWebhookSecret))
 {
@@ -194,8 +196,10 @@ if (!string.IsNullOrEmpty(stripeSecretKey) && !string.IsNullOrEmpty(stripeWebhoo
         SecretKey = stripeSecretKey,
         PublishableKey = stripePublishableKey ?? "",
         WebhookSecret = stripeWebhookSecret,
-        ProPriceId = stripeProPriceId,
-        EnterprisePriceId = stripeEnterprisePriceId,
+        ProPriceId = stripeProPriceId ?? "",
+        ProPlusPriceId = stripeProPlusPriceId,
+        TeamPriceId = stripeTeamPriceId,
+        EnterprisePriceId = stripeEnterprisePriceId ?? "",
         DefaultSuccessUrl = $"{Environment.GetEnvironmentVariable("SERIALMEMORY_BASE_URL") ?? "https://serialmemory.dev"}/dashboard/billing?success=true",
         DefaultCancelUrl = $"{Environment.GetEnvironmentVariable("SERIALMEMORY_BASE_URL") ?? "https://serialmemory.dev"}/dashboard/billing?canceled=true"
     };
@@ -312,6 +316,7 @@ builder.Services.AddScoped<IKnowledgeGraphStore>(sp =>
         baseStore,
         sp.GetRequiredService<IGraphEventStore>(),
         sp.GetRequiredService<ILiveEventEmitter>(),
+        sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstrumentedKnowledgeGraphStore>());
 });
 
@@ -4298,6 +4303,7 @@ app.MapGet("/api/power/events/type/{eventType}", async (
 });
 
 // GET /api/power/events/stream - Get all events in sequence order
+// FIX: Use COALESCE to handle both schema versions (event_id/id, stream_id/memory_id, etc.)
 app.MapGet("/api/power/events/stream", async (
     long? fromSequence,
     int? limit,
@@ -4309,21 +4315,28 @@ app.MapGet("/api/power/events/stream", async (
     var tenantId = Guid.Parse(tenantContext.TenantId);
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
+    // Use COALESCE to handle both schema versions (eventsourcing vs dashboard)
     var events = await conn.QueryAsync<dynamic>(@"
-        SELECT event_id, global_sequence, event_type, stream_id,
-               created_at, event_data, created_by
+        SELECT
+            COALESCE(id, event_id) AS event_id,
+            COALESCE(sequence_number, global_sequence) AS global_sequence,
+            event_type::text AS event_type,
+            COALESCE(memory_id, stream_id) AS stream_id,
+            COALESCE(created_at, timestamp) AS created_at,
+            COALESCE(event_data, payload) AS event_data,
+            COALESCE(actor_id, created_by) AS created_by
         FROM memory_events
-        WHERE global_sequence >= @FromSequence
-        ORDER BY global_sequence
+        WHERE COALESCE(sequence_number, global_sequence) >= @FromSequence
+        ORDER BY COALESCE(sequence_number, global_sequence) DESC
         LIMIT @Limit",
-        new { FromSequence = fromSequence ?? 0, Limit = limit ?? 1000 });
+        new { FromSequence = fromSequence ?? 0, Limit = limit ?? 100 });
 
     var eventsList = events.ToList();
 
     return Results.Ok(new
     {
         fromSequence = fromSequence ?? 0,
-        toSequence = eventsList.LastOrDefault()?.global_sequence ?? 0L,
+        toSequence = eventsList.FirstOrDefault()?.global_sequence ?? 0L,
         items = eventsList.Select(e => new
         {
             eventId = (Guid)e.event_id,
@@ -5584,6 +5597,12 @@ static decimal GetPlanPrice(string planName, string interval) => planName.ToLowe
         "annual" => 19.99m * 12 * 0.80m,  // 20% discount
         "quarterly" => 19.99m * 3 * 0.90m, // 10% discount
         _ => 19.99m
+    },
+    "pro_plus" => interval switch
+    {
+        "annual" => 49m * 12 * 0.80m,  // 20% discount
+        "quarterly" => 49m * 3 * 0.90m, // 10% discount
+        _ => 49m
     },
     "team" => interval switch
     {

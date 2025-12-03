@@ -8,19 +8,9 @@ using SerialMemory.Web.Services;
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public sealed class SelfHostModel : DashboardPageModel
+public sealed class SelfHostModel(ApiClientService apiClient, AppConfig appConfig, ILogger<SelfHostModel> logger)
+    : DashboardPageModel(appConfig)
 {
-    private readonly ApiClientService _apiClient;
-    private readonly ILogger<SelfHostModel> _logger;
-
-    public SelfHostModel(ApiClientService apiClient, AppConfig appConfig, ILogger<SelfHostModel> logger)
-        : base(appConfig)
-    {
-        _apiClient = apiClient;
-        _logger = logger;
-    }
-
-    public bool IsSelfHosted => AppConfig.IsSelfHosted;
     public bool CanAccessSelfHostedFeatures
     {
         get
@@ -30,7 +20,7 @@ public sealed class SelfHostModel : DashboardPageModel
             var isRootAdminClaim = HttpContext.User?.FindFirst("is_root_admin")?.Value;
             var emailClaim = HttpContext.User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "SELFHOST_ACCESS_CHECK: IsSelfHosted={IsSelfHosted}, IsRootAdmin={IsRootAdmin}, " +
                 "is_root_admin_claim={Claim}, email={Email}",
                 isSelfHosted, isRootAdmin, isRootAdminClaim ?? "(null)", emailClaim ?? "(null)");
@@ -72,7 +62,7 @@ public sealed class SelfHostModel : DashboardPageModel
 
         try
         {
-            var client = _apiClient.CreateClient("Api");
+            var client = apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/integrity", null);
 
             if (response.IsSuccessStatusCode)
@@ -103,7 +93,7 @@ public sealed class SelfHostModel : DashboardPageModel
 
         try
         {
-            var client = _apiClient.CreateClient("Api");
+            var client = apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/vacuum", null);
 
             if (response.IsSuccessStatusCode)
@@ -134,7 +124,7 @@ public sealed class SelfHostModel : DashboardPageModel
 
         try
         {
-            var client = _apiClient.CreateClient("Api");
+            var client = apiClient.CreateClient("Api");
             var response = await client.PostAsync("/api/selfhost/maintenance/reindex", null);
 
             if (response.IsSuccessStatusCode)
@@ -160,7 +150,7 @@ public sealed class SelfHostModel : DashboardPageModel
     {
         try
         {
-            var client = _apiClient.CreateClient("Api");
+            var client = apiClient.CreateClient("Api");
 
             var statusTask = client.GetAsync("/api/selfhost/status");
             var configTask = client.GetAsync("/api/selfhost/config");

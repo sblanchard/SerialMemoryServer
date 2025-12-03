@@ -31,6 +31,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
+        // Use TEXT type for event_type to handle both enum schemas (PascalCase/snake_case)
         var sql = """
             INSERT INTO graph_events (
                 event_id, event_type,
@@ -40,7 +41,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 previous_state, new_state, confidence,
                 triggered_by, memory_id, session_id, occurred_at, metadata
             ) VALUES (
-                @EventId, @EventType::graph_event_type,
+                @EventId, @EventType,
                 @NodeId, @NodeName, @NodeType,
                 @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                 @SourceNodeName, @TargetNodeName,
@@ -53,7 +54,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         return await conn.ExecuteScalarAsync<Guid>(sql, new
         {
             graphEvent.EventId,
-            EventType = ToSnakeCase(graphEvent.EventType),
+            EventType = graphEvent.EventType.ToString(),
             graphEvent.NodeId,
             graphEvent.NodeName,
             graphEvent.NodeType,
@@ -84,6 +85,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         {
             foreach (var evt in events)
             {
+                // Use TEXT type for event_type to handle both enum schemas (PascalCase/snake_case)
                 var sql = """
                     INSERT INTO graph_events (
                         event_id, event_type,
@@ -93,7 +95,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                         previous_state, new_state, confidence,
                         triggered_by, memory_id, session_id, occurred_at, metadata
                     ) VALUES (
-                        @EventId, @EventType::graph_event_type,
+                        @EventId, @EventType,
                         @NodeId, @NodeName, @NodeType,
                         @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                         @SourceNodeName, @TargetNodeName,
@@ -105,7 +107,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 await conn.ExecuteAsync(sql, new
                 {
                     evt.EventId,
-                    EventType = ToSnakeCase(evt.EventType),
+                    EventType = evt.EventType.ToString(),
                     evt.NodeId,
                     evt.NodeName,
                     evt.NodeType,
@@ -160,17 +162,8 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        // Map enum to database event_type format (lowercase with underscore)
-        var dbEventType = eventType.ToString() switch
-        {
-            "NodeCreated" => "node_created",
-            "NodeUpdated" => "node_updated",
-            "NodeDeleted" => "node_deleted",
-            "EdgeCreated" => "edge_created",
-            "EdgeUpdated" => "edge_updated",
-            "EdgeDeleted" => "edge_deleted",
-            _ => eventType.ToString().ToLower()
-        };
+        // Use PascalCase to match the graph_event_type enum definition
+        var dbEventType = eventType.ToString();
 
         var sql = """
             SELECT event_id, event_type,
@@ -381,15 +374,15 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         stats.MaxDegree = degreeStats.max_degree;
         stats.IsolatedNodes = degreeStats.isolated;
 
-        // Growth metrics from graph_events (using actual column names)
+        // Growth metrics from graph_events (using PascalCase enum values)
         stats.NodesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.EdgesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.NodesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
         stats.EdgesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
 
         // Store snapshot
         var insertSql = """
@@ -507,14 +500,15 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         foreach (var (eventType, count) in counts)
         {
             metrics.TotalEvents += count;
+            // Handle both PascalCase (enum) and snake_case (legacy/text) formats
             switch (eventType)
             {
-                case "node_created": metrics.NodesCreated = count; break;
-                case "node_updated": metrics.NodesUpdated = count; break;
-                case "node_deleted": metrics.NodesDeleted = count; break;
-                case "edge_created": metrics.EdgesCreated = count; break;
-                case "edge_updated": metrics.EdgesUpdated = count; break;
-                case "edge_deleted": metrics.EdgesDeleted = count; break;
+                case "NodeCreated" or "node_created": metrics.NodesCreated = count; break;
+                case "NodeUpdated" or "node_updated": metrics.NodesUpdated = count; break;
+                case "NodeDeleted" or "node_deleted": metrics.NodesDeleted = count; break;
+                case "EdgeCreated" or "edge_created": metrics.EdgesCreated = count; break;
+                case "EdgeUpdated" or "edge_updated": metrics.EdgesUpdated = count; break;
+                case "EdgeDeleted" or "edge_deleted": metrics.EdgesDeleted = count; break;
             }
         }
 
@@ -555,15 +549,15 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 
     private static GraphEvent MapFromSimpleRow(GraphEventRowSimple row)
     {
-        // Map database event_type to enum
+        // Map database event_type to enum (handle both PascalCase and snake_case)
         var eventType = row.event_type switch
         {
-            "node_created" => GraphEventType.NodeCreated,
-            "node_updated" => GraphEventType.NodeUpdated,
-            "node_deleted" => GraphEventType.NodeDeleted,
-            "edge_created" => GraphEventType.EdgeCreated,
-            "edge_updated" => GraphEventType.EdgeUpdated,
-            "edge_deleted" => GraphEventType.EdgeDeleted,
+            "NodeCreated" or "node_created" => GraphEventType.NodeCreated,
+            "NodeUpdated" or "node_updated" => GraphEventType.NodeUpdated,
+            "NodeDeleted" or "node_deleted" => GraphEventType.NodeDeleted,
+            "EdgeCreated" or "edge_created" => GraphEventType.EdgeCreated,
+            "EdgeUpdated" or "edge_updated" => GraphEventType.EdgeUpdated,
+            "EdgeDeleted" or "edge_deleted" => GraphEventType.EdgeDeleted,
             "batch_import" => GraphEventType.NodeCreated, // Map to closest equivalent
             "relationship_discovered" => GraphEventType.EdgeCreated, // Map to closest equivalent
             _ => GraphEventType.NodeCreated

@@ -20,6 +20,72 @@
 BEGIN;
 
 -- =============================================================================
+-- STEP 0: ENSURE RLS HELPER FUNCTIONS EXIST
+-- These must exist before creating any RLS policies
+-- =============================================================================
+
+-- Main function for UUID tenant_id columns
+CREATE OR REPLACE FUNCTION rls_tenant_check(p_row_tenant_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    -- Self-hosted mode: always allow (no tenant isolation)
+    IF current_setting('app.mode', true) = 'self-hosted' THEN
+        RETURN TRUE;
+    END IF;
+
+    -- Check if current user's tenant matches the row's tenant
+    RETURN p_row_tenant_id::text = current_setting('app.current_tenant_id', true);
+EXCEPTION WHEN OTHERS THEN
+    -- If settings not available, allow access (self-hosted default)
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Overload for VARCHAR tenant_id columns
+CREATE OR REPLACE FUNCTION rls_tenant_check(p_row_tenant_id VARCHAR)
+RETURNS BOOLEAN AS $$
+BEGIN
+    -- Self-hosted mode: always allow (no tenant isolation)
+    IF current_setting('app.mode', true) = 'self-hosted' THEN
+        RETURN TRUE;
+    END IF;
+
+    -- Check if current user's tenant matches the row's tenant
+    RETURN p_row_tenant_id = current_setting('app.current_tenant_id', true);
+EXCEPTION WHEN OTHERS THEN
+    -- If settings not available, allow access (self-hosted default)
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Overload for TEXT tenant_id columns
+CREATE OR REPLACE FUNCTION rls_tenant_check(p_row_tenant_id TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+    -- Self-hosted mode: always allow (no tenant isolation)
+    IF current_setting('app.mode', true) = 'self-hosted' THEN
+        RETURN TRUE;
+    END IF;
+
+    -- Check if current user's tenant matches the row's tenant
+    RETURN p_row_tenant_id = current_setting('app.current_tenant_id', true);
+EXCEPTION WHEN OTHERS THEN
+    -- If settings not available, allow access (self-hosted default)
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Admin check function (if not exists)
+CREATE OR REPLACE FUNCTION is_internal_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN current_setting('app.is_admin', true) = 'true';
+EXCEPTION WHEN OTHERS THEN
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- =============================================================================
 -- STEP 1: ENSURE REQUIRED TABLES EXIST
 -- =============================================================================
 
@@ -110,10 +176,11 @@ CREATE TABLE IF NOT EXISTS memory_states (
 );
 
 -- Memory timeline entries
+-- Note: reasoning_schema.sql may have created this with different columns (snapshot_at vs occurred_at)
 CREATE TABLE IF NOT EXISTS memory_timeline (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
-    memory_id UUID NOT NULL REFERENCES memories(id),
+    memory_id UUID NOT NULL,
     event_type VARCHAR(100) NOT NULL,
     event_data JSONB,
     version_number INT NOT NULL DEFAULT 1,
@@ -122,6 +189,33 @@ CREATE TABLE IF NOT EXISTS memory_timeline (
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add missing columns to memory_timeline if they were created by a different schema
+DO $$
+BEGIN
+    -- Add occurred_at if missing (use snapshot_at as source if available)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_timeline' AND column_name = 'occurred_at') THEN
+        ALTER TABLE memory_timeline ADD COLUMN occurred_at TIMESTAMPTZ DEFAULT NOW();
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_timeline' AND column_name = 'snapshot_at') THEN
+            UPDATE memory_timeline SET occurred_at = snapshot_at WHERE occurred_at IS NULL;
+        END IF;
+    END IF;
+
+    -- Add version_number if missing
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_timeline' AND column_name = 'version_number') THEN
+        ALTER TABLE memory_timeline ADD COLUMN version_number INT DEFAULT 1;
+    END IF;
+
+    -- Add actor_id if missing
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_timeline' AND column_name = 'actor_id') THEN
+        ALTER TABLE memory_timeline ADD COLUMN actor_id VARCHAR(255);
+    END IF;
+
+    -- Add event_data if missing
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_timeline' AND column_name = 'event_data') THEN
+        ALTER TABLE memory_timeline ADD COLUMN event_data JSONB DEFAULT '{}';
+    END IF;
+END $$;
 
 -- Reasoning executions table (if not exists)
 CREATE TABLE IF NOT EXISTS reasoning_executions (
@@ -973,6 +1067,7 @@ SECURITY DEFINER
 AS $$
 BEGIN
     IF TG_OP = 'UPDATE' THEN
+        -- Insert into memory_mutations (always works)
         INSERT INTO memory_mutations (
             tenant_id, memory_id, mutation_type,
             old_content, new_content,
@@ -981,9 +1076,9 @@ BEGIN
         ) VALUES (
             NEW.tenant_id, NEW.id,
             CASE
-                WHEN OLD.content != NEW.content THEN 'content_update'
-                WHEN OLD.metadata != NEW.metadata THEN 'metadata_update'
-                WHEN OLD.confidence != NEW.confidence THEN 'confidence_update'
+                WHEN OLD.content IS DISTINCT FROM NEW.content THEN 'content_update'
+                WHEN OLD.metadata IS DISTINCT FROM NEW.metadata THEN 'metadata_update'
+                WHEN OLD.embedding IS DISTINCT FROM NEW.embedding THEN 'embedding_update'
                 ELSE 'general_update'
             END,
             OLD.content, NEW.content,
@@ -992,19 +1087,43 @@ BEGIN
             COALESCE(current_setting('app.actor_type', true), 'system')
         );
 
-        -- Also add to timeline
-        INSERT INTO memory_timeline (
-            tenant_id, memory_id, event_type, event_data, version_number, actor_id
-        )
-        SELECT
-            NEW.tenant_id, NEW.id, 'updated',
-            jsonb_build_object(
-                'old_content', LEFT(OLD.content, 200),
-                'new_content', LEFT(NEW.content, 200),
-                'confidence_change', NEW.confidence - OLD.confidence
-            ),
-            COALESCE((SELECT MAX(version_number) + 1 FROM memory_timeline WHERE memory_id = NEW.id), 1),
-            current_setting('app.user_id', true);
+        -- Insert into memory_timeline - handle both old and new schemas
+        -- Old schema has 'content NOT NULL', new schema uses event_type/event_data
+        BEGIN
+            INSERT INTO memory_timeline (
+                tenant_id, memory_id, content, event_type, event_data, version_number, actor_id
+            )
+            SELECT
+                NEW.tenant_id,
+                NEW.id,
+                LEFT(NEW.content, 500),  -- Provide content for old schema compatibility
+                'updated',
+                jsonb_build_object(
+                    'old_content', LEFT(OLD.content, 200),
+                    'new_content', LEFT(NEW.content, 200),
+                    'content_changed', OLD.content IS DISTINCT FROM NEW.content,
+                    'metadata_changed', OLD.metadata IS DISTINCT FROM NEW.metadata
+                ),
+                COALESCE((SELECT MAX(version_number) + 1 FROM memory_timeline WHERE memory_id = NEW.id), 1),
+                current_setting('app.user_id', true);
+        EXCEPTION WHEN undefined_column THEN
+            -- If content column doesn't exist, insert without it
+            INSERT INTO memory_timeline (
+                tenant_id, memory_id, event_type, event_data, version_number, actor_id
+            )
+            SELECT
+                NEW.tenant_id,
+                NEW.id,
+                'updated',
+                jsonb_build_object(
+                    'old_content', LEFT(OLD.content, 200),
+                    'new_content', LEFT(NEW.content, 200),
+                    'content_changed', OLD.content IS DISTINCT FROM NEW.content,
+                    'metadata_changed', OLD.metadata IS DISTINCT FROM NEW.metadata
+                ),
+                COALESCE((SELECT MAX(version_number) + 1 FROM memory_timeline WHERE memory_id = NEW.id), 1),
+                current_setting('app.user_id', true);
+        END;
     END IF;
 
     RETURN NEW;

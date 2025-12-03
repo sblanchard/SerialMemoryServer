@@ -129,7 +129,7 @@ public static class BillingEndpoints
                 return Results.BadRequest(new
                 {
                     error = "plan_not_configured",
-                    message = $"Plan {request.Plan} is not configured for billing"
+                    message = $"Plan '{request.Plan}' is not configured. Set STRIPE_{request.Plan?.ToUpperInvariant()}_PRICE_ID environment variable or add to stripe_price_mapping table."
                 });
             }
 
@@ -146,6 +146,16 @@ public static class BillingEndpoints
                         CancelUrl = request.CancelUrl
                     };
                     var session = await billingService.CreateCheckoutSessionAsync(checkoutRequest, ct);
+
+                    // Check if session creation succeeded
+                    if (!session.Success)
+                    {
+                        return Results.BadRequest(new
+                        {
+                            error = session.ErrorCode ?? "checkout_failed",
+                            message = session.ErrorMessage ?? "Failed to create checkout session"
+                        });
+                    }
 
                     return Results.Ok(new
                     {
@@ -427,10 +437,10 @@ public static class BillingEndpoints
 
     private static string? GetFallbackPriceId(string? plan) => plan?.ToLowerInvariant() switch
     {
-        "pro" => Environment.GetEnvironmentVariable("STRIPE_PRICE_PRO"),
-        "pro_plus" => Environment.GetEnvironmentVariable("STRIPE_PRICE_PRO_PLUS"),
-        "team" => Environment.GetEnvironmentVariable("STRIPE_PRICE_TEAM"),
-        "enterprise" => Environment.GetEnvironmentVariable("STRIPE_PRICE_ENTERPRISE"),
+        "pro" => Environment.GetEnvironmentVariable("STRIPE_PRO_PRICE_ID"),
+        "pro_plus" => Environment.GetEnvironmentVariable("STRIPE_PRO_PLUS_PRICE_ID"),
+        "team" => Environment.GetEnvironmentVariable("STRIPE_TEAM_PRICE_ID"),
+        "enterprise" => Environment.GetEnvironmentVariable("STRIPE_ENTERPRISE_PRICE_ID"),
         _ => null
     };
 

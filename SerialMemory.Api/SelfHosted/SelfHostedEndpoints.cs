@@ -1,7 +1,10 @@
+using Dapper;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
 
@@ -192,8 +195,10 @@ public static class SelfHostedEndpoints
         group.MapGet("/metrics", async (
             IDeploymentContext deployment,
             HttpContext http,
+            ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
+            var logger = loggerFactory.CreateLogger("SelfHostedEndpoints");
             if (!CanAccessSelfHostFeatures(deployment, http))
             {
                 return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
@@ -202,6 +207,7 @@ public static class SelfHostedEndpoints
             var metricsProvider = http.RequestServices.GetService<ISelfHostMetricsProvider>();
             if (metricsProvider == null)
             {
+                logger.LogWarning("ISelfHostMetricsProvider not registered in DI - returning demo mode");
                 // No metrics provider configured - return explicit demo mode
                 return Results.Ok(new SelfHostMetricsResult
                 {
@@ -211,6 +217,12 @@ public static class SelfHostedEndpoints
             }
 
             var metrics = await metricsProvider.GetMetricsAsync(ct);
+
+            // Log the metrics mode for debugging
+            logger.LogDebug(
+                "Metrics fetched: IsDemoMode={IsDemoMode}, HasError={HasError}, Reason={Reason}",
+                metrics.IsDemoMode, metrics.HasError, metrics.DemoModeReason ?? metrics.ErrorMessage ?? "(none)");
+
             return Results.Ok(metrics);
         });
 
@@ -241,6 +253,111 @@ public static class SelfHostedEndpoints
 
             var load = await metricsProvider.GetCurrentLoadAsync(ct);
             return Results.Ok(load);
+        });
+
+        // GET /api/selfhost/metrics/test - Quick database connectivity test
+        group.MapGet("/metrics/test", async (
+            IDeploymentContext deployment,
+            HttpContext http,
+            ILoggerFactory loggerFactory,
+            CancellationToken ct) =>
+        {
+            var logger = loggerFactory.CreateLogger("SelfHostedEndpoints");
+            if (!CanAccessSelfHostFeatures(deployment, http))
+            {
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
+            }
+
+            var metricsProvider = http.RequestServices.GetService<ISelfHostMetricsProvider>();
+            var results = new Dictionary<string, object>
+            {
+                ["providerRegistered"] = metricsProvider != null,
+                ["isLiveMode"] = metricsProvider?.IsLiveMode ?? false,
+                ["timestamp"] = DateTimeOffset.UtcNow
+            };
+
+            // Test basic database connectivity
+            try
+            {
+                var dataSource = http.RequestServices.GetService<NpgsqlDataSource>();
+                if (dataSource != null)
+                {
+                    await using var conn = await dataSource.OpenConnectionAsync(ct);
+                    var version = await conn.ExecuteScalarAsync<string>("SELECT version()");
+                    results["dbConnected"] = true;
+                    results["dbVersion"] = version ?? "unknown";
+
+                    // Test app.role setting
+                    try
+                    {
+                        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+                        results["appRoleSet"] = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        results["appRoleSet"] = false;
+                        results["appRoleError"] = ex.Message;
+                    }
+
+                    // Test if key tables exist
+                    var tables = await conn.QueryAsync<string>(@"
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        AND table_name IN ('usage_events', 'graph_metrics_hourly', 'maintenance_tasks',
+                                          'supervised_jobs', 'event_log', 'usage_daily_rollups')");
+                    results["tablesFound"] = tables.ToList();
+                }
+                else
+                {
+                    results["dbConnected"] = false;
+                    results["dbError"] = "NpgsqlDataSource not registered in DI";
+                }
+            }
+            catch (Exception ex)
+            {
+                results["dbConnected"] = false;
+                results["dbError"] = ex.Message;
+                logger.LogError(ex, "Metrics test: database connection failed");
+            }
+
+            return Results.Ok(results);
+        });
+
+        // GET /api/selfhost/metrics/config - Show metrics configuration for debugging
+        group.MapGet("/metrics/config", (
+            IDeploymentContext deployment,
+            HttpContext http,
+            Microsoft.Extensions.Options.IOptions<SelfHostMetricsConfig> metricsConfig) =>
+        {
+            if (!CanAccessSelfHostFeatures(deployment, http))
+            {
+                return Results.NotFound(new { error = "This endpoint is only available in self-hosted mode or for root admins." });
+            }
+
+            var config = metricsConfig.Value;
+            var provider = http.RequestServices.GetService<ISelfHostMetricsProvider>();
+
+            return Results.Ok(new
+            {
+                mode = config.Mode,
+                prometheusUrl = config.PrometheusUrl ?? "(not configured)",
+                fetchTimeoutSeconds = config.FetchTimeout.TotalSeconds,
+                cacheExpirySeconds = config.CacheExpiry.TotalSeconds,
+                providerRegistered = provider != null,
+                isLiveMode = provider?.IsLiveMode ?? false,
+                envVars = new
+                {
+                    SELF_HOST_METRICS_MODE = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_MODE") ?? "(not set, defaults to 'auto')",
+                    SELF_HOST_PROMETHEUS_URL = Environment.GetEnvironmentVariable("SELF_HOST_PROMETHEUS_URL") ?? "(not set)",
+                    SELF_HOST_METRICS_TIMEOUT_SECONDS = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_TIMEOUT_SECONDS") ?? "(not set, defaults to 5)",
+                    SELF_HOST_METRICS_CACHE_SECONDS = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_CACHE_SECONDS") ?? "(not set, defaults to 30)"
+                },
+                troubleshooting = config.Mode.Equals("demo", StringComparison.OrdinalIgnoreCase)
+                    ? "Mode is set to 'demo'. Set SELF_HOST_METRICS_MODE=auto or SELF_HOST_METRICS_MODE=live for real metrics."
+                    : provider == null
+                    ? "Provider not registered. Check DI configuration."
+                    : "Configuration looks correct. Check logs for query errors."
+            });
         });
 
         return app;

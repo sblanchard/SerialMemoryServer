@@ -30,12 +30,16 @@ public sealed class ReplayService : IReplayService
         await conn.OpenAsync(ct);
 
         var memoryRange = await conn.QueryFirstOrDefaultAsync<(long? Min, long? Max, int? Count)>(@"
-            SELECT MIN(sequence_number), MAX(sequence_number), COUNT(*)::int
+            SELECT MIN(global_sequence), MAX(global_sequence), COUNT(*)::int
             FROM memory_events");
 
+        // Use ROW_NUMBER() since sequence_number may not exist in all schemas
         var graphRange = await conn.QueryFirstOrDefaultAsync<(long? Min, long? Max, int? Count)>(@"
-            SELECT MIN(sequence_number), MAX(sequence_number), COUNT(*)::int
-            FROM graph_events");
+            WITH numbered AS (
+                SELECT ROW_NUMBER() OVER (ORDER BY COALESCE(occurred_at, NOW())) AS seq
+                FROM graph_events
+            )
+            SELECT MIN(seq), MAX(seq), COUNT(*)::int FROM numbered");
 
         return new EventRange
         {
@@ -96,16 +100,16 @@ public sealed class ReplayService : IReplayService
     {
         var sql = @"
             SELECT
-                sequence_number AS ""SequenceNumber"",
+                global_sequence AS ""SequenceNumber"",
                 stream_id AS ""StreamId"",
-                event_type AS ""EventType"",
-                payload AS ""Payload"",
-                occurred_at AS ""OccurredAt"",
-                actor_id AS ""ActorId""
+                event_type::text AS ""EventType"",
+                event_data AS ""Payload"",
+                created_at AS ""OccurredAt"",
+                created_by AS ""ActorId""
             FROM memory_events
-            WHERE sequence_number >= @FromSequence
-            " + (toSequence.HasValue ? "AND sequence_number <= @ToSequence" : "") + @"
-            ORDER BY sequence_number ASC
+            WHERE global_sequence >= @FromSequence
+            " + (toSequence.HasValue ? "AND global_sequence <= @ToSequence" : "") + @"
+            ORDER BY global_sequence ASC
             LIMIT 10000";
 
         var events = await conn.QueryAsync<MemoryEvent>(sql, new { FromSequence = fromSequence, ToSequence = toSequence });
@@ -115,18 +119,47 @@ public sealed class ReplayService : IReplayService
     private async Task<List<GraphEvent>> LoadGraphEventsAsync(
         NpgsqlConnection conn, long fromSequence, long? toSequence, CancellationToken ct)
     {
+        // Handle both power_user schema (sequence_number, entity_id) and graph_events_schema (event_id, node_id)
         var sql = @"
             SELECT
-                sequence_number AS ""SequenceNumber"",
-                event_type AS ""EventType"",
-                entity_id AS ""EntityId"",
-                relationship_id AS ""RelationshipId"",
-                payload AS ""Payload"",
+                ROW_NUMBER() OVER (ORDER BY occurred_at) AS ""SequenceNumber"",
+                event_type::text AS ""EventType"",
+                node_id AS ""EntityId"",
+                edge_id AS ""RelationshipId"",
+                COALESCE(new_state, metadata, '{}')::text AS ""Payload"",
                 occurred_at AS ""OccurredAt""
             FROM graph_events
-            WHERE sequence_number >= @FromSequence
-            " + (toSequence.HasValue ? "AND sequence_number <= @ToSequence" : "") + @"
-            ORDER BY sequence_number ASC
+            WHERE occurred_at >= (
+                SELECT COALESCE(MIN(occurred_at), '1970-01-01'::timestamptz)
+                FROM graph_events
+                WHERE ROW_NUMBER() OVER (ORDER BY occurred_at) >= @FromSequence
+            )
+            ORDER BY occurred_at ASC
+            LIMIT 10000";
+
+        // Simpler approach - just get events ordered by time
+        sql = @"
+            WITH numbered AS (
+                SELECT
+                    ROW_NUMBER() OVER (ORDER BY occurred_at) AS seq,
+                    event_type::text AS event_type,
+                    node_id,
+                    edge_id,
+                    COALESCE(new_state, metadata, '{}')::text AS payload,
+                    occurred_at
+                FROM graph_events
+            )
+            SELECT
+                seq AS ""SequenceNumber"",
+                event_type AS ""EventType"",
+                node_id AS ""EntityId"",
+                edge_id AS ""RelationshipId"",
+                payload AS ""Payload"",
+                occurred_at AS ""OccurredAt""
+            FROM numbered
+            WHERE seq >= @FromSequence
+            " + (toSequence.HasValue ? "AND seq <= @ToSequence" : "") + @"
+            ORDER BY seq ASC
             LIMIT 10000";
 
         var events = await conn.QueryAsync<GraphEvent>(sql, new { FromSequence = fromSequence, ToSequence = toSequence });
@@ -248,16 +281,16 @@ public sealed class ReplayService : IReplayService
 
     private async Task<LiveState> LoadLiveStateAsync(NpgsqlConnection conn, CancellationToken ct)
     {
-        // Load current memory state
+        // Load current memory state from projections (eventsourcing)
         var memories = await conn.QueryAsync<LiveMemory>(@"
             SELECT
-                id AS ""Id"",
+                memory_id AS ""Id"",
                 is_active AS ""IsActive"",
                 created_at AS ""CreatedAt"",
                 updated_at AS ""UpdatedAt"",
-                layer AS ""Layer"",
+                layer::text AS ""Layer"",
                 confidence_score AS ""ConfidenceScore""
-            FROM memories
+            FROM memory_projections
             LIMIT 10000");
 
         // Load current entity state
@@ -274,8 +307,8 @@ public sealed class ReplayService : IReplayService
         var relationships = await conn.QueryAsync<LiveRelationship>(@"
             SELECT
                 id AS ""Id"",
-                from_entity_id AS ""FromEntityId"",
-                to_entity_id AS ""ToEntityId"",
+                source_entity_id AS ""FromEntityId"",
+                target_entity_id AS ""ToEntityId"",
                 relationship_type AS ""RelationshipType"",
                 created_at AS ""CreatedAt""
             FROM entity_relationships

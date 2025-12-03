@@ -18,7 +18,7 @@ public sealed class InternalTokenService
     private readonly string _issuer;
     private readonly string _audience;
 
-    private static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(30);
 
     public InternalTokenService(ILogger<InternalTokenService> logger, IConfiguration configuration)
     {
@@ -177,7 +177,7 @@ public sealed class InternalTokenService
         return true;
     }
 
-    private static readonly TimeSpan RefreshThreshold = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan RefreshThreshold = TimeSpan.FromMinutes(5);
 
     public Task<string> CreateForUserAsync(
         string userId,

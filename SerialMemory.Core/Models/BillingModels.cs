@@ -166,6 +166,7 @@ public sealed class StripeConfig
     public string? FreePriceId { get; init; }
     public required string ProPriceId { get; init; }
     public string? ProPlusPriceId { get; init; }
+    public string? TeamPriceId { get; init; }
     public required string EnterprisePriceId { get; init; }
     public string DefaultSuccessUrl { get; init; } = "/dashboard/billing?success=true";
     public string DefaultCancelUrl { get; init; } = "/dashboard/billing?canceled=true";

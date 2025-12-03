@@ -8,12 +8,8 @@ using SerialMemory.Web.Services;
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public partial class MemoriesModel : DashboardPageModel
+public partial class MemoriesModel(AppConfig appConfig) : DashboardPageModel(appConfig)
 {
-    public MemoriesModel(AppConfig appConfig) : base(appConfig)
-    {
-    }
-
     public void OnGet()
     {
         // All properties come from DashboardPageModel base class
