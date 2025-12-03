@@ -54,7 +54,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         return await conn.ExecuteScalarAsync<Guid>(sql, new
         {
             graphEvent.EventId,
-            EventType = graphEvent.EventType.ToString(),
+            EventType = ToSnakeCase(graphEvent.EventType),
             graphEvent.NodeId,
             graphEvent.NodeName,
             graphEvent.NodeType,
@@ -107,7 +107,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 await conn.ExecuteAsync(sql, new
                 {
                     evt.EventId,
-                    EventType = evt.EventType.ToString(),
+                    EventType = ToSnakeCase(evt.EventType),
                     evt.NodeId,
                     evt.NodeName,
                     evt.NodeType,
@@ -162,8 +162,8 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        // Use PascalCase to match the graph_event_type enum definition
-        var dbEventType = eventType.ToString();
+        // Use snake_case to match the database CHECK constraint
+        var dbEventType = ToSnakeCase(eventType);
 
         var sql = """
             SELECT event_id, event_type,
@@ -374,15 +374,15 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         stats.MaxDegree = degreeStats.max_degree;
         stats.IsolatedNodes = degreeStats.isolated;
 
-        // Growth metrics from graph_events (using PascalCase enum values)
+        // Growth metrics from graph_events (using snake_case to match CHECK constraint)
         stats.NodesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.EdgesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.NodesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '7 days'");
         stats.EdgesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '7 days'");
 
         // Store snapshot
         var insertSql = """

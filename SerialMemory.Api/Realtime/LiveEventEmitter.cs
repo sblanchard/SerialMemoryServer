@@ -88,6 +88,38 @@ public sealed class LiveEventEmitter(IHubContext<LiveHub> hubContext, ILogger<Li
         }
     }
 
+    // ==========================================
+    // LAYER TRANSITION EVENTS
+    // ==========================================
+
+    public async Task EmitLayerTransitionAsync(LayerTransitionBroadcast evt)
+    {
+        try
+        {
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.layers").SendAsync("LayerTransition", evt);
+            logger.LogDebug("Emitted layer transition: {FromLayer} → {ToLayer} for memory {MemoryId}",
+                evt.FromLayer, evt.ToLayer, evt.MemoryId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit layer transition");
+        }
+    }
+
+    public async Task EmitLayerStatsUpdateAsync(LayerStatsUpdateBroadcast evt)
+    {
+        try
+        {
+            await hubContext.Clients.Group($"tenant.{evt.TenantId}.layers").SendAsync("LayerStatsUpdate", evt);
+            logger.LogDebug("Emitted layer stats update: L0={L0}, L1={L1}, L2={L2}, L3={L3}",
+                evt.L0Count, evt.L1Count, evt.L2Count, evt.L3Count);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit layer stats update");
+        }
+    }
+
     public async Task EmitReasoningProgressAsync(ReasoningProgressEvent evt)
     {
         try

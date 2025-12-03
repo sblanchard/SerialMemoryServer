@@ -1029,11 +1029,12 @@
                 hasTraffic: !!data.traffic
             });
 
-            // Check for error first
+            // Check for error first - but still show available stats
             if (data.hasError) {
                 console.warn('[Metrics] API returned error:', data.errorMessage);
                 setErrorMode(data.errorMessage || 'Failed to load metrics from database');
-                return;
+                // Don't return early - still try to update whatever stats are available
+                // Database stats use system tables that always exist
             }
 
             // Check for demo mode
@@ -1080,7 +1081,8 @@
         // Core Status Panel - API RPS
         if (data.api) {
             const apiRps = data.api.currentRps || 0;
-            document.getElementById('apiRps').textContent = apiRps.toFixed(1);
+            const apiRpsEl = document.getElementById('apiRps');
+            if (apiRpsEl) apiRpsEl.textContent = apiRps.toFixed(1);
         }
 
         // Scale Prediction
@@ -1157,23 +1159,30 @@
         }
 
         // Traffic metrics - Load Metrics Summary section
-        if (data.traffic) {
-            document.getElementById('currentRps').textContent = (data.traffic.currentRps || 0).toFixed(1);
-        } else if (data.api) {
-            // Fallback to API metrics if traffic not available
-            document.getElementById('currentRps').textContent = (data.api.currentRps || 0).toFixed(1);
+        const currentRpsEl = document.getElementById('currentRps');
+        if (currentRpsEl) {
+            if (data.traffic) {
+                currentRpsEl.textContent = (data.traffic.currentRps || 0).toFixed(1);
+            } else if (data.api) {
+                currentRpsEl.textContent = (data.api.currentRps || 0).toFixed(1);
+            }
         }
 
         if (data.api) {
-            document.getElementById('p95Latency').textContent = (data.api.p95LatencyMs || 0).toFixed(0) + ' ms';
+            const p95El = document.getElementById('p95Latency');
+            if (p95El) p95El.textContent = (data.api.p95LatencyMs || 0).toFixed(0) + ' ms';
         }
 
         if (data.workers) {
-            document.getElementById('pendingTasks').textContent = data.workers.pendingTasks || 0;
+            const pendingEl = document.getElementById('pendingTasks');
+            if (pendingEl) pendingEl.textContent = data.workers.pendingTasks || 0;
         }
 
         if (data.database) {
-            document.getElementById('activeConns').textContent = data.database.activeConnections || 0;
+            const activeConnsEl = document.getElementById('activeConns');
+            if (activeConnsEl) {
+                activeConnsEl.textContent = data.database.activeConnections || 0;
+            }
 
             // Update DB status in System Health panel if connected
             const dbStatusEl = document.getElementById('dbStatus');

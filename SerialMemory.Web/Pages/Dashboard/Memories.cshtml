@@ -197,6 +197,111 @@
         </div>
     </div>
 
+    <!-- Layer Management Panel -->
+    <div class="card mb-6">
+        <div class="flex justify-between items-center cursor-pointer" onclick="toggleLayerPanel()">
+            <div class="flex items-center gap-3">
+                <svg class="w-5 h-5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                <span class="font-medium text-soft-white">Cognitive Layers</span>
+                <span class="text-xs text-graphite">(L0 Raw → L1 Context → L2 Summary → L3 Knowledge)</span>
+            </div>
+            <svg id="layer-panel-chevron" class="w-5 h-5 text-graphite transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </div>
+
+        <div id="layer-panel-content" class="hidden mt-4 pt-4 border-t border-slate">
+            <!-- Layer Distribution -->
+            <div class="grid grid-cols-4 gap-4 mb-4">
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-blue-400" id="layer-l0">0</div>
+                    <div class="text-xs text-graphite">L0 Raw</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l0" class="h-full bg-blue-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-green-400" id="layer-l1">0</div>
+                    <div class="text-xs text-graphite">L1 Context</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l1" class="h-full bg-green-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-yellow-400" id="layer-l2">0</div>
+                    <div class="text-xs text-graphite">L2 Summary</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l2" class="h-full bg-yellow-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-purple-400" id="layer-l3">0</div>
+                    <div class="text-xs text-graphite">L3 Knowledge</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l3" class="h-full bg-purple-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Queue Status -->
+            <div id="queue-status" class="mb-4 text-xs text-graphite">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <span class="font-medium">Queue:</span> <span id="queue-info">No pending transitions</span>
+                    </div>
+                    <div id="worker-status" class="flex items-center gap-1">
+                        <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                        <span>Worker Active</span>
+                    </div>
+                    <div id="last-activity" class="hidden">
+                        <span class="font-medium">Last:</span> <span id="last-activity-time">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-3">
+                <button id="btn-refresh-layers" class="btn-outline px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Refresh
+                </button>
+                <button id="btn-promote-all" class="bg-gradient-to-r from-electric to-cyan text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:opacity-90 transition-opacity">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                    </svg>
+                    Promote All Layers
+                </button>
+                <div id="promote-status" class="flex items-center text-sm text-graphite hidden">
+                    <div class="loading-spinner mr-2" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                    <span>Promoting...</span>
+                </div>
+            </div>
+
+            <!-- Promotion Result -->
+            <div id="promote-result" class="mt-4 p-3 bg-navy rounded-lg hidden">
+                <div class="text-sm font-medium text-soft-white mb-2">Promotion Complete</div>
+                <div class="grid grid-cols-3 gap-4 text-center text-xs">
+                    <div>
+                        <div class="text-lg font-bold text-blue-400" id="promoted-l0-l1">0</div>
+                        <div class="text-graphite">L0 → L1</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-bold text-green-400" id="promoted-l1-l2">0</div>
+                        <div class="text-graphite">L1 → L2</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-bold text-yellow-400" id="promoted-l2-l3">0</div>
+                        <div class="text-graphite">L2 → L3</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Search -->
     <div class="card mb-6">
         <div class="flex flex-col gap-4">
@@ -245,6 +350,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/csharp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <script src="~/js/dashboard-api.js"></script>
     <script>
         // Configure DashboardApi with page model values
@@ -562,10 +668,188 @@
             }
         }
 
+        // Layer Panel Functions
+        let layerPanelOpen = false;
+        let layerSignalRConnection = null;
+
+        function toggleLayerPanel() {
+            layerPanelOpen = !layerPanelOpen;
+            const content = document.getElementById('layer-panel-content');
+            const chevron = document.getElementById('layer-panel-chevron');
+
+            if (layerPanelOpen) {
+                content.classList.remove('hidden');
+                chevron.style.transform = 'rotate(180deg)';
+                fetchLayerStatus();
+                connectLayerSignalR();
+            } else {
+                content.classList.add('hidden');
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        async function connectLayerSignalR() {
+            if (layerSignalRConnection) return;
+
+            try {
+                const token = window.dashboardConfig?.signalRToken || '';
+                layerSignalRConnection = new signalR.HubConnectionBuilder()
+                    .withUrl(`${window.dashboardConfig?.apiBaseUrl || ''}/live?access_token=${token}`)
+                    .withAutomaticReconnect()
+                    .build();
+
+                // Listen for layer transition events
+                layerSignalRConnection.on("LayerTransition", (evt) => {
+                    console.log('[Layers] Transition:', evt);
+                    showTransitionToast(evt);
+                });
+
+                // Listen for layer stats updates
+                layerSignalRConnection.on("LayerStatsUpdate", (evt) => {
+                    console.log('[Layers] Stats update:', evt);
+                    updateLayerStats(evt);
+                });
+
+                await layerSignalRConnection.start();
+                console.log('[Layers] SignalR connected');
+
+                // Subscribe to layer events
+                await layerSignalRConnection.invoke("SubscribeLayerEvents");
+            } catch (err) {
+                console.error('[Layers] SignalR connection failed:', err);
+            }
+        }
+
+        function showTransitionToast(evt) {
+            const result = document.getElementById('promote-result');
+            result.classList.remove('hidden');
+
+            // Update the transition counts based on the event
+            if (evt.status === 'completed') {
+                const fromTo = `${evt.fromLayer} → ${evt.toLayer}`;
+                if (fromTo.includes('L0_RAW') && fromTo.includes('L1_CONTEXT')) {
+                    const el = document.getElementById('promoted-l0-l1');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                } else if (fromTo.includes('L1_CONTEXT') && fromTo.includes('L2_SUMMARY')) {
+                    const el = document.getElementById('promoted-l1-l2');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                } else if (fromTo.includes('L2_SUMMARY') && fromTo.includes('L3_KNOWLEDGE')) {
+                    const el = document.getElementById('promoted-l2-l3');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                }
+            }
+
+            // Update last activity time
+            const lastActivityEl = document.getElementById('last-activity');
+            const lastActivityTimeEl = document.getElementById('last-activity-time');
+            lastActivityEl.classList.remove('hidden');
+            lastActivityTimeEl.textContent = new Date().toLocaleTimeString();
+        }
+
+        function updateLayerStats(evt) {
+            const total = (evt.l0Count || 0) + (evt.l1Count || 0) + (evt.l2Count || 0) + (evt.l3Count || 0) || 1;
+
+            document.getElementById('layer-l0').textContent = evt.l0Count || 0;
+            document.getElementById('layer-l1').textContent = evt.l1Count || 0;
+            document.getElementById('layer-l2').textContent = evt.l2Count || 0;
+            document.getElementById('layer-l3').textContent = evt.l3Count || 0;
+
+            document.getElementById('layer-bar-l0').style.width = `${(evt.l0Count / total) * 100}%`;
+            document.getElementById('layer-bar-l1').style.width = `${(evt.l1Count / total) * 100}%`;
+            document.getElementById('layer-bar-l2').style.width = `${(evt.l2Count / total) * 100}%`;
+            document.getElementById('layer-bar-l3').style.width = `${(evt.l3Count / total) * 100}%`;
+
+            // Update queue status
+            const queueEl = document.getElementById('queue-status');
+            const queueInfo = document.getElementById('queue-info');
+            queueInfo.textContent = `${evt.queuePending || 0} pending, ${evt.queueProcessing || 0} processing, ${evt.completedLastHour || 0} completed/hr`;
+            queueEl.classList.remove('hidden');
+        }
+
+        async function fetchLayerStatus() {
+            try {
+                const data = await DashboardApi.getJson('/api/layers/status');
+
+                const layers = data.layers || {};
+                const total = Object.values(layers).reduce((a, b) => a + b, 0) || 1;
+
+                // Update layer counts and bars
+                const l0 = layers['L0_RAW'] || 0;
+                const l1 = layers['L1_CONTEXT'] || 0;
+                const l2 = layers['L2_SUMMARY'] || 0;
+                const l3 = layers['L3_KNOWLEDGE'] || 0;
+
+                document.getElementById('layer-l0').textContent = l0;
+                document.getElementById('layer-l1').textContent = l1;
+                document.getElementById('layer-l2').textContent = l2;
+                document.getElementById('layer-l3').textContent = l3;
+
+                document.getElementById('layer-bar-l0').style.width = `${(l0 / total) * 100}%`;
+                document.getElementById('layer-bar-l1').style.width = `${(l1 / total) * 100}%`;
+                document.getElementById('layer-bar-l2').style.width = `${(l2 / total) * 100}%`;
+                document.getElementById('layer-bar-l3').style.width = `${(l3 / total) * 100}%`;
+
+                // Update queue status
+                const queue = data.queue || [];
+                const queueEl = document.getElementById('queue-status');
+                const queueInfo = document.getElementById('queue-info');
+
+                if (queue.length > 0) {
+                    const pending = queue.filter(q => q.status === 'pending').reduce((a, b) => a + b.count, 0);
+                    const processing = queue.filter(q => q.status === 'processing').reduce((a, b) => a + b.count, 0);
+                    queueInfo.textContent = `${pending} pending, ${processing} processing`;
+                    queueEl.classList.remove('hidden');
+                } else {
+                    queueInfo.textContent = 'No pending transitions';
+                    queueEl.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Error fetching layer status:', error);
+            }
+        }
+
+        async function promoteAllLayers() {
+            const btn = document.getElementById('btn-promote-all');
+            const status = document.getElementById('promote-status');
+            const result = document.getElementById('promote-result');
+
+            btn.disabled = true;
+            status.classList.remove('hidden');
+            result.classList.add('hidden');
+
+            try {
+                const data = await DashboardApi.postJson('/api/layers/promote-all', {});
+
+                // Show results
+                const promoted = data.promoted || {};
+                document.getElementById('promoted-l0-l1').textContent = promoted.l0ToL1 || 0;
+                document.getElementById('promoted-l1-l2').textContent = promoted.l1ToL2 || 0;
+                document.getElementById('promoted-l2-l3').textContent = promoted.l2ToL3 || 0;
+
+                result.classList.remove('hidden');
+
+                // Refresh layer status
+                await fetchLayerStatus();
+
+                // Refresh stats in header
+                await fetchStats();
+            } catch (error) {
+                console.error('Error promoting layers:', error);
+                alert('Failed to promote layers: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                status.classList.add('hidden');
+            }
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', async () => {
             await fetchStats();
             await searchMemories('', currentMode, 0);
+
+            // Layer panel buttons
+            document.getElementById('btn-refresh-layers').addEventListener('click', fetchLayerStatus);
+            document.getElementById('btn-promote-all').addEventListener('click', promoteAllLayers);
 
             // Search mode buttons
             document.querySelectorAll('.search-mode-btn').forEach(btn => {

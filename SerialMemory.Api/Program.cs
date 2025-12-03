@@ -4315,21 +4315,22 @@ app.MapGet("/api/power/events/stream", async (
     var tenantId = Guid.Parse(tenantContext.TenantId);
     await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
-    // Use COALESCE to handle both schema versions (eventsourcing vs dashboard)
+    // Use column names from eventsourcing schema (memory_events table)
+    // Schema has: event_id, global_sequence, event_type, stream_id, created_at, event_data, created_by
     var events = await conn.QueryAsync<dynamic>(@"
         SELECT
-            COALESCE(id, event_id) AS event_id,
-            COALESCE(sequence_number, global_sequence) AS global_sequence,
+            event_id,
+            global_sequence,
             event_type::text AS event_type,
-            COALESCE(memory_id, stream_id) AS stream_id,
-            COALESCE(created_at, timestamp) AS created_at,
-            COALESCE(event_data, payload) AS event_data,
-            COALESCE(actor_id, created_by) AS created_by
+            stream_id,
+            created_at,
+            event_data,
+            created_by
         FROM memory_events
-        WHERE COALESCE(sequence_number, global_sequence) >= @FromSequence
-        ORDER BY COALESCE(sequence_number, global_sequence) DESC
+        WHERE global_sequence >= @FromSequence
+        ORDER BY global_sequence DESC
         LIMIT @Limit",
-        new { FromSequence = fromSequence ?? 0, Limit = limit ?? 100 });
+        new { FromSequence = fromSequence ?? 0, Limit = limit ?? 500 });
 
     var eventsList = events.ToList();
 
@@ -4786,6 +4787,261 @@ app.MapPost("/api/integrity/compute/{memoryId:guid}", async (
     });
 
     return Results.Ok(proof);
+});
+
+// POST /api/integrity/repair-chain - Repair all invalid and orphaned memories by recomputing their hashes
+app.MapPost("/api/integrity/repair-chain", async (
+    ITenantContext tenantContext,
+    IIntegrityService integrityService,
+    IIntegrityAuditService auditService) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.BatchVerificationStarted,
+        Details = new Dictionary<string, object> { ["type"] = "repair" }
+    });
+
+    // First verify to get the list of invalid/orphaned memories
+    var verifyResult = await integrityService.VerifyChainAsync(tenantId);
+
+    var repaired = new List<Guid>();
+    var failed = new List<(Guid Id, string Error)>();
+
+    // Repair invalid memories (recompute their hashes)
+    foreach (var memoryId in verifyResult.InvalidMemoryIds.Concat(verifyResult.OrphanMemoryIds).Distinct())
+    {
+        try
+        {
+            await integrityService.UpdateIntegrityAsync(memoryId);
+            repaired.Add(memoryId);
+        }
+        catch (Exception ex)
+        {
+            failed.Add((memoryId, ex.Message));
+        }
+    }
+
+    // Re-verify to confirm repairs
+    var finalResult = await integrityService.VerifyChainAsync(tenantId);
+
+    await auditService.LogAsync(new IntegrityAuditEntry
+    {
+        Action = IntegrityAuditAction.BatchVerificationCompleted,
+        IntegrityValid = finalResult.IsValid,
+        Details = new Dictionary<string, object>
+        {
+            ["type"] = "repair",
+            ["repairedCount"] = repaired.Count,
+            ["failedCount"] = failed.Count,
+            ["remainingInvalid"] = finalResult.InvalidCount
+        }
+    });
+
+    return Results.Ok(new
+    {
+        success = failed.Count == 0 && finalResult.IsValid,
+        repairedCount = repaired.Count,
+        failedCount = failed.Count,
+        repairedIds = repaired,
+        failedIds = failed.Select(f => new { id = f.Id, error = f.Error }),
+        verification = new
+        {
+            finalResult.IsValid,
+            finalResult.VerifiedCount,
+            finalResult.InvalidCount,
+            finalResult.OrphanCount
+        }
+    });
+});
+
+// POST /api/layers/promote-all - Force immediate layer promotion for all eligible memories
+app.MapPost("/api/layers/promote-all", async (
+    ITenantContext tenantContext,
+    NpgsqlDataSource dataSource,
+    ILogger<Program> logger) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+
+    var results = new Dictionary<string, int>();
+
+    // L0 → L1: Promote all L0 memories immediately
+    var l0ToL1 = await conn.ExecuteAsync("""
+        UPDATE memories
+        SET layer = 'L1_CONTEXT',
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                jsonb_build_object('promoted_at', NOW()::text, 'promoted_from', 'L0_RAW', 'force_promoted', true),
+            updated_at = NOW()
+        WHERE tenant_id = @TenantId::uuid
+          AND layer = 'L0_RAW'
+        """, new { TenantId = tenantId });
+    results["L0_to_L1"] = l0ToL1;
+
+    // L1 → L2: Promote all L1 memories immediately
+    var l1ToL2 = await conn.ExecuteAsync("""
+        UPDATE memories
+        SET layer = 'L2_SUMMARY',
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                jsonb_build_object('promoted_at', NOW()::text, 'promoted_from', 'L1_CONTEXT', 'force_promoted', true),
+            updated_at = NOW()
+        WHERE tenant_id = @TenantId::uuid
+          AND layer = 'L1_CONTEXT'
+        """, new { TenantId = tenantId });
+    results["L1_to_L2"] = l1ToL2;
+
+    // L2 → L3: Promote all L2 memories immediately
+    var l2ToL3 = await conn.ExecuteAsync("""
+        UPDATE memories
+        SET layer = 'L3_KNOWLEDGE',
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                jsonb_build_object('promoted_at', NOW()::text, 'promoted_from', 'L2_SUMMARY', 'force_promoted', true),
+            updated_at = NOW()
+        WHERE tenant_id = @TenantId::uuid
+          AND layer = 'L2_SUMMARY'
+        """, new { TenantId = tenantId });
+    results["L2_to_L3"] = l2ToL3;
+
+    // Get current layer distribution
+    var distribution = await conn.QueryAsync<(string Layer, int Count)>("""
+        SELECT layer, COUNT(*)::int as count
+        FROM memories
+        WHERE tenant_id = @TenantId::uuid
+        GROUP BY layer
+        ORDER BY layer
+        """, new { TenantId = tenantId });
+
+    logger.LogInformation("Force promoted memories for tenant {TenantId}: {@Results}", tenantId, results);
+
+    return Results.Ok(new
+    {
+        promoted = results,
+        distribution = distribution.ToDictionary(d => d.Layer ?? "unknown", d => d.Count)
+    });
+});
+
+// GET /api/layers/status - Get layer distribution stats
+app.MapGet("/api/layers/status", async (
+    ITenantContext tenantContext,
+    NpgsqlDataSource dataSource) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+
+    var distribution = await conn.QueryAsync<(string Layer, int Count)>("""
+        SELECT COALESCE(layer, 'L0_RAW') as layer, COUNT(*)::int as count
+        FROM memories
+        WHERE tenant_id = @TenantId::uuid
+        GROUP BY layer
+        ORDER BY layer
+        """, new { TenantId = tenantId });
+
+    var queueStatus = await conn.QueryAsync<(string ToLayer, string Status, int Count)>("""
+        SELECT to_layer, status, COUNT(*)::int as count
+        FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+        GROUP BY to_layer, status
+        ORDER BY to_layer, status
+        """, new { TenantId = tenantId });
+
+    return Results.Ok(new
+    {
+        layers = distribution.ToDictionary(d => d.Layer ?? "unknown", d => d.Count),
+        queue = queueStatus.Select(q => new { q.ToLayer, q.Status, q.Count })
+    });
+});
+
+// GET /api/layers/worker-stats - Get recent worker activity and transition stats
+app.MapGet("/api/layers/worker-stats", async (
+    ITenantContext tenantContext,
+    NpgsqlDataSource dataSource) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+
+    // Get recent transitions (last hour)
+    var recentTransitions = await conn.QueryAsync<(string FromLayer, string ToLayer, string Status, int Count, DateTime? LastActivity)>("""
+        SELECT
+            from_layer,
+            to_layer,
+            status,
+            COUNT(*)::int as count,
+            MAX(COALESCE(completed_at, started_at, created_at)) as last_activity
+        FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+          AND created_at > NOW() - INTERVAL '1 hour'
+        GROUP BY from_layer, to_layer, status
+        ORDER BY last_activity DESC NULLS LAST
+        """, new { TenantId = tenantId });
+
+    // Get transition stats for last 24 hours
+    var dailyStats = await conn.QueryAsync<(string ToLayer, int Completed, int Failed, int Pending)>("""
+        SELECT
+            to_layer,
+            COUNT(*) FILTER (WHERE status = 'completed')::int as completed,
+            COUNT(*) FILTER (WHERE status = 'failed')::int as failed,
+            COUNT(*) FILTER (WHERE status = 'pending')::int as pending
+        FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+          AND created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY to_layer
+        ORDER BY to_layer
+        """, new { TenantId = tenantId });
+
+    // Get last promotion times per layer
+    var lastPromotions = await conn.QueryAsync<(string ToLayer, DateTime? LastCompleted)>("""
+        SELECT
+            to_layer,
+            MAX(completed_at) as last_completed
+        FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+          AND status = 'completed'
+        GROUP BY to_layer
+        ORDER BY to_layer
+        """, new { TenantId = tenantId });
+
+    // Get throughput (completions per hour over last 6 hours)
+    var throughput = await conn.QueryAsync<(int Hour, int Completed)>("""
+        SELECT
+            EXTRACT(HOUR FROM completed_at)::int as hour,
+            COUNT(*)::int as completed
+        FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+          AND status = 'completed'
+          AND completed_at > NOW() - INTERVAL '6 hours'
+        GROUP BY EXTRACT(HOUR FROM completed_at)
+        ORDER BY hour
+        """, new { TenantId = tenantId });
+
+    return Results.Ok(new
+    {
+        recentActivity = recentTransitions.Select(t => new
+        {
+            t.FromLayer,
+            t.ToLayer,
+            t.Status,
+            t.Count,
+            LastActivity = t.LastActivity?.ToString("yyyy-MM-dd HH:mm:ss")
+        }),
+        dailyStats = dailyStats.Select(s => new
+        {
+            Layer = s.ToLayer,
+            s.Completed,
+            s.Failed,
+            s.Pending
+        }),
+        lastPromotions = lastPromotions.ToDictionary(
+            p => p.ToLayer ?? "unknown",
+            p => p.LastCompleted?.ToString("yyyy-MM-dd HH:mm:ss")),
+        hourlyThroughput = throughput.ToDictionary(t => t.Hour.ToString(), t => t.Completed)
+    });
 });
 
 // GET /api/privacy/settings - Get tenant privacy settings

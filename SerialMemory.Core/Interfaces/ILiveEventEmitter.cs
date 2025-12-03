@@ -13,6 +13,10 @@ public interface ILiveEventEmitter
     Task EmitMindHealthUpdateAsync(MindHealthBroadcast evt);
     Task EmitConflictDetectedAsync(ConflictBroadcast evt);
 
+    // Layer transition events (for Cognitive Layers dashboard)
+    Task EmitLayerTransitionAsync(LayerTransitionBroadcast evt);
+    Task EmitLayerStatsUpdateAsync(LayerStatsUpdateBroadcast evt);
+
     // Reasoning events
     Task EmitReasoningProgressAsync(ReasoningProgressEvent evt);
     Task EmitReasoningResultAsync(ReasoningResultEvent evt);
@@ -112,6 +116,42 @@ public sealed record ConflictBroadcast
     public string ContradictionType { get; init; } = "";
     public string? Explanation { get; init; }
     public DateTimeOffset DetectedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+// ==========================================
+// LAYER TRANSITION EVENTS
+// ==========================================
+
+/// <summary>
+/// Broadcast when a memory transitions between cognitive layers
+/// </summary>
+public sealed record LayerTransitionBroadcast
+{
+    public Guid TransitionId { get; init; }
+    public string TenantId { get; init; } = "";
+    public Guid MemoryId { get; init; }
+    public string FromLayer { get; init; } = "";
+    public string ToLayer { get; init; } = "";
+    public string Status { get; init; } = ""; // pending, completed, failed
+    public string? ErrorMessage { get; init; }
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Broadcast with updated layer distribution stats (after transitions)
+/// </summary>
+public sealed record LayerStatsUpdateBroadcast
+{
+    public string TenantId { get; init; } = "";
+    public int L0Count { get; init; }
+    public int L1Count { get; init; }
+    public int L2Count { get; init; }
+    public int L3Count { get; init; }
+    public int L4Count { get; init; }
+    public int QueuePending { get; init; }
+    public int QueueProcessing { get; init; }
+    public int CompletedLastHour { get; init; }
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 }
 
 // Event DTOs - live streaming events
