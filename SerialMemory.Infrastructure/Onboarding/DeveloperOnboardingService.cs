@@ -35,7 +35,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
     }
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     public async Task<OnboardingResult> ProvisionTenantAsync(
         string email,

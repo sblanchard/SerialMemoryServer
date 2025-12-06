@@ -20,7 +20,7 @@ public sealed class UsageForecastingService(
     private readonly double _defaultConfidenceLevel = configuration.GetValue("UsageForecasting:ConfidenceLevel", 0.95);
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     /// <summary>
     /// Generates usage forecasts for a tenant for the specified number of days ahead.
