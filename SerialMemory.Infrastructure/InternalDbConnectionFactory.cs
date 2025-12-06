@@ -190,3 +190,27 @@ public static class InternalDbConnectionExtensions
             new { TenantId = tenantId.ToString(), Role = role });
     }
 }
+
+/// <summary>
+/// Extension methods for NpgsqlDataSource to simplify tenant-scoped connection creation.
+/// </summary>
+public static class NpgsqlDataSourceExtensions
+{
+    /// <summary>
+    /// Opens a connection with internal admin role and tenant context set.
+    /// Combines OpenConnectionAsync + SetInternalAdminWithTenantAsync into one call.
+    /// </summary>
+    /// <param name="dataSource">The NpgsqlDataSource.</param>
+    /// <param name="tenantId">The tenant ID to set.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An open NpgsqlConnection with admin role and tenant context.</returns>
+    public static async Task<NpgsqlConnection> OpenTenantConnectionAsync(
+        this NpgsqlDataSource dataSource,
+        Guid tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        var conn = await dataSource.OpenConnectionAsync(cancellationToken);
+        await conn.SetInternalAdminWithTenantAsync(tenantId);
+        return conn;
+    }
+}

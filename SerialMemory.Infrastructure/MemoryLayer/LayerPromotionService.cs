@@ -32,14 +32,7 @@ public sealed class LayerPromotionService(
     // Load configuration with defaults
 
     private static string BuildConnectionString()
-    {
-        var host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
-        var port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434";
-        var user = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres";
-        var database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb";
-        return $"Host={host};Port={port};Username={user};Password={password};Database={database}";
-    }
+        => Configuration.ConnectionStringFactory.BuildConnectionString();
 
     /// <summary>
     /// Finds memories eligible for promotion to the next layer.

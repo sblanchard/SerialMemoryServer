@@ -54,14 +54,7 @@ public sealed class MemoryLayerWorker : BackgroundService
     }
 
     private static string BuildConnectionString()
-    {
-        var host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
-        var port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434";
-        var user = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres";
-        var database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb";
-        return $"Host={host};Port={port};Username={user};Password={password};Database={database}";
-    }
+        => Configuration.ConnectionStringFactory.BuildConnectionString();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -118,6 +111,9 @@ public sealed class MemoryLayerWorker : BackgroundService
     {
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
+
+        // Set internal admin role to bypass RLS for cross-tenant access
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
 
         // Get active tenants
         var tenants = await conn.QueryAsync<Guid>("""
@@ -190,6 +186,9 @@ public sealed class MemoryLayerWorker : BackgroundService
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
 
+        // Set internal admin role to bypass RLS for cross-tenant access
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+
         // Claim pending transitions
         var transitions = await ClaimPendingTransitionsAsync(conn, _config.MaxConcurrentTransitions, ct);
 
@@ -244,66 +243,200 @@ public sealed class MemoryLayerWorker : BackgroundService
     }
 
     /// <summary>
-    /// L0 → L1: Context enrichment - adds entity extraction and relationships.
+    /// L0 → L1: Context enrichment - uses LLM to extract entities, context, and meaning.
     /// </summary>
     private async Task<bool> ProcessL0ToL1TransitionAsync(
         NpgsqlConnection conn,
         TransitionQueueItem transition,
         CancellationToken ct)
     {
-        // Update memory layer
+        // Get the raw memory content
+        var memory = await conn.QueryFirstOrDefaultAsync<MemoryContent>("""
+            SELECT content, metadata
+            FROM memories
+            WHERE id = @MemoryId::uuid
+              AND tenant_id = @TenantId::uuid
+              AND layer = 'L0_RAW'
+            """, new { transition.MemoryId, transition.TenantId });
+
+        if (memory == null || string.IsNullOrWhiteSpace(memory.Content))
+            return false;
+
+        // Get cognitive service from DI
+        var cognitiveService = _serviceProvider.GetService<CognitiveLayerService>();
+        if (cognitiveService == null)
+        {
+            _logger.LogWarning("CognitiveLayerService not available, skipping L0→L1 enrichment");
+            return false;
+        }
+
+        // Process through LLM
+        var result = await cognitiveService.EnrichToL1Async(memory.Content, ct);
+
+        // Serialize the enrichment result
+        var enrichmentJson = System.Text.Json.JsonSerializer.Serialize(result);
+
+        // Update memory with enriched content
         var updated = await conn.ExecuteAsync("""
             UPDATE memories
             SET layer = 'L1_CONTEXT',
                 metadata = COALESCE(metadata, '{}'::jsonb) ||
                     jsonb_build_object(
                         'promoted_at', NOW()::text,
-                        'promoted_from', 'L0_RAW'
+                        'promoted_from', 'L0_RAW',
+                        'l1_enrichment', @Enrichment::jsonb,
+                        'topic', @Topic,
+                        'entity_count', @EntityCount
                     ),
                 updated_at = NOW()
             WHERE id = @MemoryId::uuid
               AND tenant_id = @TenantId::uuid
               AND layer = 'L0_RAW'
-            """, new { transition.MemoryId, transition.TenantId });
+            """, new
+        {
+            transition.MemoryId,
+            transition.TenantId,
+            Enrichment = enrichmentJson,
+            Topic = result.Topic ?? "unknown",
+            EntityCount = result.Entities?.Count ?? 0
+        });
+
+        _logger.LogInformation(
+            "L0→L1 enrichment completed for {MemoryId}: {EntityCount} entities, topic: {Topic}",
+            transition.MemoryId, result.Entities?.Count ?? 0, result.Topic);
 
         return updated > 0;
     }
 
     /// <summary>
-    /// L1 → L2: Summarization - clusters related memories and creates summaries.
-    /// This is handled by MemorySummarizationService.
+    /// L1 → L2: Summarization - uses LLM to create concise summary from contextualized memory.
     /// </summary>
     private async Task<bool> ProcessL1ToL2TransitionAsync(
         NpgsqlConnection conn,
         TransitionQueueItem transition,
         CancellationToken ct)
     {
-        // L1→L2 summarization is batch-processed by MemorySummarizationService
-        // This transition marks individual memories as summarized
+        // Get the contextualized memory
+        var memory = await conn.QueryFirstOrDefaultAsync<MemoryContent>("""
+            SELECT content, metadata
+            FROM memories
+            WHERE id = @MemoryId::uuid
+              AND tenant_id = @TenantId::uuid
+              AND layer = 'L1_CONTEXT'
+            """, new { transition.MemoryId, transition.TenantId });
 
+        if (memory == null || string.IsNullOrWhiteSpace(memory.Content))
+            return false;
+
+        // Get cognitive service from DI
+        var cognitiveService = _serviceProvider.GetService<CognitiveLayerService>();
+        if (cognitiveService == null)
+        {
+            _logger.LogWarning("CognitiveLayerService not available, skipping L1→L2 summarization");
+            return false;
+        }
+
+        // Get related memories for context (same tenant, similar time frame)
+        var relatedMemories = await conn.QueryAsync<string>("""
+            SELECT content FROM memories
+            WHERE tenant_id = @TenantId::uuid
+              AND layer = 'L1_CONTEXT'
+              AND id != @MemoryId::uuid
+              AND created_at > NOW() - INTERVAL '7 days'
+            ORDER BY created_at DESC
+            LIMIT 3
+            """, new { transition.TenantId, transition.MemoryId });
+
+        // Process through LLM
+        var result = await cognitiveService.SummarizeToL2Async(
+            memory.Content,
+            relatedMemories.ToList(),
+            ct);
+
+        // Serialize the summary result
+        var summaryJson = System.Text.Json.JsonSerializer.Serialize(result);
+
+        // Update memory with summary
         var updated = await conn.ExecuteAsync("""
             UPDATE memories
-            SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+            SET layer = 'L2_SUMMARY',
+                metadata = COALESCE(metadata, '{}'::jsonb) ||
                     jsonb_build_object(
-                        'summarization_queued_at', NOW()::text
+                        'promoted_at', NOW()::text,
+                        'promoted_from', 'L1_CONTEXT',
+                        'l2_summary', @Summary::jsonb,
+                        'category', @Category,
+                        'importance', @Importance
                     ),
                 updated_at = NOW()
             WHERE id = @MemoryId::uuid
               AND tenant_id = @TenantId::uuid
-            """, new { transition.MemoryId, transition.TenantId });
+              AND layer = 'L1_CONTEXT'
+            """, new
+        {
+            transition.MemoryId,
+            transition.TenantId,
+            Summary = summaryJson,
+            Category = result.Category ?? "OTHER",
+            Importance = result.Importance
+        });
+
+        _logger.LogInformation(
+            "L1→L2 summarization completed for {MemoryId}: category {Category}, importance {Importance}",
+            transition.MemoryId, result.Category, result.Importance);
 
         return updated > 0;
     }
 
     /// <summary>
-    /// L2 → L3: Knowledge extraction - extracts patterns and general knowledge.
+    /// L2 → L3: Knowledge extraction - uses LLM to extract generalizable knowledge.
     /// </summary>
     private async Task<bool> ProcessL2ToL3TransitionAsync(
         NpgsqlConnection conn,
         TransitionQueueItem transition,
         CancellationToken ct)
     {
-        // Update memory layer to L3_KNOWLEDGE
+        // Get the summarized memory
+        var memory = await conn.QueryFirstOrDefaultAsync<MemoryContent>("""
+            SELECT content, metadata
+            FROM memories
+            WHERE id = @MemoryId::uuid
+              AND tenant_id = @TenantId::uuid
+              AND layer = 'L2_SUMMARY'
+            """, new { transition.MemoryId, transition.TenantId });
+
+        if (memory == null || string.IsNullOrWhiteSpace(memory.Content))
+            return false;
+
+        // Get cognitive service from DI
+        var cognitiveService = _serviceProvider.GetService<CognitiveLayerService>();
+        if (cognitiveService == null)
+        {
+            _logger.LogWarning("CognitiveLayerService not available, skipping L2→L3 knowledge extraction");
+            return false;
+        }
+
+        // Get related summaries for cross-referencing
+        var relatedSummaries = await conn.QueryAsync<string>("""
+            SELECT content FROM memories
+            WHERE tenant_id = @TenantId::uuid
+              AND layer = 'L2_SUMMARY'
+              AND id != @MemoryId::uuid
+              AND created_at > NOW() - INTERVAL '30 days'
+            ORDER BY created_at DESC
+            LIMIT 5
+            """, new { transition.TenantId, transition.MemoryId });
+
+        // Process through LLM
+        var result = await cognitiveService.ExtractKnowledgeToL3Async(
+            memory.Content,
+            relatedSummaries.ToList(),
+            ct);
+
+        // Serialize the knowledge result
+        var knowledgeJson = System.Text.Json.JsonSerializer.Serialize(result);
+
+        // Update memory with extracted knowledge
         var updated = await conn.ExecuteAsync("""
             UPDATE memories
             SET layer = 'L3_KNOWLEDGE',
@@ -311,13 +444,28 @@ public sealed class MemoryLayerWorker : BackgroundService
                     jsonb_build_object(
                         'promoted_at', NOW()::text,
                         'promoted_from', 'L2_SUMMARY',
-                        'knowledge_extracted', true
+                        'l3_knowledge', @Knowledge::jsonb,
+                        'fact_count', @FactCount,
+                        'rule_count', @RuleCount,
+                        'domains', @Domains::jsonb
                     ),
                 updated_at = NOW()
             WHERE id = @MemoryId::uuid
               AND tenant_id = @TenantId::uuid
               AND layer = 'L2_SUMMARY'
-            """, new { transition.MemoryId, transition.TenantId });
+            """, new
+        {
+            transition.MemoryId,
+            transition.TenantId,
+            Knowledge = knowledgeJson,
+            FactCount = result.Facts?.Count ?? 0,
+            RuleCount = result.Rules?.Count ?? 0,
+            Domains = System.Text.Json.JsonSerializer.Serialize(result.Domains ?? new List<string>())
+        });
+
+        _logger.LogInformation(
+            "L2→L3 knowledge extraction completed for {MemoryId}: {FactCount} facts, {RuleCount} rules",
+            transition.MemoryId, result.Facts?.Count ?? 0, result.Rules?.Count ?? 0);
 
         return updated > 0;
     }
@@ -387,11 +535,11 @@ public sealed class MemoryLayerWorker : BackgroundService
     {
         var candidates = await conn.QueryAsync<TransitionCandidate>("""
             SELECT
-                m.id as memory_id,
-                m.tenant_id,
-                'L0_RAW' as from_layer,
-                'L1_CONTEXT' as to_layer,
-                COALESCE(m.access_count, 0) + EXTRACT(EPOCH FROM NOW() - m.created_at) / 3600 as score
+                m.id AS MemoryId,
+                m.tenant_id AS TenantId,
+                'L0_RAW' AS FromLayer,
+                'L1_CONTEXT' AS ToLayer,
+                COALESCE(m.access_count, 0) + EXTRACT(EPOCH FROM NOW() - m.created_at) / 3600 AS Score
             FROM memories m
             WHERE m.tenant_id = @TenantId::uuid
               AND m.layer = 'L0_RAW'
@@ -403,7 +551,7 @@ public sealed class MemoryLayerWorker : BackgroundService
                     AND q.to_layer = 'L1_CONTEXT'
                     AND q.status IN ('pending', 'processing')
               )
-            ORDER BY score DESC
+            ORDER BY Score DESC
             LIMIT @Limit
             """, new { TenantId = tenantId, Limit = _config.BatchSize });
 
@@ -467,11 +615,11 @@ public sealed class MemoryLayerWorker : BackgroundService
     {
         var candidates = await conn.QueryAsync<TransitionCandidate>("""
             SELECT
-                m.id as memory_id,
-                m.tenant_id,
-                'L2_SUMMARY' as from_layer,
-                'L3_KNOWLEDGE' as to_layer,
-                COALESCE(m.access_count, 0) * COALESCE((m.metadata->>'confidence')::float, 0.5) + 1 as score
+                m.id AS MemoryId,
+                m.tenant_id AS TenantId,
+                'L2_SUMMARY' AS FromLayer,
+                'L3_KNOWLEDGE' AS ToLayer,
+                COALESCE(m.access_count, 0) * COALESCE((m.metadata->>'confidence')::float, 0.5) + 1 AS Score
             FROM memories m
             WHERE m.tenant_id = @TenantId::uuid
               AND m.layer = 'L2_SUMMARY'
@@ -483,7 +631,7 @@ public sealed class MemoryLayerWorker : BackgroundService
                     AND q.to_layer = 'L3_KNOWLEDGE'
                     AND q.status IN ('pending', 'processing')
               )
-            ORDER BY score DESC
+            ORDER BY Score DESC
             LIMIT @Limit
             """, new { TenantId = tenantId, Limit = _config.BatchSize });
 
@@ -497,7 +645,7 @@ public sealed class MemoryLayerWorker : BackgroundService
             WITH supporting_facts AS (
                 SELECT
                     m.id,
-                    COUNT(DISTINCT me.entity_id) as entity_count
+                    COUNT(DISTINCT me.entity_id) AS entity_count
                 FROM memories m
                 LEFT JOIN memory_entities me ON m.id = me.memory_id
                 WHERE m.tenant_id = @TenantId::uuid
@@ -505,11 +653,11 @@ public sealed class MemoryLayerWorker : BackgroundService
                 GROUP BY m.id
             )
             SELECT
-                m.id as memory_id,
-                m.tenant_id,
-                'L3_KNOWLEDGE' as from_layer,
-                'L4_HEURISTIC' as to_layer,
-                sf.entity_count * COALESCE((m.metadata->>'confidence')::float, 0.5) as score
+                m.id AS MemoryId,
+                m.tenant_id AS TenantId,
+                'L3_KNOWLEDGE' AS FromLayer,
+                'L4_HEURISTIC' AS ToLayer,
+                sf.entity_count * COALESCE((m.metadata->>'confidence')::float, 0.5) AS Score
             FROM memories m
             JOIN supporting_facts sf ON m.id = sf.id
             WHERE m.tenant_id = @TenantId::uuid
@@ -522,7 +670,7 @@ public sealed class MemoryLayerWorker : BackgroundService
                     AND q.to_layer = 'L4_HEURISTIC'
                     AND q.status IN ('pending', 'processing')
               )
-            ORDER BY score DESC
+            ORDER BY Score DESC
             LIMIT @Limit
             """, new { TenantId = tenantId, Limit = _config.BatchSize });
 
@@ -573,7 +721,8 @@ public sealed class MemoryLayerWorker : BackgroundService
                     LIMIT @Limit
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, tenant_id, memory_id, from_layer, to_layer, priority
+                RETURNING id, tenant_id AS TenantId, memory_id AS MemoryId,
+                          from_layer AS FromLayer, to_layer AS ToLayer, priority
             )
             SELECT * FROM claimed
             """, new { Limit = limit });
@@ -691,6 +840,9 @@ public sealed class MemoryLayerWorker : BackgroundService
     {
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
+
+        // Set internal admin role to bypass RLS
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
 
         // Reset stale processing transitions
         var reset = await conn.ExecuteAsync("""

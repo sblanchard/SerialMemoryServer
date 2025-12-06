@@ -256,15 +256,7 @@ public static class TracesEndpoints
     }
 
     private static Guid GetTenantId(ClaimsPrincipal user, bool selfHosted)
-    {
-        if (selfHosted)
-            return Guid.Parse("00000000-0000-0000-0000-000000000000");
-
-        var tenantIdClaim = user.FindFirst("tenant_id")?.Value
-            ?? throw new UnauthorizedAccessException("Missing tenant_id claim");
-
-        return Guid.Parse(tenantIdClaim);
-    }
+        => DashboardHelpers.GetTenantId(user, selfHosted);
 }
 
 // DTOs for Traces endpoints

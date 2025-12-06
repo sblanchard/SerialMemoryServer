@@ -19,9 +19,7 @@ using SerialMemory.Api.SelfHosted;
 using SerialMemory.Api.LLM;
 using SerialMemory.Api.Endpoints;
 using SerialMemory.Api.Dashboard;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
+using SerialMemory.Api.Configuration;
 using MassTransit;
 using Npgsql;
 using Microsoft.AspNetCore.Mvc;
@@ -35,7 +33,7 @@ builder.Services.AddSingleton(operationalConfig);
 
 // Deployment context (SaaS vs SelfHosted)
 builder.Services.AddSingleton<IDeploymentContext, DeploymentContext>();
-builder.Services.AddSingleton<SerialMemory.Core.Deployment.IQuotaEnforcementService, SerialMemory.Core.Deployment.QuotaEnforcementService>();
+builder.Services.AddSingleton<SerialMemory.Core.Deployment.IQuotaEnforcementService, QuotaEnforcementService>();
 
 // Log deployment mode at startup
 var deploymentContext = new DeploymentContext();
@@ -69,91 +67,16 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Redis connection (optional - for context store)
-var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
-try
-{
-    builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnection));
-    builder.Services.AddSingleton<IContextStore, RedisContextStore>();
-}
-catch
-{
-    // Redis not available - skip context store features
-    builder.Services.AddSingleton<IContextStore, InMemoryContextStore>();
-}
+// Database and cache services
+builder.Services.AddRedisCache(builder.Configuration);
+builder.Services.AddPostgresDatabase(builder.Configuration);
+var pgConnectionString = DatabaseConfiguration.BuildPostgresConnectionString(builder.Configuration);
+var pgDataSource = builder.Services.BuildServiceProvider().GetRequiredService<NpgsqlDataSource>();
 
-// Knowledge Graph Services (PostgreSQL)
-var pgConnectionString = builder.Configuration.GetConnectionString("Postgres")
-    ?? $"Host={Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost"};" +
-       $"Port={Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434"};" +
-       $"Database={Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb"};" +
-       $"Username={Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres"};" +
-       $"Password={Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres"}";
+// LLM and entity extraction services
+builder.Services.AddLlmServices(builder.Configuration);
+builder.Services.AddEntityExtraction(builder.Configuration);
 
-// Create shared NpgsqlDataSource with vector extension - required for endpoints and infrastructure engines
-var dataSourceBuilder = new NpgsqlDataSourceBuilder(pgConnectionString);
-dataSourceBuilder.UseVector();
-var pgDataSource = dataSourceBuilder.Build();
-builder.Services.AddSingleton(pgDataSource);
-
-// LLM Configuration - OpenAI is primary if configured, fallback to Ollama
-var openAiApiKey = builder.Configuration["OpenAI:ApiKey"]
-    ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-var openAiModel = builder.Configuration["OpenAI:Model"]
-    ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
-    ?? "gpt-4.1-mini";
-var openAiEmbedModel = builder.Configuration["OpenAI:EmbedModel"]
-    ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
-    ?? "text-embedding-3-small";
-
-// Ollama configuration (fallback)
-var ollamaUrl = builder.Configuration["Ollama:Url"]
-    ?? Environment.GetEnvironmentVariable("OLLAMA_BASE_URL")
-    ?? Environment.GetEnvironmentVariable("OLLAMA_URL")
-    ?? "http://localhost:11434";
-var ollamaModel = builder.Configuration["Ollama:Model"]
-    ?? Environment.GetEnvironmentVariable("OLLAMA_MODEL")
-    ?? "nomic-embed-text";
-var ollamaLlmModel = builder.Configuration["Ollama:LlmModel"]
-    ?? Environment.GetEnvironmentVariable("OLLAMA_LLM_MODEL")
-    ?? "qwen2.5:7b";
-var ollamaEmbeddingDim = int.TryParse(
-    builder.Configuration["Ollama:EmbeddingDim"] ?? Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_DIM"),
-    out var dim) ? dim : 768;
-
-// Base knowledge graph store - created per-scope with tenant context for proper RLS enforcement
-// Note: We'll register this as Scoped later with ITenantContext injection
-
-// Register embedding and LLM services based on configuration
-if (!string.IsNullOrEmpty(openAiApiKey))
-{
-    // OpenAI is available - use it as primary
-    Console.WriteLine($"[INFO] Using OpenAI: chat={openAiModel}, embed={openAiEmbedModel}");
-    var openAiClient = new OpenAiClient(
-        apiKey: openAiApiKey,
-        chatModel: openAiModel,
-        embedModel: openAiEmbedModel,
-        embeddingDimension: 1536);
-
-    builder.Services.AddSingleton<IEmbeddingService>(openAiClient);
-    builder.Services.AddSingleton<ILlmService>(openAiClient);
-    builder.Services.AddSingleton(openAiClient);
-}
-else
-{
-    // Fallback to Ollama
-    Console.WriteLine($"[INFO] Using Ollama: embed={ollamaModel}, llm={ollamaLlmModel} at {ollamaUrl}");
-    builder.Services.AddSingleton<IEmbeddingService>(_ => new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
-    builder.Services.AddSingleton<ILlmService>(_ => new OllamaLlmService(ollamaUrl, ollamaLlmModel));
-}
-
-// Entity extraction service - use HTTP/Ollama if configured, otherwise pattern-based
-var extractionServiceUrl = builder.Configuration["ExtractionServiceUrl"]
-    ?? Environment.GetEnvironmentVariable("EXTRACTION_SERVICE_URL");
-
-var entityExtractionService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
-Console.WriteLine($"Using entity extraction service: {entityExtractionService.GetType().Name}");
-builder.Services.AddSingleton<IEntityExtractionService>(_ => entityExtractionService);
 // These services depend on scoped IKnowledgeGraphStore
 builder.Services.AddScoped<KnowledgeGraphService>();
 builder.Services.AddScoped<RelationshipDiscoveryService>();
@@ -347,7 +270,7 @@ builder.Services.AddSingleton<SerialMemory.Infrastructure.Jobs.ReembedJobWorker>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SerialMemory.Infrastructure.Jobs.ReembedJobWorker>());
 
 // Real-time introspection service - streams job/trace/security/graph state via SignalR
-builder.Services.AddHostedService<SerialMemory.Api.Realtime.IntrospectionBackgroundService>();
+builder.Services.AddHostedService<IntrospectionBackgroundService>();
 
 // Memory Layer Worker - L0→L1→L2→L3→L4 cognitive layer promotion
 builder.Services.AddHostedService<SerialMemory.Infrastructure.MemoryLayer.MemoryLayerWorker>();
@@ -511,59 +434,14 @@ builder.Services.AddScoped<IIntegrityAuditService>(sp =>
         sp.GetRequiredService<ITenantContext>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerialMemory.Infrastructure.Privacy.IntegrityAuditService>()));
 
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService("SerialMemory.Api"))
-    .WithMetrics(mb =>
-    {
-        mb.AddMeter(Metrics.MeterName);
-        mb.AddPrometheusExporter();
-        mb.AddProcessInstrumentation();
-        mb.AddHttpClientInstrumentation();
-        mb.AddAspNetCoreInstrumentation();
-    })
-    .WithTracing(tb =>
-    {
-        tb.AddAspNetCoreInstrumentation();
-        tb.AddHttpClientInstrumentation();
-    });
+// OpenTelemetry metrics and tracing
+builder.Services.AddObservability();
 
 // Dashboard API services (consolidated from SerialMemory.Api.Dashboard)
 builder.Services.AddDashboardServices(builder.Configuration, pgConnectionString);
 
 // Authentication and Authorization services
-// The actual auth is handled by ApiKeyAuthMiddleware which populates ClaimsPrincipal
-builder.Services.AddAuthentication("ApiKey")
-    .AddCookie("ApiKey", options =>
-    {
-        options.LoginPath = "/api/auth/login";
-        options.Events.OnRedirectToLogin = context =>
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return Task.CompletedTask;
-        };
-    });
-
-builder.Services.AddAuthorization(options =>
-{
-    // Default policy requires authenticated user
-    // NOTE: Don't specify authentication scheme - ApiKeyAuthMiddleware sets context.User directly
-    options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
-
-    // Role-based policies - don't require specific auth scheme, just check context.User
-    options.AddPolicy("Admin", policy => policy
-        .RequireAuthenticatedUser()
-        .RequireRole("admin", "owner"));
-
-    options.AddPolicy("Member", policy => policy
-        .RequireAuthenticatedUser()
-        .RequireRole("member", "admin", "owner"));
-
-    options.AddPolicy("Owner", policy => policy
-        .RequireAuthenticatedUser()
-        .RequireRole("owner"));
-});
+builder.Services.AddApiKeyAuth();
 
 var app = builder.Build();
 
@@ -693,7 +571,7 @@ app.MapGet("/api/memories/search", async (
     IUsageService usageService,
     IPerformanceService perfService) =>
 {
-    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var sw = Stopwatch.StartNew();
     var success = true;
     string? errorMessage = null;
 
@@ -785,7 +663,7 @@ app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
 // Ingest a new memory with security pipeline integration
 app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphService kgService, ILiveEventEmitter liveEmitter, ISecurityPipeline securityPipeline, IKnowledgeGraphStore store, IUsageService usageService, IPerformanceService perfService) =>
 {
-    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var sw = Stopwatch.StartNew();
     var success = true;
     string? errorMessage = null;
 
@@ -1679,7 +1557,7 @@ app.MapPost("/api/billing/stripe/webhook", async (
 
 // POST /api/billing/checkout - Create a Stripe checkout session
 app.MapPost("/api/billing/checkout", async (
-    SerialMemory.Core.Models.CreateCheckoutRequest checkoutRequest,
+    CreateCheckoutRequest checkoutRequest,
     IServiceProvider sp,
     ITenantContext tenantContext,
     ILogger<Program> logger,
@@ -1691,7 +1569,7 @@ app.MapPost("/api/billing/checkout", async (
         return Results.BadRequest(new { error = "billing_not_configured", message = "Stripe billing is not configured" });
     }
 
-    var request = new SerialMemory.Core.Models.CreateCheckoutRequest
+    var request = new CreateCheckoutRequest
     {
         TenantId = checkoutRequest.TenantId ?? tenantContext.TenantId,
         PlanName = checkoutRequest.PlanName,
@@ -2012,7 +1890,7 @@ app.MapPost("/api/billing/plan/change", async (
 
     logger.LogInformation("Plan change requested: {TenantId} -> {TargetPlan}", tenantContext.TenantId, request.TargetPlan);
 
-    var checkoutRequest = new SerialMemory.Core.Models.CreateCheckoutRequest
+    var checkoutRequest = new CreateCheckoutRequest
     {
         TenantId = tenantContext.TenantId,
         PlanName = request.TargetPlan,
@@ -2694,18 +2572,20 @@ app.MapGet("/api/reasoning/run/{runId:guid}", async (Guid runId, IConfiguration 
     await conn.OpenAsync();
 
     // Get the run
-    var run = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
-        SELECT
-            id,
-            trace_type as scope,
-            created_utc as started_at,
-            completed_utc as completed_at,
-            duration_ms,
-            step_count,
-            status,
-            metadata
-        FROM agent_traces
-        WHERE id = @RunId", new { RunId = runId });
+    var run = await conn.QueryFirstOrDefaultAsync<dynamic>("""
+
+                                                                   SELECT
+                                                                       id,
+                                                                       trace_type as scope,
+                                                                       created_utc as started_at,
+                                                                       completed_utc as completed_at,
+                                                                       duration_ms,
+                                                                       step_count,
+                                                                       status,
+                                                                       metadata
+                                                                   FROM agent_traces
+                                                                   WHERE id = @RunId
+                                                           """, new { RunId = runId });
 
     if (run == null)
         return Results.NotFound(new { error = "Run not found" });
@@ -4919,6 +4799,66 @@ app.MapPost("/api/layers/promote-all", async (
     return Results.Ok(new
     {
         promoted = results,
+        distribution = distribution.ToDictionary(d => d.Layer ?? "unknown", d => d.Count)
+    });
+});
+
+// POST /api/layers/demote - Demote memories back to L0 for reprocessing with LLM
+app.MapPost("/api/layers/demote", async (
+    ITenantContext tenantContext,
+    NpgsqlDataSource dataSource,
+    ILogger<Program> logger,
+    string? layer = null) =>
+{
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+
+    // Clear existing transition queue for this tenant
+    var clearedQueue = await conn.ExecuteAsync("""
+        DELETE FROM layer_transition_queue
+        WHERE tenant_id = @TenantId::uuid
+          AND status IN ('pending', 'processing')
+        """, new { TenantId = tenantId });
+
+    // Demote specified layer or all non-L0 layers
+    var layerFilter = string.IsNullOrEmpty(layer)
+        ? "layer != 'L0_RAW'"
+        : "layer = @Layer";
+
+    var sql = $"""
+        UPDATE memories
+        SET layer = 'L0_RAW',
+            metadata = COALESCE(metadata, @EmptyJson::jsonb) ||
+                jsonb_build_object(
+                    'demoted_at', NOW()::text,
+                    'demoted_from', layer,
+                    'demoted_reason', 'reprocessing_with_llm'
+                ),
+            updated_at = NOW()
+        WHERE tenant_id = @TenantId::uuid
+          AND {layerFilter}
+        """;
+    var demoted = await conn.ExecuteAsync(sql, new { TenantId = tenantId, Layer = layer, EmptyJson = "{}" });
+
+    // Get new distribution
+    var distribution = await conn.QueryAsync<(string Layer, int Count)>("""
+        SELECT COALESCE(layer, 'L0_RAW') as layer, COUNT(*)::int as count
+        FROM memories
+        WHERE tenant_id = @TenantId::uuid
+        GROUP BY layer
+        ORDER BY layer
+        """, new { TenantId = tenantId });
+
+    logger.LogInformation(
+        "Demoted {Count} memories to L0 for tenant {TenantId} (cleared {QueueCount} queue items)",
+        demoted, tenantId, clearedQueue);
+
+    return Results.Ok(new
+    {
+        demoted,
+        clearedQueueItems = clearedQueue,
         distribution = distribution.ToDictionary(d => d.Layer ?? "unknown", d => d.Count)
     });
 });
