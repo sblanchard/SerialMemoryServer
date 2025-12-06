@@ -24,7 +24,7 @@ public sealed class MemorySummarizationService(
     private readonly float _similarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f);
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     /// <summary>
     /// Finds clusters of related L1 memories that can be summarized.

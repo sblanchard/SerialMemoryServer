@@ -32,7 +32,7 @@ public sealed class LayerPromotionService(
     // Load configuration with defaults
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     /// <summary>
     /// Finds memories eligible for promotion to the next layer.

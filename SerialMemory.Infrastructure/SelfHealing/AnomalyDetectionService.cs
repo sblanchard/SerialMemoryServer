@@ -27,7 +27,7 @@ public sealed class AnomalyDetectionService(
     private const int ConflictClusterMinSize = 3;
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     public async Task<IReadOnlyList<AnomalyFinding>> DetectAnomaliesAsync(
         Guid? tenantId = null,

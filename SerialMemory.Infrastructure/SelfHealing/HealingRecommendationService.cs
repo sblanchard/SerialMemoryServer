@@ -42,7 +42,7 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
     }
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     public async Task<IReadOnlyList<HealingRecommendation>> AnalyzeAndRecommendAsync(
         Guid? tenantId = null,

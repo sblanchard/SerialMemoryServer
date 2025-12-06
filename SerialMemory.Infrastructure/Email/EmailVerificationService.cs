@@ -26,7 +26,7 @@ public sealed class EmailVerificationService(
                                        ?? "https://api.serialmemory.dev";
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     public async Task<string> CreateVerificationTokenAsync(
         Guid tenantId,

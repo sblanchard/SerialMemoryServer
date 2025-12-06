@@ -54,7 +54,7 @@ public sealed class MemoryLayerWorker : BackgroundService
     }
 
     private static string BuildConnectionString()
-        => Configuration.ConnectionStringFactory.BuildConnectionString();
+        => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
