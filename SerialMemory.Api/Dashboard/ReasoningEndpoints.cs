@@ -325,7 +325,7 @@ public static class ReasoningEndpoints
         if (!Guid.TryParse(tenantIdClaim, out var tenantId))
             throw new UnauthorizedAccessException("Invalid tenant_id claim");
 
-        var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? user.FindFirst("sub")?.Value
             ?? throw new UnauthorizedAccessException("Missing user identifier");
 

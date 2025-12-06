@@ -30,8 +30,7 @@ public static class BillingEndpoints
         {
             var tenantId = GetTenantId(user, selfHostedMode);
 
-            await using var conn = await dataSource.OpenConnectionAsync(ct);
-            await conn.SetInternalAdminWithTenantAsync(tenantId);
+            await using var conn = await dataSource.OpenTenantConnectionAsync(tenantId, ct);
 
             var plans = await conn.QueryAsync<PlanDto>(
                 """
@@ -138,7 +137,7 @@ public static class BillingEndpoints
             {
                 try
                 {
-                    var checkoutRequest = new SerialMemory.Core.Models.CreateCheckoutRequest
+                    var checkoutRequest = new Core.Models.CreateCheckoutRequest
                     {
                         TenantId = tenantId.ToString(),
                         PlanName = request.Plan!,
@@ -445,15 +444,7 @@ public static class BillingEndpoints
     };
 
     private static Guid GetTenantId(ClaimsPrincipal user, bool selfHosted)
-    {
-        if (selfHosted)
-            return Guid.Parse("00000000-0000-0000-0000-000000000000");
-
-        var tenantIdClaim = user.FindFirst("tenant_id")?.Value
-            ?? throw new UnauthorizedAccessException("Missing tenant_id claim");
-
-        return Guid.Parse(tenantIdClaim);
-    }
+        => DashboardHelpers.GetTenantId(user, selfHosted);
 
     private static string GetUserId(ClaimsPrincipal user)
     {

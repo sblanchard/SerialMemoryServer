@@ -18,6 +18,54 @@ using SerialMemory.Api.Realtime;
 namespace SerialMemory.Api.Dashboard;
 
 /// <summary>
+/// Shared helper methods for Dashboard endpoints.
+/// </summary>
+public static class DashboardHelpers
+{
+    /// <summary>
+    /// Default tenant ID used in self-hosted mode.
+    /// </summary>
+    public static readonly Guid SelfHostedTenantId = Guid.Parse("00000000-0000-0000-0000-000000000000");
+
+    /// <summary>
+    /// Extracts the tenant ID from the user's claims or returns the self-hosted default.
+    /// </summary>
+    public static Guid GetTenantId(ClaimsPrincipal user, bool selfHosted)
+    {
+        if (selfHosted)
+            return SelfHostedTenantId;
+
+        var tenantIdClaim = user.FindFirst("tenant_id")?.Value
+            ?? throw new UnauthorizedAccessException("Missing tenant_id claim");
+
+        return Guid.Parse(tenantIdClaim);
+    }
+
+    /// <summary>
+    /// Extracts full tenant context including user ID and workspace.
+    /// </summary>
+    public static (Guid TenantId, string UserId, string WorkspaceId) GetTenantContext(ClaimsPrincipal user, bool selfHosted)
+    {
+        if (selfHosted)
+            return (SelfHostedTenantId, "self-hosted", "default");
+
+        var tenantIdClaim = user.FindFirst("tenant_id")?.Value
+            ?? throw new UnauthorizedAccessException("Missing tenant_id claim");
+
+        if (!Guid.TryParse(tenantIdClaim, out var tenantId))
+            throw new UnauthorizedAccessException("Invalid tenant_id claim");
+
+        var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? user.FindFirst("sub")?.Value
+            ?? throw new UnauthorizedAccessException("Missing user identifier");
+
+        var workspaceId = user.FindFirst("workspace_id")?.Value ?? "default";
+
+        return (tenantId, userId, workspaceId);
+    }
+}
+
+/// <summary>
 /// Extension methods to add Dashboard API services and endpoints to the main API.
 /// This consolidates what was previously in SerialMemory.Api.Dashboard into the main API.
 /// </summary>
@@ -65,10 +113,10 @@ public static class DashboardExtensions
 
         // Email verification and onboarding services
         services.AddSingleton<IDeveloperOnboardingService>(sp =>
-            new SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService(
+            new Infrastructure.Onboarding.DeveloperOnboardingService(
                 configuration,
                 sp.GetRequiredService<IEmailService>(),
-                sp.GetRequiredService<ILogger<SerialMemory.Infrastructure.Onboarding.DeveloperOnboardingService>>()));
+                sp.GetRequiredService<ILogger<Infrastructure.Onboarding.DeveloperOnboardingService>>()));
         services.AddSingleton<IEmailVerificationService, EmailVerificationService>();
 
         // L2 Embedding service for RAG indexing
@@ -165,26 +213,7 @@ public static class DashboardExtensions
     }
 
     private static (Guid TenantId, string UserId, string WorkspaceId) GetTenantContext(ClaimsPrincipal user, bool selfHosted)
-    {
-        if (selfHosted)
-        {
-            return (Guid.Parse("00000000-0000-0000-0000-000000000000"), "self-hosted", "default");
-        }
-
-        var tenantIdClaim = user.FindFirst("tenant_id")?.Value
-            ?? throw new UnauthorizedAccessException("Missing tenant_id claim");
-
-        if (!Guid.TryParse(tenantIdClaim, out var tenantId))
-            throw new UnauthorizedAccessException("Invalid tenant_id claim");
-
-        var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? user.FindFirst("sub")?.Value
-            ?? throw new UnauthorizedAccessException("Missing user identifier");
-
-        var workspaceId = user.FindFirst("workspace_id")?.Value ?? "default";
-
-        return (tenantId, userId, workspaceId);
-    }
+        => DashboardHelpers.GetTenantContext(user, selfHosted);
 
     private static void MapTenantEndpoints(WebApplication app, bool selfHostedMode)
     {
@@ -351,7 +380,7 @@ public static class DashboardExtensions
             try
             {
                 var result = await apiKeyService.SignupAsync(request, ct);
-                SerialMemory.Core.Telemetry.Metrics.TenantSignupTotal.Add(1);
+                Core.Telemetry.Metrics.TenantSignupTotal.Add(1);
 
                 try
                 {
@@ -522,7 +551,7 @@ public static class DashboardExtensions
             if (selfHostedMode)
                 return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
 
-            var result = await billingService.CreateCheckoutSessionAsync(new SerialMemory.Core.Models.CreateCheckoutRequest
+            var result = await billingService.CreateCheckoutSessionAsync(new CreateCheckoutRequest
             {
                 TenantId = tenantId.ToString(),
                 PlanName = request.PlanName,

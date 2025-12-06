@@ -392,7 +392,7 @@ public sealed class ApiKeyAuthMiddleware
 
             return new InternalTokenClaims
             {
-                UserId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                UserId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
                     ?? principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
                     ?? "",
                 TenantId = principal.FindFirst("tenant_id")?.Value ?? "",

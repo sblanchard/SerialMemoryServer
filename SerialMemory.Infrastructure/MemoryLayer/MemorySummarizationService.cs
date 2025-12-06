@@ -24,19 +24,12 @@ public sealed class MemorySummarizationService(
     private readonly float _similarityThreshold = configuration.GetValue("MemoryLayerWorker:L1ToL2:SimilarityThreshold", 0.8f);
 
     private static string BuildConnectionString()
-    {
-        var host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
-        var port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5434";
-        var user = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "postgres";
-        var database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb";
-        return $"Host={host};Port={port};Username={user};Password={password};Database={database}";
-    }
+        => Configuration.ConnectionStringFactory.BuildConnectionString();
 
     /// <summary>
     /// Finds clusters of related L1 memories that can be summarized.
     /// </summary>
-    public async Task<IReadOnlyList<MemoryCluster>> FindSummarizableClustersAsync(
+    private async Task<IReadOnlyList<MemoryCluster>> FindSummarizableClustersAsync(
         Guid tenantId,
         int limit = 10,
         CancellationToken ct = default)
@@ -99,7 +92,7 @@ public sealed class MemorySummarizationService(
     /// <summary>
     /// Summarizes a cluster of related memories into a single L2 memory.
     /// </summary>
-    public async Task<SummarizationResult> SummarizeClusterAsync(
+    private async Task<SummarizationResult> SummarizeClusterAsync(
         MemoryCluster cluster,
         CancellationToken ct = default)
     {
@@ -189,7 +182,7 @@ public sealed class MemorySummarizationService(
     /// <summary>
     /// Creates an L2 memory from the summarization result.
     /// </summary>
-    public async Task<Guid> CreateSummaryMemoryAsync(
+    private async Task<Guid> CreateSummaryMemoryAsync(
         Guid tenantId,
         SummarizationResult result,
         CancellationToken ct = default)
@@ -218,10 +211,10 @@ public sealed class MemorySummarizationService(
             summarized_at = DateTime.UtcNow
         };
 
-        await conn.ExecuteAsync("""
-            INSERT INTO memories (id, tenant_id, content, embedding, layer, parent_memory_ids, metadata, source, created_at, updated_at)
-            VALUES (@Id, @TenantId, @Content, @Embedding::vector, 'L2_SUMMARY', @ParentMemoryIds, @Metadata::jsonb, 'layer_promotion', NOW(), NOW())
-            """,
+        await conn.ExecuteAsync($"""
+                                 INSERT INTO memories (id, tenant_id, content, embedding, layer, parent_memory_ids, metadata, source, created_at, updated_at)
+                                 VALUES (@Id, @TenantId, @Content, @Embedding::vector, 'L2_SUMMARY', @ParentMemoryIds, @Metadata::jsonb, 'layer_promotion', NOW(), NOW())
+                                 """,
             new
             {
                 Id = memoryId,
@@ -270,7 +263,7 @@ public sealed class MemorySummarizationService(
                     succeeded++;
 
                     // Update source memories to reference the new summary
-                    await UpdateSourceMemoriesAsync(result.SourceMemoryIds!, memoryId, ct);
+                    await UpdateSourceMemoriesAsync(result.SourceMemoryIds, memoryId, ct);
                 }
                 catch (Exception ex)
                 {
@@ -294,7 +287,7 @@ public sealed class MemorySummarizationService(
     }
 
     private async Task UpdateSourceMemoriesAsync(
-        Guid[] sourceMemoryIds,
+        Guid[]? sourceMemoryIds,
         Guid summaryMemoryId,
         CancellationToken ct)
     {
