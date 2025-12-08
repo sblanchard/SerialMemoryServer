@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -14,29 +13,15 @@ namespace SerialMemory.Infrastructure.Backfill;
 /// Service for detecting and processing unprocessed historical memories.
 /// Implements idempotent layer generation with comprehensive error handling.
 /// </summary>
-public sealed class MemoryBackfillService : IMemoryBackfillService
+public sealed class MemoryBackfillService(
+    NpgsqlDataSource dataSource,
+    IClassificationService classificationService,
+    IEventWriter eventWriter,
+    IL2EmbeddingService l2EmbeddingService,
+    ILogger<MemoryBackfillService> logger)
+    : IMemoryBackfillService
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IClassificationService _classificationService;
-    private readonly IEventWriter _eventWriter;
-    private readonly IL2EmbeddingService _l2EmbeddingService;
-    private readonly ILogger<MemoryBackfillService> _logger;
-
     private static readonly string[] AllLayers = ["L0_RAW", "L1_CONTEXT", "L2_SUMMARY", "L3_KNOWLEDGE", "L4_HEURISTIC"];
-
-    public MemoryBackfillService(
-        NpgsqlDataSource dataSource,
-        IClassificationService classificationService,
-        IEventWriter eventWriter,
-        IL2EmbeddingService l2EmbeddingService,
-        ILogger<MemoryBackfillService> logger)
-    {
-        _dataSource = dataSource;
-        _classificationService = classificationService;
-        _eventWriter = eventWriter;
-        _l2EmbeddingService = l2EmbeddingService;
-        _logger = logger;
-    }
 
     /// <inheritdoc />
     public async Task<BackfillStatistics> GetBackfillStatisticsAsync(CancellationToken ct = default)
@@ -201,7 +186,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             """,
             new { TenantId = tenantId, BatchSize = batchSize, Priority = priority });
 
-        _logger.LogInformation("Enqueued {Count} unprocessed memories for classification (priority: {Priority})",
+        logger.LogInformation("Enqueued {Count} unprocessed memories for classification (priority: {Priority})",
             enqueued, priority);
 
         return enqueued;
@@ -220,7 +205,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
         var layersFailed = new List<string>();
         var errors = new Dictionary<string, string>();
 
-        _logger.LogInformation("Processing memory {MemoryId} with idempotency (tenant: {TenantId})",
+        logger.LogInformation("Processing memory {MemoryId} with idempotency (tenant: {TenantId})",
             memoryId, tenantId);
 
         await using var conn = await OpenInternalConnectionAsync(ct);
@@ -235,7 +220,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
 
         if (memory == null)
         {
-            _logger.LogWarning("Memory {MemoryId} not found for tenant {TenantId}", memoryId, tenantId);
+            logger.LogWarning("Memory {MemoryId} not found for tenant {TenantId}", memoryId, tenantId);
             return new LayerProcessingResult
             {
                 MemoryId = memoryId,
@@ -257,7 +242,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             if (existingLayers.ContainsKey(layer))
             {
                 layersSkipped.Add(layer);
-                _logger.LogDebug("Layer {Layer} already exists for memory {MemoryId}, skipping",
+                logger.LogDebug("Layer {Layer} already exists for memory {MemoryId}, skipping",
                     layer, memoryId);
                 continue;
             }
@@ -276,7 +261,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             {
                 try
                 {
-                    _logger.LogDebug("Processing {Layer} for memory {MemoryId} (attempt {Attempt}/{MaxRetries})",
+                    logger.LogDebug("Processing {Layer} for memory {MemoryId} (attempt {Attempt}/{MaxRetries})",
                         layer, memoryId, attempt, maxRetries);
 
                     await ProcessSingleLayerAsync(conn, tenantId, memoryId, memory.content, layer, previousContent, ct);
@@ -287,11 +272,11 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                     // Update existingLayers for next iteration
                     existingLayers[layer] = new LayerInfo { Layer = layer };
 
-                    _logger.LogInformation("Generated {Layer} for memory {MemoryId}", layer, memoryId);
+                    logger.LogInformation("Generated {Layer} for memory {MemoryId}", layer, memoryId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to process {Layer} for memory {MemoryId} (attempt {Attempt}/{MaxRetries})",
+                    logger.LogWarning(ex, "Failed to process {Layer} for memory {MemoryId} (attempt {Attempt}/{MaxRetries})",
                         layer, memoryId, attempt, maxRetries);
 
                     if (attempt == maxRetries)
@@ -310,7 +295,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             // If this layer failed, stop processing subsequent layers
             if (!success)
             {
-                _logger.LogWarning("Stopping pipeline for memory {MemoryId} due to failure at {Layer}",
+                logger.LogWarning("Stopping pipeline for memory {MemoryId} due to failure at {Layer}",
                     memoryId, layer);
                 break;
             }
@@ -335,7 +320,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                 IsComplete = isFullyProcessed
             });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Completed processing memory {MemoryId}: generated={Generated}, skipped={Skipped}, failed={Failed}, duration={DurationMs}ms",
             memoryId, layersGenerated.Count, layersSkipped.Count, layersFailed.Count, sw.ElapsedMilliseconds);
 
@@ -369,7 +354,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
         var totalLayers = 0;
         var allErrors = new List<string>();
 
-        _logger.LogInformation("Starting full backfill (batchSize={BatchSize}, maxConcurrency={MaxConcurrency}, tenant={TenantId})",
+        logger.LogInformation("Starting full backfill (batchSize={BatchSize}, maxConcurrency={MaxConcurrency}, tenant={TenantId})",
             batchSize, maxConcurrency, tenantId?.ToString() ?? "all");
 
         while (!ct.IsCancellationRequested)
@@ -379,11 +364,11 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
 
             if (batch.Count == 0)
             {
-                _logger.LogInformation("No more unprocessed memories found, backfill complete");
+                logger.LogInformation("No more unprocessed memories found, backfill complete");
                 break;
             }
 
-            _logger.LogInformation("Processing batch of {Count} memories (total processed so far: {TotalProcessed})",
+            logger.LogInformation("Processing batch of {Count} memories (total processed so far: {TotalProcessed})",
                 batch.Count, processed);
 
             // Process each memory (serial for now, can be parallelized later)
@@ -419,7 +404,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Unexpected error processing memory {MemoryId}", memory.MemoryId);
+                    logger.LogError(ex, "Unexpected error processing memory {MemoryId}", memory.MemoryId);
                     failed++;
                     allErrors.Add($"Memory {memory.MemoryId}: {ex.Message}");
                 }
@@ -427,7 +412,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                 // Log progress every 10 memories
                 if (processed % 10 == 0)
                 {
-                    _logger.LogInformation(
+                    logger.LogInformation(
                         "Backfill progress: processed={Processed}, succeeded={Succeeded}, partial={Partial}, failed={Failed}",
                         processed, succeeded, partial, failed);
                 }
@@ -453,7 +438,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             CompletedAt = DateTimeOffset.UtcNow
         };
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Backfill completed: processed={Processed}, succeeded={Succeeded}, partial={Partial}, failed={Failed}, layers={Layers}, duration={Duration}",
             result2.TotalMemoriesProcessed,
             result2.SuccessfullyCompleted,
@@ -501,8 +486,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
         // Ensure all layers are represented
         foreach (var layer in AllLayers)
         {
-            if (!layerDict.ContainsKey(layer))
-                layerDict[layer] = null;
+            layerDict.TryAdd(layer, null);
         }
 
         var missingLayers = AllLayers.Where(l => layerDict[l] == null).ToArray();
@@ -592,7 +576,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                 """,
                 new { MemoryId = memoryId });
 
-            _logger.LogInformation("Cleared all layers for memory {MemoryId} for forced regeneration", memoryId);
+            logger.LogInformation("Cleared all layers for memory {MemoryId} for forced regeneration", memoryId);
         }
 
         return await ProcessMemoryWithIdempotencyAsync(tenantId, memoryId, maxRetries: 3, ct);
@@ -621,7 +605,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             new { MemoryId = memoryId, TenantId = tenantId, Layer = layerName });
 
         // Classify using the classification service
-        var result = await _classificationService.ClassifyAsync(content, layer, previousLayerContent, ct);
+        var result = await classificationService.ClassifyAsync(content, layer, previousLayerContent, ct);
 
         sw.Stop();
 
@@ -644,7 +628,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             });
 
         // Emit LayerGenerated event
-        var eventId = await _eventWriter.EmitLayerGeneratedAsync(
+        var eventId = await eventWriter.EmitLayerGeneratedAsync(
             tenantId,
             memoryId,
             layerName,
@@ -656,7 +640,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
             ct);
 
         // Create timeline snapshot
-        await _eventWriter.CreateTimelineSnapshotAsync(
+        await eventWriter.CreateTimelineSnapshotAsync(
             tenantId,
             memoryId,
             eventId,
@@ -672,11 +656,11 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
         {
             try
             {
-                await _l2EmbeddingService.IndexL2Async(tenantId, memoryId, ct);
+                await l2EmbeddingService.IndexL2Async(tenantId, memoryId, ct);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to index L2 embedding for memory {MemoryId}", memoryId);
+                logger.LogWarning(ex, "Failed to index L2 embedding for memory {MemoryId}", memoryId);
             }
         }
 
@@ -727,7 +711,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
                 });
         }
 
-        _logger.LogDebug("Extracted {Count} knowledge nodes for memory {MemoryId} layer {Layer}",
+        logger.LogDebug("Extracted {Count} knowledge nodes for memory {MemoryId} layer {Layer}",
             result.KnowledgeNodes.Count, memoryId, layer);
     }
 
@@ -776,7 +760,7 @@ public sealed class MemoryBackfillService : IMemoryBackfillService
 
     private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
     {
-        var conn = await _dataSource.OpenConnectionAsync(ct);
+        var conn = await dataSource.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
         return conn;
     }

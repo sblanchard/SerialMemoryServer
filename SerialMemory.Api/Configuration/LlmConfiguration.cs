@@ -1,6 +1,5 @@
 using SerialMemory.Core.Interfaces;
 using SerialMemory.ML;
-using SerialMemory.Api.LLM;
 
 namespace SerialMemory.Api.Configuration;
 

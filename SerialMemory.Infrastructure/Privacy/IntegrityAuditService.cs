@@ -3,7 +3,6 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Infrastructure;
 
 namespace SerialMemory.Infrastructure.Privacy;
 
@@ -11,12 +10,14 @@ namespace SerialMemory.Infrastructure.Privacy;
 /// PostgreSQL-backed integrity audit service.
 /// Logs all memory operations and integrity-related events for audit trail.
 /// </summary>
-public sealed class IntegrityAuditService : IIntegrityAuditService
+public sealed class IntegrityAuditService(
+    string connectionString,
+    ITenantContext tenantContext,
+    ILogger<IntegrityAuditService> logger)
+    : IIntegrityAuditService
 {
-    private readonly string _connectionString;
-    private readonly ITenantContext _tenantContext;
-    private readonly ILogger<IntegrityAuditService> _logger;
-    private readonly Guid _tenantId;
+    private readonly ITenantContext _tenantContext = tenantContext;
+    private readonly Guid _tenantId = Guid.Parse(tenantContext.TenantId);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -24,24 +25,13 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
         WriteIndented = false
     };
 
-    public IntegrityAuditService(
-        string connectionString,
-        ITenantContext tenantContext,
-        ILogger<IntegrityAuditService> logger)
-    {
-        _connectionString = connectionString;
-        _tenantContext = tenantContext;
-        _logger = logger;
-        _tenantId = Guid.Parse(tenantContext.TenantId);
-    }
-
     public async Task LogAsync(IntegrityAuditEntry entry, CancellationToken ct = default)
     {
         // Check if audit logging is enabled
         if (!await IsAuditEnabledAsync(ct))
             return;
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         // Set internal admin role to bypass RLS for audit log entries
@@ -71,7 +61,7 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
                 entry.RequestId
             });
 
-        _logger.LogDebug("Integrity audit: {Action} by {UserId} on memory {MemoryId}",
+        logger.LogDebug("Integrity audit: {Action} by {UserId} on memory {MemoryId}",
             entry.Action, entry.UserId, entry.MemoryId);
     }
 
@@ -79,7 +69,7 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
         IntegrityAuditQueryOptions options,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -172,7 +162,7 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -202,7 +192,7 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
 
     public async Task<TenantIntegritySettings> GetSettingsAsync(CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -246,7 +236,7 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
         TenantIntegritySettingsUpdate update,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -288,14 +278,14 @@ public sealed class IntegrityAuditService : IIntegrityAuditService
             }
         }, ct);
 
-        _logger.LogInformation("Integrity settings updated for tenant {TenantId}", _tenantId);
+        logger.LogInformation("Integrity settings updated for tenant {TenantId}", _tenantId);
 
         return await GetSettingsAsync(ct);
     }
 
     public async Task<bool> IsAuditEnabledAsync(CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var enabled = await conn.ExecuteScalarAsync<bool?>(@"

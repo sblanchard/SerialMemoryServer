@@ -1,7 +1,4 @@
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
-using Moq;
-using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using Xunit;
 

@@ -5,7 +5,6 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Infrastructure;
 
 namespace SerialMemory.Api.Dashboard;
 

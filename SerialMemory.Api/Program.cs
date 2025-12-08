@@ -10,8 +10,6 @@ using SerialMemory.Infrastructure;
 using SerialMemory.Infrastructure.DependencyInjection;
 using SerialMemory.Infrastructure.Services;
 using SerialMemory.Infrastructure.Email;
-using SerialMemory.ML;
-using StackExchange.Redis;
 using SerialMemory.Api.Realtime;
 using SerialMemory.Api.Analysis;
 using SerialMemory.Api.Auth;
@@ -23,6 +21,8 @@ using SerialMemory.Api.Configuration;
 using MassTransit;
 using Npgsql;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.OpenApi.Models;
+using Scalar.AspNetCore;
 using Metrics = SerialMemory.Core.Telemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -46,7 +46,51 @@ if (operationalConfig.HasActivePanicSwitch)
 }
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "SerialMemory API",
+        Version = "v1",
+        Description = "Temporal knowledge graph memory system with semantic search, entity extraction, and multi-hop reasoning.",
+        Contact = new OpenApiContact
+        {
+            Name = "SerialMemory",
+            Url = new Uri("https://serialmemory.dev")
+        },
+        License = new OpenApiLicense
+        {
+            Name = "MIT",
+            Url = new Uri("https://opensource.org/licenses/MIT")
+        }
+    });
+
+    options.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.ApiKey,
+        In = ParameterLocation.Header,
+        Name = "X-Api-Key",
+        Description = "API key for authentication"
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "ApiKey"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+
+    // Handle any remaining duplicate endpoints gracefully
+    options.ResolveConflictingActions(apiDescriptions => apiDescriptions.First());
+});
 builder.Services.AddHttpClient(); // For auth endpoint forwarding to Dashboard API
 
 // Configure JSON to serialize enums as strings (required for Web frontend)
@@ -473,7 +517,14 @@ app.UseStaticFiles();
 app.UseMetricsMiddleware();
 
 app.UseSwagger();
-app.UseSwaggerUI();
+app.MapScalarApiReference(options =>
+{
+    options
+        .WithTitle("SerialMemory API")
+        .WithTheme(ScalarTheme.DeepSpace)
+        .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient)
+        .WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+});
 
 // API Key Authentication Middleware
 // Validates X-Api-Key header and sets tenant context for all requests
@@ -660,6 +711,60 @@ app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
     });
 });
 
+// GET /api/memories/multi-hop - Multi-hop graph traversal search
+app.MapGet("/api/memories/multi-hop", async (
+    string query,
+    int? hops,
+    int? maxResultsPerHop,
+    KnowledgeGraphService kgService) =>
+{
+    if (string.IsNullOrWhiteSpace(query))
+        return Results.BadRequest(new { error = "validation_error", message = "Query is required" });
+
+    var hopCount = Math.Clamp(hops ?? 2, 1, 5);
+    var maxResults = Math.Clamp(maxResultsPerHop ?? 5, 1, 20);
+
+    try
+    {
+        var result = await kgService.MultiHopSearchAsync(query, hopCount, maxResults);
+
+        return Results.Ok(new
+        {
+            hops = result.Hops,
+            memoriesFound = result.Memories.Count,
+            entitiesDiscovered = result.Entities.Count,
+            relationshipsFound = result.Relationships.Count,
+            memories = result.Memories.Take(10).Select(m => new
+            {
+                id = m.Id,
+                content = m.Content.Length > 300 ? m.Content[..300] + "..." : m.Content,
+                createdAt = m.CreatedAt,
+                source = m.Source
+            }),
+            entities = result.Entities.Take(20).Select(e => new
+            {
+                id = e.Id,
+                name = e.Name,
+                type = e.Type
+            }),
+            relationships = result.Relationships.Take(20).Select(r => new
+            {
+                source = r.Source,
+                target = r.Target,
+                type = r.Type,
+                confidence = r.Confidence
+            })
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError,
+            title: "Multi-hop search failed");
+    }
+});
+
 // Ingest a new memory with security pipeline integration
 app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphService kgService, ILiveEventEmitter liveEmitter, ISecurityPipeline securityPipeline, IKnowledgeGraphStore store, IUsageService usageService, IPerformanceService perfService) =>
 {
@@ -812,10 +917,7 @@ app.MapGet("/api/graph", async (
             foreach (var entity in memory.Entities)
             {
                 var key = $"{entity.Type}:{entity.Name}";
-                if (!entityMap.ContainsKey(key))
-                {
-                    entityMap[key] = entity;
-                }
+                entityMap.TryAdd(key, entity);
             }
         }
 
@@ -937,10 +1039,8 @@ app.MapGet("/api/graph/clustered", async (int? limit, KnowledgeGraphService kgSe
         foreach (var entity in memory.Entities)
         {
             var key = $"{entity.Type}:{entity.Name}";
-            if (!entityMap.ContainsKey(key))
+            if (entityMap.TryAdd(key, entity))
             {
-                entityMap[key] = entity;
-
                 if (!entityByType.ContainsKey(entity.Type))
                     entityByType[entity.Type] = new List<EntityInfo>();
                 entityByType[entity.Type].Add(entity);
@@ -1560,7 +1660,7 @@ app.MapPost("/api/billing/checkout", async (
     CreateCheckoutRequest checkoutRequest,
     IServiceProvider sp,
     ITenantContext tenantContext,
-    ILogger<Program> logger,
+    ILogger<Program> _,
     CancellationToken ct) =>
 {
     var billingService = sp.GetService<IBillingService>();
@@ -1597,7 +1697,7 @@ app.MapPost("/api/billing/portal", async (
     CreatePortalRequest portalRequest,
     IServiceProvider sp,
     ITenantContext tenantContext,
-    ILogger<Program> logger,
+    ILogger<Program> _,
     CancellationToken ct) =>
 {
     var billingService = sp.GetService<IBillingService>();
@@ -1745,7 +1845,7 @@ app.MapPost("/api/billing/resume", async (
 app.MapGet("/api/billing/plans", async (
     IPlanService planService,
     ITenantContext tenantContext,
-    CancellationToken ct) =>
+    CancellationToken _) =>
 {
     var currentSubscription = await planService.GetSubscriptionAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
     var currentPlanName = currentSubscription?.PlanName?.ToLower() ?? "free";
@@ -1836,7 +1936,7 @@ app.MapGet("/api/billing/plan/preview", async (
     IServiceProvider sp,
     ITenantContext tenantContext,
     IUsageService usageService,
-    CancellationToken ct) =>
+    CancellationToken _) =>
 {
     var billingService = sp.GetService<IBillingService>();
 
@@ -1925,7 +2025,7 @@ app.MapPost("/api/billing/plan/change", async (
 // GET /api/billing/invoices - List all invoices
 app.MapGet("/api/billing/invoices", async (
     int? limit,
-    int? offset,
+    int? _,
     IServiceProvider sp,
     ITenantContext tenantContext,
     CancellationToken ct) =>
@@ -1971,7 +2071,7 @@ app.MapGet("/api/billing/forecast", async (
     int? days,
     IUsageService usageService,
     ITenantContext tenantContext,
-    CancellationToken ct) =>
+    CancellationToken _) =>
 {
     var forecastDays = days ?? 30;
 
@@ -2013,7 +2113,7 @@ app.MapGet("/api/billing/recommendations", async (
     IUsageService usageService,
     IPlanService planService,
     ITenantContext tenantContext,
-    CancellationToken ct) =>
+    CancellationToken _) =>
 {
     var cycle = await usageService.GetCurrentBillingCycleAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
     var subscription = await planService.GetSubscriptionAsync(tenantContext.TenantId, tenantContext.WorkspaceId);
@@ -3520,7 +3620,7 @@ app.MapGet("/api/privacy-legacy/audit/proof/{proofId:guid}", async (Guid proofId
 // ============================================
 
 // POST /api/visualize/graph - Get graph visualization data
-app.MapPost("/api/visualize/graph", async (GraphVisualizeRequest request, IKnowledgeGraphStore store, KnowledgeGraphService kgService) =>
+app.MapPost("/api/visualize/graph", async (GraphVisualizeRequest request, IKnowledgeGraphStore store) =>
 {
     var entities = await store.GetAllEntitiesAsync(100);
     var relationships = await store.GetAllRelationshipsAsync(200);
@@ -5088,6 +5188,66 @@ app.MapGet("/api/integrity/stats", async (
     });
 });
 
+// GET /api/integrity/scan-loops - Detect cycles in causal parent relationships
+app.MapGet("/api/integrity/scan-loops", async (
+    int? maxDepth,
+    int? limit,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    var maxD = Math.Clamp(maxDepth ?? 10, 1, 20);
+    var lim = Math.Clamp(limit ?? 50, 1, 200);
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+
+    // Get all memories with causal parents
+    var memoriesWithParents = await conn.QueryAsync<(Guid memory_id, Guid[] causal_parents)>(@"
+        SELECT id AS memory_id, causal_parents
+        FROM memories
+        WHERE tenant_id = @TenantId
+          AND causal_parents IS NOT NULL
+          AND array_length(causal_parents, 1) > 0
+        LIMIT @Limit",
+        new { TenantId = tenantId, Limit = lim * 10 });
+
+    var parentMap = new Dictionary<Guid, Guid[]>();
+    foreach (var m in memoriesWithParents)
+    {
+        parentMap[m.memory_id] = m.causal_parents ?? Array.Empty<Guid>();
+    }
+
+    var loops = new List<object>();
+    var visited = new HashSet<Guid>();
+    var recursionStack = new HashSet<Guid>();
+
+    foreach (var memoryId in parentMap.Keys)
+    {
+        if (loops.Count >= lim) break;
+
+        var path = new List<Guid>();
+        if (DetectCycleInGraph(memoryId, parentMap, visited, recursionStack, path, maxD))
+        {
+            loops.Add(new { cycleMemoryIds = path.ToArray(), cycleLength = path.Count });
+        }
+
+        visited.Clear();
+        recursionStack.Clear();
+    }
+
+    return Results.Ok(new
+    {
+        maxDepth = maxD,
+        memoriesScanned = parentMap.Count,
+        loopsFound = loops.Count,
+        loops,
+        message = loops.Count == 0
+            ? "No causal loops detected. Graph is acyclic."
+            : $"Found {loops.Count} causal loop(s). Consider breaking cycles by invalidating one memory in each loop."
+    });
+});
+
 // ============================================
 // SELF-HEALING ENDPOINTS (Detection & Audit)
 // ============================================
@@ -5399,22 +5559,14 @@ app.MapPost("/api/conflicts/run-detection", async (IMindHealthService mindServic
     });
 });
 
-// POST /api/conflicts/{conflictId}/resolve - Resolve a conflict
-app.MapPost("/api/conflicts/{conflictId:guid}/resolve", async (
-    Guid conflictId,
-    ConflictResolutionRequest request,
-    IPowerUserService powerService) =>
-{
-    await powerService.ResolveConflictAsync(conflictId, request.Resolution, request.WinnerId);
-    return Results.Ok(new { resolved = true, conflictId, resolution = request.Resolution });
-});
+// NOTE: POST /api/conflicts/{conflictId}/resolve is defined in ConflictsEndpoints.cs
 
 // ============================================
 // TRACES ENDPOINTS (Event Tracing)
 // ============================================
 
 // GET /api/traces/recent - Recent memory traces (for dashboard)
-app.MapGet("/api/traces/recent", async (int? limit, string? eventType, IGraphEventStore graphEventStore, IKnowledgeGraphStore kgStore) =>
+app.MapGet("/api/traces/recent", async (int? limit, IGraphEventStore graphEventStore) =>
 {
     var events = await graphEventStore.GetRecentEventsAsync(limit ?? 50);
 
@@ -5521,7 +5673,7 @@ app.MapGet("/api/mutations/stats", async (IGraphEventStore graphEventStore) =>
 });
 
 // GET /api/mutations/sequence - Current sequence number
-app.MapGet("/api/mutations/sequence", (IGraphEventStore graphEventStore) =>
+app.MapGet("/api/mutations/sequence", (IGraphEventStore _) =>
 {
     return Results.Ok(new { sequence = mutationState.CurrentSequence, paused = mutationState.IsPaused });
 });
@@ -5814,6 +5966,32 @@ static decimal GetPlanPrice(string planName, string interval) => planName.ToLowe
     },
     _ => 0m
 };
+
+// Helper method for cycle detection in causal parent graph
+static bool DetectCycleInGraph(Guid current, Dictionary<Guid, Guid[]> parentMap,
+    HashSet<Guid> visited, HashSet<Guid> stack, List<Guid> path, int maxDepth)
+{
+    if (path.Count >= maxDepth) return false;
+    if (stack.Contains(current)) { path.Add(current); return true; }
+    if (visited.Contains(current)) return false;
+
+    visited.Add(current);
+    stack.Add(current);
+    path.Add(current);
+
+    if (parentMap.TryGetValue(current, out var parents))
+    {
+        foreach (var parent in parents)
+        {
+            if (DetectCycleInGraph(parent, parentMap, visited, stack, path, maxDepth))
+                return true;
+        }
+    }
+
+    path.RemoveAt(path.Count - 1);
+    stack.Remove(current);
+    return false;
+}
 
 // Request DTOs
 internal record PlanChangeRequest(

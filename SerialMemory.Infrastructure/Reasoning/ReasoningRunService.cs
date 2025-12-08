@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
@@ -11,25 +12,15 @@ namespace SerialMemory.Infrastructure.Reasoning;
 /// Service for orchestrating and persisting reasoning executions.
 /// Creates execution records, calls MultiModelReasoningService, and persists results.
 /// </summary>
-public sealed class ReasoningRunService : IReasoningRunService
+public sealed class ReasoningRunService(
+    IInternalDbConnectionFactory connectionFactory,
+    IServiceScopeFactory scopeFactory,
+    ILogger<ReasoningRunService> logger)
+    : IReasoningRunService
 {
-    private readonly IInternalDbConnectionFactory _connectionFactory;
-    private readonly IMultiModelReasoningService _reasoningService;
-    private readonly ILogger<ReasoningRunService> _logger;
-
     // Event for SignalR broadcasting (set by ReasoningHub)
     public event Func<Guid, ReasoningTrace, Task>? OnTraceAdded;
     public event Func<Guid, ReasoningExecution, Task>? OnExecutionCompleted;
-
-    public ReasoningRunService(
-        IInternalDbConnectionFactory connectionFactory,
-        IMultiModelReasoningService reasoningService,
-        ILogger<ReasoningRunService> logger)
-    {
-        _connectionFactory = connectionFactory;
-        _reasoningService = reasoningService;
-        _logger = logger;
-    }
 
     public async Task<Guid> RunByMemoryAsync(
         Guid tenantId,
@@ -46,9 +37,16 @@ public sealed class ReasoningRunService : IReasoningRunService
             InputReference = memoryId.ToString()
         };
 
+        // Create a scope with proper tenant context for scoped services
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var tenantContext = scope.ServiceProvider.GetRequiredService<IMutableTenantContext>();
+        tenantContext.SetContext(tenantId.ToString(), "default", userId);
+
+        var reasoningService = scope.ServiceProvider.GetRequiredService<IMultiModelReasoningService>();
+
         return await ExecuteReasoningAsync(
             execution,
-            () => _reasoningService.ReasonMemoryAsync(memoryId, maxDurationMs, cancellationToken),
+            () => reasoningService.ReasonMemoryAsync(memoryId, maxDurationMs, cancellationToken),
             cancellationToken);
     }
 
@@ -67,10 +65,17 @@ public sealed class ReasoningRunService : IReasoningRunService
             InputReference = query
         };
 
+        // Create a scope with proper tenant context for scoped services
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var tenantContext = scope.ServiceProvider.GetRequiredService<IMutableTenantContext>();
+        tenantContext.SetContext(tenantId.ToString(), "default", userId);
+
+        var reasoningService = scope.ServiceProvider.GetRequiredService<IMultiModelReasoningService>();
+
         // For query-based reasoning, we use the general ReasonAsync with no project filter
         return await ExecuteReasoningAsync(
             execution,
-            () => _reasoningService.ReasonAsync(null, maxDurationMs, cancellationToken),
+            () => reasoningService.ReasonAsync(null, maxDurationMs, cancellationToken),
             cancellationToken);
     }
 
@@ -89,9 +94,16 @@ public sealed class ReasoningRunService : IReasoningRunService
             InputReference = projectName
         };
 
+        // Create a scope with proper tenant context for scoped services
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var tenantContext = scope.ServiceProvider.GetRequiredService<IMutableTenantContext>();
+        tenantContext.SetContext(tenantId.ToString(), "default", userId);
+
+        var reasoningService = scope.ServiceProvider.GetRequiredService<IMultiModelReasoningService>();
+
         return await ExecuteReasoningAsync(
             execution,
-            () => _reasoningService.ReasonAsync(projectName, maxDurationMs, cancellationToken),
+            () => reasoningService.ReasonAsync(projectName, maxDurationMs, cancellationToken),
             cancellationToken);
     }
 
@@ -100,10 +112,10 @@ public sealed class ReasoningRunService : IReasoningRunService
         Func<Task<MultiModelReasoningResult>> reasoningFunc,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting reasoning execution {ExecutionId} for tenant {TenantId}, type {InputType}",
+        logger.LogInformation("Starting reasoning execution {ExecutionId} for tenant {TenantId}, type {InputType}",
             execution.Id, execution.TenantId, execution.InputType);
 
-        using var conn = await _connectionFactory.OpenInternalWithTenantAsync(execution.TenantId, cancellationToken);
+        using var conn = await connectionFactory.OpenInternalWithTenantAsync(execution.TenantId, cancellationToken);
 
         // Insert execution record as pending
         await InsertExecutionAsync(conn, execution);
@@ -137,7 +149,7 @@ public sealed class ReasoningRunService : IReasoningRunService
             // Update final status
             await UpdateExecutionStatusAsync(conn, execution);
 
-            _logger.LogInformation("Reasoning execution {ExecutionId} completed successfully. Duration: {Duration}ms, Insights: {Insights}, Confidence: {Confidence:P0}",
+            logger.LogInformation("Reasoning execution {ExecutionId} completed successfully. Duration: {Duration}ms, Insights: {Insights}, Confidence: {Confidence:P0}",
                 execution.Id, execution.TotalDurationMs, execution.InsightCount, execution.OverallConfidence);
 
             // Notify listeners
@@ -156,7 +168,7 @@ public sealed class ReasoningRunService : IReasoningRunService
             execution.ErrorMessage = "Execution was cancelled";
             await UpdateExecutionStatusAsync(conn, execution);
 
-            _logger.LogWarning("Reasoning execution {ExecutionId} was cancelled", execution.Id);
+            logger.LogWarning("Reasoning execution {ExecutionId} was cancelled", execution.Id);
             throw;
         }
         catch (Exception ex)
@@ -171,7 +183,7 @@ public sealed class ReasoningRunService : IReasoningRunService
             };
             await UpdateExecutionStatusAsync(conn, execution);
 
-            _logger.LogError(ex, "Reasoning execution {ExecutionId} failed", execution.Id);
+            logger.LogError(ex, "Reasoning execution {ExecutionId} failed", execution.Id);
             throw;
         }
     }
@@ -461,7 +473,7 @@ public sealed class ReasoningRunService : IReasoningRunService
         Guid executionId,
         CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenInternalAsync(cancellationToken);
+        using var conn = await connectionFactory.OpenInternalAsync(cancellationToken);
 
         const string executionSql = """
             SELECT
@@ -539,7 +551,7 @@ public sealed class ReasoningRunService : IReasoningRunService
         int limit = 20,
         CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenInternalWithTenantAsync(tenantId, cancellationToken);
+        using var conn = await connectionFactory.OpenInternalWithTenantAsync(tenantId, cancellationToken);
 
         const string sql = """
             SELECT
@@ -561,7 +573,7 @@ public sealed class ReasoningRunService : IReasoningRunService
         Guid executionId,
         CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenInternalAsync(cancellationToken);
+        using var conn = await connectionFactory.OpenInternalAsync(cancellationToken);
 
         const string sql = """
             UPDATE reasoning_executions

@@ -13,39 +13,27 @@ namespace SerialMemory.Infrastructure.Rag;
 /// Personalized RAG service using L2 summaries as the primary retrieval surface.
 /// Enriches results with L1 context, L3 facts, and L4 heuristics.
 /// </summary>
-public sealed class PersonalizedRagService : IPersonalizedRagService
+public sealed class PersonalizedRagService(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILlmService llmService,
+    ILogger<PersonalizedRagService> logger)
+    : IPersonalizedRagService
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILlmService _llmService;
-    private readonly ILogger<PersonalizedRagService> _logger;
-
     private const string DefaultSystemPrompt = """
-        You are SerialMemory, a personalized AI assistant with access to the user's memory system.
-        You have been provided with relevant memories from the user's knowledge base.
+                                               You are SerialMemory, a personalized AI assistant with access to the user's memory system.
+                                               You have been provided with relevant memories from the user's knowledge base.
 
-        IMPORTANT RULES:
-        1. Use ONLY the provided memories as evidence for your answers
-        2. If the memories don't contain relevant information, clearly say "I don't have information about this in your memories"
-        3. When referencing memories, explain which memory influenced your answer
-        4. Prefer the user's known preferences and patterns (from L4 heuristics) when making suggestions
-        5. Be concise but thorough in your responses
-        6. If there are contradicting memories, acknowledge the contradiction
+                                               IMPORTANT RULES:
+                                               1. Use ONLY the provided memories as evidence for your answers
+                                               2. If the memories don't contain relevant information, clearly say "I don't have information about this in your memories"
+                                               3. When referencing memories, explain which memory influenced your answer
+                                               4. Prefer the user's known preferences and patterns (from L4 heuristics) when making suggestions
+                                               5. Be concise but thorough in your responses
+                                               6. If there are contradicting memories, acknowledge the contradiction
 
-        Answer the user's query based on their memories.
-        """;
-
-    public PersonalizedRagService(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILlmService llmService,
-        ILogger<PersonalizedRagService> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _llmService = llmService;
-        _logger = logger;
-    }
+                                               Answer the user's query based on their memories.
+                                               """;
 
     /// <inheritdoc />
     public async Task<RagResult> AnswerAsync(
@@ -59,7 +47,7 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
         var sw = Stopwatch.StartNew();
         var queryId = Guid.CreateVersion7();
 
-        _logger.LogDebug("RAG query started: {QueryId} for tenant {TenantId}", queryId, tenantId);
+        logger.LogDebug("RAG query started: {QueryId} for tenant {TenantId}", queryId, tenantId);
 
         try
         {
@@ -68,12 +56,12 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
 
             if (memories.Count == 0)
             {
-                _logger.LogDebug("No relevant memories found for query");
+                logger.LogDebug("No relevant memories found for query");
                 return new RagResult
                 {
                     Answer = "I couldn't find any relevant information in your memories to answer this question.",
                     Memories = [],
-                    ModelName = _llmService.ModelName,
+                    ModelName = llmService.ModelName,
                     LatencyMs = (int)sw.ElapsedMilliseconds,
                     QueryId = queryId
                 };
@@ -84,7 +72,7 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
 
             // Step 3: Generate the answer
             var systemPrompt = options.SystemPromptOverride ?? DefaultSystemPrompt;
-            var answer = await _llmService.ChatAsync(
+            var answer = await llmService.ChatAsync(
                 userMessage: prompt,
                 systemPrompt: systemPrompt,
                 temperature: options.Temperature,
@@ -111,7 +99,7 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
                 (int)sw.ElapsedMilliseconds,
                 ct);
 
-            _logger.LogDebug("RAG query completed: {QueryId}, {MemoryCount} memories, {LatencyMs}ms",
+            logger.LogDebug("RAG query completed: {QueryId}, {MemoryCount} memories, {LatencyMs}ms",
                 queryId, memories.Count, sw.ElapsedMilliseconds);
 
             return new RagResult
@@ -119,14 +107,14 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
                 Answer = answer,
                 Memories = memories,
                 ReasoningTrace = reasoningTrace,
-                ModelName = $"{_llmService.ProviderName}/{_llmService.ModelName}",
+                ModelName = $"{llmService.ProviderName}/{llmService.ModelName}",
                 LatencyMs = (int)sw.ElapsedMilliseconds,
                 QueryId = queryId
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "RAG query failed: {QueryId}", queryId);
+            logger.LogError(ex, "RAG query failed: {QueryId}", queryId);
             throw;
         }
     }
@@ -152,9 +140,9 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
         CancellationToken ct)
     {
         // Step 1: Generate query embedding
-        var queryEmbedding = await _embeddingService.EmbedTextAsync(query, ct);
+        var queryEmbedding = await embeddingService.EmbedTextAsync(query, ct);
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
         await conn.ExecuteAsync(
             "SELECT set_config('app.tenant_id', @TenantId, false)",
             new { TenantId = tenantId.ToString() });
@@ -290,7 +278,7 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
             }
             catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "Failed to parse layer {Layer} for memory {MemoryId}",
+                logger.LogWarning(ex, "Failed to parse layer {Layer} for memory {MemoryId}",
                     layer.layer, l2.MemoryId);
             }
         }
@@ -484,7 +472,7 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
     {
         try
         {
-            await using var conn = await _dataSource.OpenConnectionAsync(ct);
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
             await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
             await conn.ExecuteAsync(
@@ -503,13 +491,13 @@ public sealed class PersonalizedRagService : IPersonalizedRagService
                     MemoryIds = memoryIds,
                     ReasoningTrace = reasoningTrace,
                     LatencyMs = latencyMs,
-                    ModelName = $"{_llmService.ProviderName}/{_llmService.ModelName}"
+                    ModelName = $"{llmService.ProviderName}/{llmService.ModelName}"
                 });
         }
         catch (Exception ex)
         {
             // Don't fail the request if analytics storage fails
-            _logger.LogWarning(ex, "Failed to store RAG query result");
+            logger.LogWarning(ex, "Failed to store RAG query result");
         }
     }
 

@@ -1,9 +1,4 @@
 using Dapper;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Deployment;
 using SerialMemory.Core.Interfaces;
@@ -25,7 +20,7 @@ public static class SelfHostedEndpoints
             .WithTags("Self-Hosted Admin");
 
         // GET /api/selfhost/status - Self-hosted deployment status
-        group.MapGet("/status", (IDeploymentContext deployment, IKnowledgeGraphStore store, HttpContext http) =>
+        group.MapGet("/status", (IDeploymentContext deployment, IKnowledgeGraphStore _, HttpContext http) =>
         {
             if (!CanAccessSelfHostFeatures(deployment, http))
             {
@@ -122,7 +117,7 @@ public static class SelfHostedEndpoints
         });
 
         // POST /api/selfhost/maintenance/reindex - Trigger re-indexing
-        group.MapPost("/maintenance/reindex", async (IDeploymentContext deployment, IKnowledgeGraphStore store, HttpContext http) =>
+        group.MapPost("/maintenance/reindex", async (IDeploymentContext deployment, IKnowledgeGraphStore _, HttpContext http) =>
         {
             if (!CanAccessSelfHostFeatures(deployment, http))
             {

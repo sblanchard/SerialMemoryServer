@@ -57,7 +57,7 @@ try
     // Add SerialMemory services for import (only if needed)
     if (needsImportServices)
     {
-        builder.Services.AddSingleton<IKnowledgeGraphStore>(sp =>
+        builder.Services.AddSingleton<IKnowledgeGraphStore>(_ =>
             new PostgresKnowledgeGraphStore(connectionString));
 
         // Add embedding service - Ollama
@@ -66,7 +66,7 @@ try
         var ollamaEmbeddingDim = int.TryParse(Environment.GetEnvironmentVariable("OLLAMA_EMBEDDING_DIM"), out var dim) ? dim : 768;
 
         Log.Information("Using Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
-        builder.Services.AddSingleton<IEmbeddingService>(sp =>
+        builder.Services.AddSingleton<IEmbeddingService>(_ =>
             new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim));
 
         // Add entity extraction
@@ -92,7 +92,7 @@ try
     var cts = new CancellationTokenSource();
 
     // Handle Ctrl+C gracefully
-    Console.CancelKeyPress += (sender, e) =>
+    Console.CancelKeyPress += (_, e) =>
     {
         e.Cancel = true;
         logger.LogWarning("Cancellation requested. Saving state and shutting down...");

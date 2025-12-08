@@ -763,17 +763,11 @@ public sealed class KillSwitchService : IKillSwitchService
 
     #region DTOs
 
-    private sealed class CachedState
+    private sealed class CachedState(KillSwitchState state, DateTimeOffset expiresAt)
     {
-        public KillSwitchState State { get; }
-        public DateTimeOffset ExpiresAt { get; }
+        public KillSwitchState State { get; } = state;
+        public DateTimeOffset ExpiresAt { get; } = expiresAt;
         public bool IsExpired => DateTimeOffset.UtcNow >= ExpiresAt;
-
-        public CachedState(KillSwitchState state, DateTimeOffset expiresAt)
-        {
-            State = state;
-            ExpiresAt = expiresAt;
-        }
     }
 
     private sealed class EmergencyCutoffDto

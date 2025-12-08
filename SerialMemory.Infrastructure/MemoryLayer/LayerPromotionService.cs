@@ -2,7 +2,6 @@ using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.Infrastructure.MemoryLayer;
 

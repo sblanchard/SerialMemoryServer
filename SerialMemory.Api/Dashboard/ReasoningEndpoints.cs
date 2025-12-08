@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.Core.Models;
 
 namespace SerialMemory.Api.Dashboard;
 

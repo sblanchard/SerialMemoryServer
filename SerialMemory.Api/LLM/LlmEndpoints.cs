@@ -1,10 +1,5 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
-using SerialMemory.Infrastructure;
-using SerialMemory.ML;
 
 namespace SerialMemory.Api.LLM;
 

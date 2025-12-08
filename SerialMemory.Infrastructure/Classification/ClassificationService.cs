@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
@@ -15,12 +14,15 @@ namespace SerialMemory.Infrastructure.Classification;
 /// Full L0→L4 classification pipeline using LLM calls.
 /// Each layer processes the memory through structured prompts and validates output schemas.
 /// </summary>
-public sealed class ClassificationService : IClassificationService
+public sealed class ClassificationService(
+    NpgsqlDataSource dataSource,
+    ILlmService llmService,
+    IEmbeddingService embeddingService,
+    ILogger<ClassificationService> logger)
+    : IClassificationService
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILlmService _llmService;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<ClassificationService> _logger;
+    private readonly NpgsqlDataSource _dataSource = dataSource;
+    private readonly IEmbeddingService _embeddingService = embeddingService;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -28,18 +30,6 @@ public sealed class ClassificationService : IClassificationService
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
-
-    public ClassificationService(
-        NpgsqlDataSource dataSource,
-        ILlmService llmService,
-        IEmbeddingService embeddingService,
-        ILogger<ClassificationService> logger)
-    {
-        _dataSource = dataSource;
-        _llmService = llmService;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
 
     /// <inheritdoc />
     public async Task<ClassificationResult> ClassifyAsync(
@@ -54,7 +44,7 @@ public sealed class ClassificationService : IClassificationService
         {
             var (systemPrompt, userPrompt) = GetPromptsForLayer(layer, content, previousLayerContent);
 
-            var response = await _llmService.ChatAsync(
+            var response = await llmService.ChatAsync(
                 userMessage: userPrompt,
                 systemPrompt: systemPrompt,
                 temperature: 0.3f,
@@ -67,7 +57,7 @@ public sealed class ClassificationService : IClassificationService
             var json = ExtractJson(response);
             if (string.IsNullOrEmpty(json))
             {
-                _logger.LogWarning("Failed to extract JSON from {Layer} response: {Response}",
+                logger.LogWarning("Failed to extract JSON from {Layer} response: {Response}",
                     layer, response.Length > 500 ? response[..500] : response);
 
                 // Return a fallback result
@@ -77,14 +67,14 @@ public sealed class ClassificationService : IClassificationService
             // Validate and parse the schema
             var result = ParseAndValidateResult(layer, json, sw.ElapsedMilliseconds);
 
-            _logger.LogDebug("Classified {Layer} in {ElapsedMs}ms, confidence: {Confidence}",
+            logger.LogDebug("Classified {Layer} in {ElapsedMs}ms, confidence: {Confidence}",
                 layer, sw.ElapsedMilliseconds, result.Confidence);
 
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Classification failed for {Layer}", layer);
+            logger.LogError(ex, "Classification failed for {Layer}", layer);
             throw;
         }
     }
@@ -349,14 +339,14 @@ public sealed class ClassificationService : IClassificationService
             return new ClassificationResult
             {
                 ContentJson = json,
-                ModelName = $"{_llmService.ProviderName}/{_llmService.ModelName}",
+                ModelName = $"{llmService.ProviderName}/{llmService.ModelName}",
                 Confidence = confidence,
                 KnowledgeNodes = knowledgeNodes
             };
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse {Layer} JSON: {Json}", layer, json);
+            logger.LogWarning(ex, "Failed to parse {Layer} JSON: {Json}", layer, json);
             return CreateFallbackResult(layer, json, durationMs);
         }
     }

@@ -1,5 +1,4 @@
 using Dapper;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -11,29 +10,21 @@ namespace SerialMemory.Infrastructure.Integrity;
 /// Background worker for automatic integrity hashing and verification.
 /// Processes new memories and runs periodic chain verification.
 /// </summary>
-public sealed class IntegrityWorker : BackgroundService
+public sealed class IntegrityWorker(
+    IServiceProvider serviceProvider,
+    string connectionString,
+    ILogger<IntegrityWorker> logger)
+    : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
-    private readonly string _connectionString;
-    private readonly ILogger<IntegrityWorker> _logger;
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
 
     private readonly TimeSpan _hashingInterval = TimeSpan.FromSeconds(30);
     private readonly TimeSpan _verificationInterval = TimeSpan.FromHours(1);
     private readonly int _batchSize = 100;
 
-    public IntegrityWorker(
-        IServiceProvider serviceProvider,
-        string connectionString,
-        ILogger<IntegrityWorker> logger)
-    {
-        _serviceProvider = serviceProvider;
-        _connectionString = connectionString;
-        _logger = logger;
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("IntegrityWorker started");
+        logger.LogInformation("IntegrityWorker started");
 
         var lastVerificationTime = DateTimeOffset.MinValue;
 
@@ -59,17 +50,17 @@ public sealed class IntegrityWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "IntegrityWorker error");
+                logger.LogError(ex, "IntegrityWorker error");
                 await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
             }
         }
 
-        _logger.LogInformation("IntegrityWorker stopped");
+        logger.LogInformation("IntegrityWorker stopped");
     }
 
     private async Task ProcessUnhashedMemoriesAsync(CancellationToken ct)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         // Get distinct tenants with unhashed memories
@@ -83,7 +74,7 @@ public sealed class IntegrityWorker : BackgroundService
         if (tenantList.Count == 0)
             return;
 
-        _logger.LogDebug("Processing unhashed memories for {Count} tenants", tenantList.Count);
+        logger.LogDebug("Processing unhashed memories for {Count} tenants", tenantList.Count);
 
         foreach (var tenantId in tenantList)
         {
@@ -95,7 +86,7 @@ public sealed class IntegrityWorker : BackgroundService
     {
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
+            await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
             await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
@@ -112,7 +103,7 @@ public sealed class IntegrityWorker : BackgroundService
             if (memoryList.Count == 0)
                 return;
 
-            _logger.LogDebug("Hashing {Count} memories for tenant {TenantId}", memoryList.Count, tenantId);
+            logger.LogDebug("Hashing {Count} memories for tenant {TenantId}", memoryList.Count, tenantId);
 
             // Get tenant's hash algorithm
             var algorithm = await conn.ExecuteScalarAsync<string?>(@"
@@ -189,19 +180,19 @@ public sealed class IntegrityWorker : BackgroundService
                 previousChainHash = chainHash;
             }
 
-            _logger.LogInformation("Hashed {Count} memories for tenant {TenantId}", memoryList.Count, tenantId);
+            logger.LogInformation("Hashed {Count} memories for tenant {TenantId}", memoryList.Count, tenantId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to hash memories for tenant {TenantId}", tenantId);
+            logger.LogError(ex, "Failed to hash memories for tenant {TenantId}", tenantId);
         }
     }
 
     private async Task RunPeriodicVerificationAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Starting periodic integrity verification");
+        logger.LogInformation("Starting periodic integrity verification");
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         // Get tenants with hash verification enabled
@@ -210,7 +201,7 @@ public sealed class IntegrityWorker : BackgroundService
             WHERE enable_hash_verification = true");
 
         var tenantList = tenants.ToList();
-        _logger.LogDebug("Running verification for {Count} tenants", tenantList.Count);
+        logger.LogDebug("Running verification for {Count} tenants", tenantList.Count);
 
         foreach (var tenantId in tenantList)
         {
@@ -222,16 +213,16 @@ public sealed class IntegrityWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Verification failed for tenant {TenantId}", tenantId);
+                logger.LogError(ex, "Verification failed for tenant {TenantId}", tenantId);
             }
         }
 
-        _logger.LogInformation("Completed periodic integrity verification");
+        logger.LogInformation("Completed periodic integrity verification");
     }
 
     private async Task VerifyTenantChainAsync(Guid tenantId, CancellationToken ct)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
@@ -285,7 +276,7 @@ public sealed class IntegrityWorker : BackgroundService
                     UPDATE memories SET integrity_status = 'invalid' WHERE id = @Id",
                     new { Id = memory.id });
 
-                _logger.LogWarning("Integrity mismatch for memory {MemoryId}: content={ContentValid}, chain={ChainValid}",
+                logger.LogWarning("Integrity mismatch for memory {MemoryId}: content={ContentValid}, chain={ChainValid}",
                     memory.id, contentValid, chainValid);
             }
 
@@ -294,11 +285,11 @@ public sealed class IntegrityWorker : BackgroundService
 
         if (invalidCount > 0)
         {
-            _logger.LogWarning("Tenant {TenantId} has {Count} memories with integrity issues", tenantId, invalidCount);
+            logger.LogWarning("Tenant {TenantId} has {Count} memories with integrity issues", tenantId, invalidCount);
         }
         else
         {
-            _logger.LogDebug("Tenant {TenantId} chain verified: {Count} memories OK", tenantId, memoryList.Count);
+            logger.LogDebug("Tenant {TenantId} chain verified: {Count} memories OK", tenantId, memoryList.Count);
         }
     }
 

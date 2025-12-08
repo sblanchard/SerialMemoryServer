@@ -700,7 +700,7 @@ public class DeterministicEngineBenchmarks
         {
             var random = new Random(42);
             var candidates = Enumerable.Range(0, candidateCount)
-                .Select(i => new MemoryCandidate(
+                .Select(_ => new MemoryCandidate(
                     Guid.NewGuid(),
                     GenerateRandomText(random, 100 + random.Next(200)),
                     20 + random.Next(100),

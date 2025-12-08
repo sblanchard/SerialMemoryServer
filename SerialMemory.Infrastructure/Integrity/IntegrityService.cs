@@ -10,29 +10,20 @@ namespace SerialMemory.Infrastructure.Integrity;
 /// PostgreSQL-backed integrity service for computing and verifying cryptographic proofs.
 /// Implements tamper-evident hashing with chain verification.
 /// </summary>
-public sealed class IntegrityService : IIntegrityService
+public sealed class IntegrityService(
+    string connectionString,
+    ITenantContext tenantContext,
+    ILogger<IntegrityService> logger)
+    : IIntegrityService
 {
-    private readonly string _connectionString;
-    private readonly ITenantContext _tenantContext;
-    private readonly ILogger<IntegrityService> _logger;
-    private readonly Guid _tenantId;
+    private readonly ITenantContext _tenantContext = tenantContext;
+    private readonly Guid _tenantId = Guid.Parse(tenantContext.TenantId);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
     };
-
-    public IntegrityService(
-        string connectionString,
-        ITenantContext tenantContext,
-        ILogger<IntegrityService> logger)
-    {
-        _connectionString = connectionString;
-        _tenantContext = tenantContext;
-        _logger = logger;
-        _tenantId = Guid.Parse(tenantContext.TenantId);
-    }
 
     public async Task<IntegrityProof> ComputeProofAsync(MemoryIntegrityRecord memory, CancellationToken ct = default)
     {
@@ -75,7 +66,7 @@ public sealed class IntegrityService : IIntegrityService
 
     public async Task<IntegrityVerificationResult> VerifyProofAsync(Guid memoryId, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -120,7 +111,7 @@ public sealed class IntegrityService : IIntegrityService
 
         if (!isValid && memory.content_hash != null)
         {
-            _logger.LogWarning("Integrity verification failed for memory {MemoryId}: content={ContentMatch}, chain={ChainMatch}",
+            logger.LogWarning("Integrity verification failed for memory {MemoryId}: content={ContentMatch}, chain={ChainMatch}",
                 memoryId, contentHashValid, chainHashValid);
         }
 
@@ -142,7 +133,7 @@ public sealed class IntegrityService : IIntegrityService
         var runId = Guid.CreateVersion7();
         var startedAt = DateTimeOffset.UtcNow;
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
@@ -241,7 +232,7 @@ public sealed class IntegrityService : IIntegrityService
         catch (Exception ex)
         {
             errorMessage = ex.Message;
-            _logger.LogError(ex, "Chain verification failed for tenant {TenantId}", tenantId);
+            logger.LogError(ex, "Chain verification failed for tenant {TenantId}", tenantId);
 
             await conn.ExecuteAsync(@"
                 UPDATE integrity_verification_runs
@@ -270,7 +261,7 @@ public sealed class IntegrityService : IIntegrityService
 
     public async Task<IntegrityProof?> GetProofAsync(Guid memoryId, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -286,7 +277,7 @@ public sealed class IntegrityService : IIntegrityService
 
     public async Task<IntegrityProof> UpdateIntegrityAsync(Guid memoryId, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -328,14 +319,14 @@ public sealed class IntegrityService : IIntegrityService
                 ProofBundle = proofJson
             });
 
-        _logger.LogInformation("Updated integrity for memory {MemoryId}", memoryId);
+        logger.LogInformation("Updated integrity for memory {MemoryId}", memoryId);
 
         return proof;
     }
 
     public async Task MarkInvalidAsync(Guid memoryId, string reason, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -346,12 +337,12 @@ public sealed class IntegrityService : IIntegrityService
             WHERE id = @MemoryId",
             new { MemoryId = memoryId, Reason = reason, Now = DateTimeOffset.UtcNow });
 
-        _logger.LogWarning("Marked memory {MemoryId} as invalid: {Reason}", memoryId, reason);
+        logger.LogWarning("Marked memory {MemoryId} as invalid: {Reason}", memoryId, reason);
     }
 
     private async Task<string> GetHashAlgorithmAsync(CancellationToken ct)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 
@@ -364,7 +355,7 @@ public sealed class IntegrityService : IIntegrityService
 
     private async Task<string> GetPreviousChainHashAsync(Guid memoryId, DateTimeOffset createdAt, CancellationToken ct)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
 

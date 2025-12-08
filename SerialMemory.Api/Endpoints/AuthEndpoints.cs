@@ -10,7 +10,7 @@ public static class AuthEndpoints
     {
         // GET /api/auth/whoami - Get current user info (requires auth)
         app.MapGet("/api/auth/whoami", (
-            HttpContext context,
+            HttpContext _,
             Core.Interfaces.ITenantContext tenantContext) =>
         {
             if (string.IsNullOrEmpty(tenantContext.TenantId))

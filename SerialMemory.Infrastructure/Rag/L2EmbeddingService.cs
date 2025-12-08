@@ -11,22 +11,12 @@ namespace SerialMemory.Infrastructure.Rag;
 /// Service for indexing L2 (summary) embeddings for RAG retrieval.
 /// Extracts summary and keywords from L2 layer and stores vector embeddings.
 /// </summary>
-public sealed class L2EmbeddingService : IL2EmbeddingService
+public sealed class L2EmbeddingService(
+    NpgsqlDataSource dataSource,
+    IEmbeddingService embeddingService,
+    ILogger<L2EmbeddingService> logger)
+    : IL2EmbeddingService
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly IEmbeddingService _embeddingService;
-    private readonly ILogger<L2EmbeddingService> _logger;
-
-    public L2EmbeddingService(
-        NpgsqlDataSource dataSource,
-        IEmbeddingService embeddingService,
-        ILogger<L2EmbeddingService> logger)
-    {
-        _dataSource = dataSource;
-        _embeddingService = embeddingService;
-        _logger = logger;
-    }
-
     /// <inheritdoc />
     public async Task<Guid> IndexL2Async(Guid tenantId, Guid memoryId, CancellationToken ct = default)
     {
@@ -51,7 +41,7 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
 
         if (l2Content?.content_json == null)
         {
-            _logger.LogWarning("No L2 layer found for memory {MemoryId}, skipping embedding", memoryId);
+            logger.LogWarning("No L2 layer found for memory {MemoryId}, skipping embedding", memoryId);
             return Guid.Empty;
         }
 
@@ -60,12 +50,12 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
 
         if (string.IsNullOrWhiteSpace(summary))
         {
-            _logger.LogWarning("L2 summary is empty for memory {MemoryId}, skipping embedding", memoryId);
+            logger.LogWarning("L2 summary is empty for memory {MemoryId}, skipping embedding", memoryId);
             return Guid.Empty;
         }
 
         // Generate embedding for the summary
-        var embedding = await _embeddingService.EmbedTextAsync(summary, ct);
+        var embedding = await embeddingService.EmbedTextAsync(summary, ct);
 
         // Upsert the L2 embedding
         var embeddingId = await UpsertEmbeddingAsync(
@@ -77,7 +67,7 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
             keywords,
             importance);
 
-        _logger.LogDebug("Indexed L2 embedding for memory {MemoryId}, id: {EmbeddingId}", memoryId, embeddingId);
+        logger.LogDebug("Indexed L2 embedding for memory {MemoryId}, id: {EmbeddingId}", memoryId, embeddingId);
 
         return embeddingId;
     }
@@ -103,7 +93,7 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
             """,
             new { TenantId = tenantId })).ToList();
 
-        _logger.LogInformation("Bulk reindexing {Count} memories for tenant {TenantId}", memoryIds.Count, tenantId);
+        logger.LogInformation("Bulk reindexing {Count} memories for tenant {TenantId}", memoryIds.Count, tenantId);
 
         var indexed = 0;
         foreach (var memoryId in memoryIds)
@@ -119,11 +109,11 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to index L2 for memory {MemoryId}", memoryId);
+                logger.LogError(ex, "Failed to index L2 for memory {MemoryId}", memoryId);
             }
         }
 
-        _logger.LogInformation("Bulk reindex complete: {Indexed}/{Total} memories indexed", indexed, memoryIds.Count);
+        logger.LogInformation("Bulk reindex complete: {Indexed}/{Total} memories indexed", indexed, memoryIds.Count);
 
         return indexed;
     }
@@ -140,7 +130,7 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
             """,
             new { TenantId = tenantId, MemoryId = memoryId });
 
-        _logger.LogDebug("Removed L2 embedding for memory {MemoryId}", memoryId);
+        logger.LogDebug("Removed L2 embedding for memory {MemoryId}", memoryId);
     }
 
     /// <inheritdoc />
@@ -165,7 +155,7 @@ public sealed class L2EmbeddingService : IL2EmbeddingService
     /// </summary>
     private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
     {
-        var conn = await _dataSource.OpenConnectionAsync(ct);
+        var conn = await dataSource.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
         return conn;
     }

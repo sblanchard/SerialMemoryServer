@@ -199,9 +199,13 @@
     }
 
     async function subscribeToStreams() {
-        if (connection) {
-            // Subscribe to all reasoning events for this tenant
-            await connection.invoke("SubscribeToAllReasoningEvents");
+        if (connection && isConnected) {
+            try {
+                // Subscribe to all reasoning events for this tenant
+                await connection.invoke("SubscribeToAllReasoningEvents");
+            } catch (err) {
+                console.warn("Failed to subscribe to reasoning events:", err);
+            }
         }
     }
 
@@ -228,8 +232,12 @@
             console.log("Started execution:", result);
 
             // Subscribe to this specific execution
-            if (connection && result.executionId) {
-                await connection.invoke("SubscribeToExecution", result.executionId);
+            if (connection && isConnected && result.executionId) {
+                try {
+                    await connection.invoke("SubscribeToExecution", result.executionId);
+                } catch (subErr) {
+                    console.warn("Failed to subscribe to execution:", subErr);
+                }
                 selectedRunId = result.executionId;
             }
 
@@ -258,8 +266,12 @@
         document.getElementById('timelineStatus').textContent = 'Loading...';
 
         // Subscribe to this execution for live updates
-        if (connection) {
-            await connection.invoke("SubscribeToExecution", runId);
+        if (connection && isConnected) {
+            try {
+                await connection.invoke("SubscribeToExecution", runId);
+            } catch (subErr) {
+                console.warn("Failed to subscribe to execution:", subErr);
+            }
         }
 
         await loadRunDetails(runId);

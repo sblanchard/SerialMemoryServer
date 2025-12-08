@@ -5,7 +5,6 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
 using SerialMemory.Core.Interfaces;
-using SerialMemory.EventSourcing.Events;
 
 namespace SerialMemory.EventSourcing.Retrieval;
 

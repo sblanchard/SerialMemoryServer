@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Hosting;
 using SerialMemory.EventSourcing.Projections;
 
 namespace SerialMemory.Worker;

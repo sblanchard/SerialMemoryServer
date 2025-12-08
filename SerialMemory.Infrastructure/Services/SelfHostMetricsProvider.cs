@@ -11,28 +11,20 @@ namespace SerialMemory.Infrastructure.Services;
 /// Self-host metrics provider with explicit demo mode handling.
 /// Never silently shows fake data - always indicates when in demo mode.
 /// </summary>
-public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
+public sealed class SelfHostMetricsProvider(
+    NpgsqlDataSource dataSource,
+    IOptions<SelfHostMetricsConfig> config,
+    ILogger<SelfHostMetricsProvider> logger)
+    : ISelfHostMetricsProvider
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly SelfHostMetricsConfig _config;
-    private readonly ILogger<SelfHostMetricsProvider> _logger;
+    private readonly SelfHostMetricsConfig _config = config.Value;
 
     private SelfHostMetricsResult? _cachedMetrics;
     private DateTimeOffset _cacheExpiry = DateTimeOffset.MinValue;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
 
-    public SelfHostMetricsProvider(
-        NpgsqlDataSource dataSource,
-        IOptions<SelfHostMetricsConfig> config,
-        ILogger<SelfHostMetricsProvider> logger)
-    {
-        _dataSource = dataSource;
-        _config = config.Value;
-        _logger = logger;
-    }
-
     public bool IsLiveMode => _config.Mode.Equals("live", StringComparison.OrdinalIgnoreCase)
-        || (_config.Mode.Equals("auto", StringComparison.OrdinalIgnoreCase) && CanConnectToDatabase());
+                              || (_config.Mode.Equals("auto", StringComparison.OrdinalIgnoreCase) && CanConnectToDatabase());
 
     public async Task<SelfHostMetricsResult> GetMetricsAsync(CancellationToken ct = default)
     {
@@ -75,7 +67,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(_config.FetchTimeout);
 
-            await using var conn = await _dataSource.OpenConnectionAsync(cts.Token);
+            await using var conn = await dataSource.OpenConnectionAsync(cts.Token);
             await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
             var rps = await GetCurrentRpsAsync(conn, cts.Token);
@@ -97,7 +89,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Load status fetch timed out after {Timeout}", _config.FetchTimeout);
+            logger.LogWarning("Load status fetch timed out after {Timeout}", _config.FetchTimeout);
             return new SelfHostLoadStatus
             {
                 IsDemoMode = false,
@@ -107,7 +99,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch current load status");
+            logger.LogError(ex, "Failed to fetch current load status");
             return new SelfHostLoadStatus
             {
                 IsDemoMode = false,
@@ -122,11 +114,11 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         // Force demo mode if configured
         if (_config.Mode.Equals("demo", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Returning demo metrics - SELF_HOST_METRICS_MODE is set to 'demo'");
+            logger.LogInformation("Returning demo metrics - SELF_HOST_METRICS_MODE is set to 'demo'");
             return GetDemoMetrics("Demo mode enabled via configuration (SELF_HOST_METRICS_MODE=demo)");
         }
 
-        _logger.LogDebug("Fetching live metrics (mode={Mode})", _config.Mode);
+        logger.LogDebug("Fetching live metrics (mode={Mode})", _config.Mode);
         var sw = Stopwatch.StartNew();
 
         try
@@ -134,7 +126,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(_config.FetchTimeout);
 
-            await using var conn = await _dataSource.OpenConnectionAsync(cts.Token);
+            await using var conn = await dataSource.OpenConnectionAsync(cts.Token);
             await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
             // Fetch all metrics sequentially (Npgsql doesn't support concurrent operations on same connection)
@@ -146,7 +138,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             var trends = await GetLoadTrendsAsync(conn, cts.Token);
 
             sw.Stop();
-            _logger.LogDebug("Fetched live metrics in {ElapsedMs}ms", sw.ElapsedMilliseconds);
+            logger.LogDebug("Fetched live metrics in {ElapsedMs}ms", sw.ElapsedMilliseconds);
 
             // Build result
             var apiMetrics = new SelfHostApiMetrics
@@ -211,7 +203,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Metrics fetch timed out after {Timeout}", _config.FetchTimeout);
+            logger.LogWarning("Metrics fetch timed out after {Timeout}", _config.FetchTimeout);
             // Still try to get database stats (they use system tables that always exist)
             var dbStats = await TryGetDatabaseStatsAsync(ct);
             return new SelfHostMetricsResult
@@ -224,7 +216,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch self-host metrics: {ErrorType} - {ErrorMessage}",
+            logger.LogError(ex, "Failed to fetch self-host metrics: {ErrorType} - {ErrorMessage}",
                 ex.GetType().Name, ex.Message);
 
             // Still try to get database stats (they use system tables that always exist)
@@ -354,7 +346,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get RPS metrics, table may not exist");
+            logger.LogWarning(ex, "Failed to get RPS metrics, table may not exist");
             return new RpsData();
         }
     }
@@ -375,7 +367,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get latency metrics, table may not exist");
+            logger.LogWarning(ex, "Failed to get latency metrics, table may not exist");
             return new LatencyData();
         }
     }
@@ -395,7 +387,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get queue metrics, tables may not exist");
+            logger.LogWarning(ex, "Failed to get queue metrics, tables may not exist");
             return new QueueData();
         }
     }
@@ -423,7 +415,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get database metrics");
+            logger.LogWarning(ex, "Failed to get database metrics");
             return new DbMetricsData { MaxConnections = 100 };
         }
     }
@@ -444,7 +436,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get API stats, table may not exist");
+            logger.LogWarning(ex, "Failed to get API stats, table may not exist");
             return new ApiStatsData();
         }
     }
@@ -480,7 +472,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get load trends, table may not exist");
+            logger.LogWarning(ex, "Failed to get load trends, table may not exist");
             return new LoadTrendsData();
         }
     }
@@ -560,7 +552,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(3)); // Short timeout for fallback
 
-            await using var conn = await _dataSource.OpenConnectionAsync(cts.Token);
+            await using var conn = await dataSource.OpenConnectionAsync(cts.Token);
             var db = await GetDatabaseMetricsAsync(conn, cts.Token);
 
             return new SelfHostDatabaseMetrics
@@ -579,7 +571,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get database stats in fallback mode");
+            logger.LogWarning(ex, "Failed to get database stats in fallback mode");
             return new SelfHostDatabaseMetrics
             {
                 Status = "error",
@@ -596,7 +588,7 @@ public sealed class SelfHostMetricsProvider : ISelfHostMetricsProvider
     {
         try
         {
-            using var conn = _dataSource.CreateConnection();
+            using var conn = dataSource.CreateConnection();
             conn.Open();
             return true;
         }

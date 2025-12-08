@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
