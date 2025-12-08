@@ -1,7 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
-using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Store;
 using Xunit;
 

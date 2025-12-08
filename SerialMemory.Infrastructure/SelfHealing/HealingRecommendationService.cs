@@ -11,35 +11,23 @@ namespace SerialMemory.Infrastructure.SelfHealing;
 /// Generates and manages healing recommendations based on anomaly analysis.
 /// Uses HybridRetrievalEngine for context enrichment.
 /// </summary>
-public sealed class HealingRecommendationService : IHealingRecommendationService
+public sealed class HealingRecommendationService(
+    IAnomalyDetectionService anomalyDetector,
+    IMemorySelfHealing selfHealing,
+    IKnowledgeGraphStore knowledgeGraph,
+    IConfiguration configuration,
+    ILogger<HealingRecommendationService> logger)
+    : IHealingRecommendationService
 {
-    private readonly IAnomalyDetectionService _anomalyDetector;
-    private readonly IMemorySelfHealing _selfHealing;
-    private readonly IKnowledgeGraphStore _knowledgeGraph;
-    private readonly string _connectionString;
-    private readonly ILogger<HealingRecommendationService> _logger;
-    private readonly bool _isSelfHosted;
-    private readonly string _workerId;
+    private readonly IKnowledgeGraphStore _knowledgeGraph = knowledgeGraph;
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
 
-    public HealingRecommendationService(
-        IAnomalyDetectionService anomalyDetector,
-        IMemorySelfHealing selfHealing,
-        IKnowledgeGraphStore knowledgeGraph,
-        IConfiguration configuration,
-        ILogger<HealingRecommendationService> logger)
-    {
-        _anomalyDetector = anomalyDetector;
-        _selfHealing = selfHealing;
-        _knowledgeGraph = knowledgeGraph;
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
-        _logger = logger;
-        _isSelfHosted = string.Equals(
-            configuration["DeploymentMode"] ?? Environment.GetEnvironmentVariable("DEPLOYMENT_MODE"),
-            "selfhosted",
-            StringComparison.OrdinalIgnoreCase);
-        _workerId = $"healer-{Environment.MachineName}-{Environment.ProcessId}";
-    }
+    private readonly bool _isSelfHosted = string.Equals(
+        configuration["DeploymentMode"] ?? Environment.GetEnvironmentVariable("DEPLOYMENT_MODE"),
+        "selfhosted",
+        StringComparison.OrdinalIgnoreCase);
+    private readonly string _workerId = $"healer-{Environment.MachineName}-{Environment.ProcessId}";
 
     private static string BuildConnectionString()
         => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
@@ -49,10 +37,10 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
         int maxRecommendations = 50,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting anomaly analysis for recommendations");
+        logger.LogInformation("Starting anomaly analysis for recommendations");
 
         // Step 1: Detect anomalies
-        var anomalies = await _anomalyDetector.DetectAnomaliesAsync(tenantId, maxRecommendations * 2, cancellationToken);
+        var anomalies = await anomalyDetector.DetectAnomaliesAsync(tenantId, maxRecommendations * 2, cancellationToken);
 
         // Step 2: Generate recommendations for each anomaly
         var recommendations = new List<HealingRecommendation>();
@@ -72,7 +60,7 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
                 break;
         }
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Generated {Count} healing recommendations from {AnomalyCount} anomalies",
             recommendations.Count, anomalies.Count);
 
@@ -393,7 +381,7 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
                 case HealingActions.DecayConfidence:
                     if (rec.TargetMemoryId.HasValue)
                     {
-                        var decayed = await _selfHealing.ApplyDecayAsync(TimeSpan.FromDays(0), 0.8f, cancellationToken);
+                        var decayed = await selfHealing.ApplyDecayAsync(TimeSpan.FromDays(0), 0.8f, cancellationToken);
                         details = $"Applied confidence decay to memory, affected {decayed} records";
                         success = true;
                     }
@@ -426,7 +414,7 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
                 case HealingActions.ReinforceMemory:
                     if (rec.TargetMemoryId.HasValue)
                     {
-                        var reinforced = await _selfHealing.ReinforceMemoriesAsync(
+                        var reinforced = await selfHealing.ReinforceMemoriesAsync(
                             new[] { rec.TargetMemoryId.Value }, 1.2f, "healing_recommendation", cancellationToken);
                         details = $"Reinforced memory, affected {reinforced} records";
                         success = true;
@@ -456,7 +444,7 @@ public sealed class HealingRecommendationService : IHealingRecommendationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to apply healing recommendation {Id}", recommendationId);
+            logger.LogError(ex, "Failed to apply healing recommendation {Id}", recommendationId);
 
             await conn.ExecuteAsync(
                 "UPDATE self_healing_recommendations SET status = 'Failed' WHERE id = @Id",

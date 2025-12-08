@@ -6,13 +6,11 @@ using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.EventSourcing.Store;
 using SerialMemory.Infrastructure;
-using SerialMemory.Infrastructure.Billing;
 using SerialMemory.Infrastructure.Email;
 using SerialMemory.Infrastructure.KillSwitch;
 using SerialMemory.Infrastructure.Rag;
 using SerialMemory.Infrastructure.Reasoning;
 using SerialMemory.Infrastructure.Services;
-using SerialMemory.ML;
 using SerialMemory.Api.Realtime;
 
 namespace SerialMemory.Api.Dashboard;
@@ -138,22 +136,38 @@ public static class DashboardExtensions
         services.AddSingleton<ReasoningHubBroadcaster>();
 
         // Reasoning run service (orchestrates and persists reasoning)
+        // Uses IServiceScopeFactory to create properly-scoped tenant contexts per-request
         services.AddSingleton<IReasoningRunService>(sp =>
         {
             var service = new ReasoningRunService(
                 sp.GetRequiredService<IInternalDbConnectionFactory>(),
-                sp.GetRequiredService<IMultiModelReasoningService>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetRequiredService<ILogger<ReasoningRunService>>());
 
-            // Wire up SignalR broadcasting
+            // Wire up SignalR broadcasting (resilient to connection failures)
             var broadcaster = sp.GetRequiredService<ReasoningHubBroadcaster>();
+            var logger = sp.GetRequiredService<ILogger<ReasoningRunService>>();
             service.OnTraceAdded += async (executionId, trace) =>
             {
-                await broadcaster.BroadcastNewStepAddedAsync(executionId, trace.ExecutionId != Guid.Empty ? trace.ExecutionId : executionId, trace);
+                try
+                {
+                    await broadcaster.BroadcastNewStepAddedAsync(executionId, trace.ExecutionId != Guid.Empty ? trace.ExecutionId : executionId, trace);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to broadcast trace added for execution {ExecutionId}", executionId);
+                }
             };
             service.OnExecutionCompleted += async (executionId, execution) =>
             {
-                await broadcaster.BroadcastExecutionCompletedAsync(executionId, execution.TenantId, execution);
+                try
+                {
+                    await broadcaster.BroadcastExecutionCompletedAsync(executionId, execution.TenantId, execution);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to broadcast execution completed for {ExecutionId}", executionId);
+                }
             };
 
             return service;
@@ -658,27 +672,7 @@ public static class DashboardExtensions
 
     private static void MapSystemAdminEndpoints(WebApplication app, bool selfHostedMode)
     {
-        // GET /admin/tenants
-        app.MapGet("/admin/tenants", async (
-            string? status,
-            int? limit,
-            int? offset,
-            IAdminService adminService,
-            CancellationToken ct) =>
-        {
-            var statusFilter = status?.ToLowerInvariant() switch
-            {
-                "active" => TenantStatusFilter.Active,
-                "pending_deletion" => TenantStatusFilter.PendingDeletion,
-                "blocked" => TenantStatusFilter.Blocked,
-                _ => TenantStatusFilter.All
-            };
-
-            var result = await adminService.ListTenantsAsync(statusFilter, limit ?? 50, offset ?? 0, ct);
-            return Results.Ok(result);
-        })
-        .WithName("AdminListTenants")
-        .RequireAuthorization("Owner");
+        // NOTE: /admin/tenants is defined in AdminEndpoints.cs - do not duplicate here
 
         // GET /admin/tenant/{id}/health
         app.MapGet("/admin/tenant/{id:guid}/health", async (

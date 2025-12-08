@@ -1,5 +1,4 @@
 using SerialMemory.Core.Interfaces;
-using SerialMemory.EventSourcing.Events;
 
 namespace SerialMemory.EventSourcing.CQRS;
 

@@ -10,34 +10,22 @@ namespace SerialMemory.Infrastructure.Auth;
 /// Service for generating short-lived internal JWTs for dashboard authentication.
 /// These tokens are NOT the same as external API keys and have shorter lifetimes.
 /// </summary>
-public sealed class InternalDashboardTokenService : IInternalDashboardTokenService
+public sealed class InternalDashboardTokenService(
+    string secretKey,
+    string issuer,
+    string audience,
+    ILogger<InternalDashboardTokenService> logger)
+    : IInternalDashboardTokenService
 {
-    private readonly string _secretKey;
-    private readonly string _issuer;
-    private readonly string _audience;
-    private readonly ILogger<InternalDashboardTokenService> _logger;
-
     // Internal tokens are medium-lived (30 minutes by default)
     private static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromMinutes(30);
-
-    public InternalDashboardTokenService(
-        string secretKey,
-        string issuer,
-        string audience,
-        ILogger<InternalDashboardTokenService> logger)
-    {
-        _secretKey = secretKey;
-        _issuer = issuer;
-        _audience = audience;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Generates an internal dashboard token from a validated external auth (cookie or API key).
     /// </summary>
     public InternalDashboardToken GenerateToken(DashboardTokenRequest request)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var expiresAt = DateTimeOffset.UtcNow.Add(request.Lifetime ?? DefaultTokenLifetime);
@@ -66,15 +54,15 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
         }
 
         var token = new JwtSecurityToken(
-            issuer: _issuer,
-            audience: _audience,
+            issuer: issuer,
+            audience: audience,
             claims: claims,
             expires: expiresAt.UtcDateTime,
             signingCredentials: credentials);
 
         var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
 
-        _logger.LogDebug(
+        logger.LogDebug(
             "Generated internal dashboard token for user {UserId} in tenant {TenantId}, expires at {ExpiresAt}",
             request.UserId, request.TenantId, expiresAt);
 
@@ -96,7 +84,7 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
     {
         try
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
             var handler = new JwtSecurityTokenHandler();
 
             var validationParameters = new TokenValidationParameters
@@ -105,8 +93,8 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
                 ValidateAudience = true,
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
-                ValidIssuer = _issuer,
-                ValidAudience = _audience,
+                ValidIssuer = issuer,
+                ValidAudience = audience,
                 IssuerSigningKey = key,
                 ClockSkew = TimeSpan.FromSeconds(30) // Allow 30 seconds clock skew
             };
@@ -117,7 +105,7 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
             var tokenTypeClaim = principal.FindFirst("token_type")?.Value;
             if (tokenTypeClaim != "internal_dashboard")
             {
-                _logger.LogWarning("Token validation failed: not an internal dashboard token");
+                logger.LogWarning("Token validation failed: not an internal dashboard token");
                 return InternalDashboardTokenValidation.Invalid("Not an internal dashboard token");
             }
 
@@ -129,7 +117,7 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
 
             if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(userId))
             {
-                _logger.LogWarning("Token validation failed: missing required claims");
+                logger.LogWarning("Token validation failed: missing required claims");
                 return InternalDashboardTokenValidation.Invalid("Missing required claims");
             }
 
@@ -148,17 +136,17 @@ public sealed class InternalDashboardTokenService : IInternalDashboardTokenServi
         }
         catch (SecurityTokenExpiredException)
         {
-            _logger.LogDebug("Token validation failed: token expired");
+            logger.LogDebug("Token validation failed: token expired");
             return InternalDashboardTokenValidation.Invalid("Token expired");
         }
         catch (SecurityTokenException ex)
         {
-            _logger.LogDebug("Token validation failed: {Message}", ex.Message);
+            logger.LogDebug("Token validation failed: {Message}", ex.Message);
             return InternalDashboardTokenValidation.Invalid("Invalid token");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error validating token");
+            logger.LogError(ex, "Unexpected error validating token");
             return InternalDashboardTokenValidation.Invalid("Token validation error");
         }
     }

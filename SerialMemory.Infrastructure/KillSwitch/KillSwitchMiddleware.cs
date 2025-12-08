@@ -10,11 +10,8 @@ namespace SerialMemory.Infrastructure.KillSwitch;
 /// Middleware that enforces kill switch states.
 /// MUST run BEFORE quota enforcement.
 /// </summary>
-public sealed class KillSwitchMiddleware
+public sealed class KillSwitchMiddleware(RequestDelegate next, ILogger<KillSwitchMiddleware> logger)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<KillSwitchMiddleware> _logger;
-
     // Ingest endpoints that are blocked by TenantNoIngest mode
     private static readonly HashSet<string> IngestEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -36,18 +33,12 @@ public sealed class KillSwitchMiddleware
         "DELETE"
     };
 
-    public KillSwitchMiddleware(RequestDelegate next, ILogger<KillSwitchMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
-
     public async Task InvokeAsync(HttpContext context, IKillSwitchService killSwitchService)
     {
         // Skip health check endpoints
         if (IsHealthCheckEndpoint(context.Request.Path))
         {
-            await _next(context);
+            await next(context);
             return;
         }
 
@@ -64,21 +55,21 @@ public sealed class KillSwitchMiddleware
         // Check for blocking conditions
         if (state.GlobalOff)
         {
-            _logger.LogWarning("Request blocked by global kill switch: {Path}", context.Request.Path);
+            logger.LogWarning("Request blocked by global kill switch: {Path}", context.Request.Path);
             await WriteErrorResponseAsync(context, 503, "GLOBAL_SERVICE_DISABLED", state.GetEffectiveReason(), state.ExpiresAt);
             return;
         }
 
         if (state.TenantOff)
         {
-            _logger.LogWarning("Request blocked for tenant {TenantId}: tenant disabled", tenantId);
+            logger.LogWarning("Request blocked for tenant {TenantId}: tenant disabled", tenantId);
             await WriteErrorResponseAsync(context, 503, "TENANT_DISABLED", state.GetEffectiveReason(), state.ExpiresAt);
             return;
         }
 
         if (state.ApiKeyDisabled)
         {
-            _logger.LogWarning("Request blocked: API key disabled");
+            logger.LogWarning("Request blocked: API key disabled");
             await WriteErrorResponseAsync(context, 503, "API_KEY_DISABLED", state.GetEffectiveReason(), null);
             return;
         }
@@ -87,7 +78,7 @@ public sealed class KillSwitchMiddleware
         if (state.IsReadOnly && IsWriteOperation(context))
         {
             var errorCode = state.GlobalReadOnly ? "GLOBAL_READ_ONLY" : "TENANT_READ_ONLY";
-            _logger.LogWarning("Write operation blocked by {Mode} mode: {Path}",
+            logger.LogWarning("Write operation blocked by {Mode} mode: {Path}",
                 state.GlobalReadOnly ? "global read-only" : "tenant read-only",
                 context.Request.Path);
             await WriteErrorResponseAsync(context, 503, errorCode, state.GetEffectiveReason(), state.ExpiresAt);
@@ -97,13 +88,13 @@ public sealed class KillSwitchMiddleware
         // Check for no-ingest mode
         if (state.TenantNoIngest && IsIngestOperation(context))
         {
-            _logger.LogWarning("Ingest operation blocked for tenant {TenantId}: {Path}", tenantId, context.Request.Path);
+            logger.LogWarning("Ingest operation blocked for tenant {TenantId}: {Path}", tenantId, context.Request.Path);
             await WriteErrorResponseAsync(context, 503, "INGEST_DISABLED", state.GetEffectiveReason(), state.ExpiresAt);
             return;
         }
 
         // Request is allowed, continue pipeline
-        await _next(context);
+        await next(context);
     }
 
     private static bool IsHealthCheckEndpoint(PathString path)

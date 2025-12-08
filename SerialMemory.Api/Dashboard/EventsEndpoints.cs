@@ -233,7 +233,7 @@ public static class EventsEndpoints
         // =============================================================================
         group.MapPost("/mind-health/compute", async (
             ClaimsPrincipal user,
-            NpgsqlDataSource dataSource,
+            NpgsqlDataSource _,
             IEventWriter eventWriter,
             CancellationToken ct) =>
         {

@@ -1,5 +1,3 @@
-using SerialMemory.Core.Interfaces;
-
 namespace SerialMemory.Core.Deployment;
 
 /// <summary>

@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -13,26 +12,18 @@ namespace SerialMemory.Infrastructure.Onboarding;
 /// Service for developer onboarding flow.
 /// Handles tenant provisioning, API key generation (sk_live_), and welcome emails.
 /// </summary>
-public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
+public sealed class DeveloperOnboardingService(
+    IConfiguration configuration,
+    IEmailService emailService,
+    ILogger<DeveloperOnboardingService> logger)
+    : IDeveloperOnboardingService
 {
-    private readonly string _connectionString;
-    private readonly IEmailService _emailService;
-    private readonly ILogger<DeveloperOnboardingService> _logger;
-    private readonly string _serverUrl;
+    private readonly string _connectionString = configuration.GetConnectionString("Postgres")
+                                                ?? BuildConnectionString();
 
-    public DeveloperOnboardingService(
-        IConfiguration configuration,
-        IEmailService emailService,
-        ILogger<DeveloperOnboardingService> logger)
-    {
-        _connectionString = configuration.GetConnectionString("Postgres")
-            ?? BuildConnectionString();
-        _emailService = emailService;
-        _logger = logger;
-        _serverUrl = configuration["App:ServerUrl"]
-            ?? Environment.GetEnvironmentVariable("SERIALMEMORY_SERVER_URL")
-            ?? "https://serialmemory.serialcoder.com";
-    }
+    private readonly string _serverUrl = configuration["App:ServerUrl"]
+                                         ?? Environment.GetEnvironmentVariable("SERIALMEMORY_SERVER_URL")
+                                         ?? "https://serialmemory.serialcoder.com";
 
     private static string BuildConnectionString()
         => SerialMemory.Infrastructure.Configuration.ConnectionStringFactory.BuildConnectionString();
@@ -109,7 +100,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
                 new { Id = tenantId, Name = effectiveTenantName, Slug = slug },
                 tx);
 
-            _logger.LogInformation("Created tenant {TenantId} ({Slug}) for {Email}", tenantId, slug, normalizedEmail);
+            logger.LogInformation("Created tenant {TenantId} ({Slug}) for {Email}", tenantId, slug, normalizedEmail);
 
             // Create tenant settings (free plan)
             await conn.ExecuteAsync(
@@ -189,7 +180,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
 
             await tx.CommitAsync(cancellationToken);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Tenant {TenantId} provisioned successfully for {Email} with API key {KeyId}",
                 tenantId, normalizedEmail, keyId);
 
@@ -204,7 +195,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to send welcome email to {Email}", normalizedEmail);
+                logger.LogError(ex, "Failed to send welcome email to {Email}", normalizedEmail);
                 // Don't fail provisioning due to email failure
             }
 
@@ -225,7 +216,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
         catch (Exception ex)
         {
             await tx.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Failed to provision tenant for {Email}", normalizedEmail);
+            logger.LogError(ex, "Failed to provision tenant for {Email}", normalizedEmail);
             throw;
         }
     }
@@ -301,7 +292,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
             """,
             new { KeyId = keyId, TenantId = tenantId });
 
-        _logger.LogInformation("API key {KeyId} marked as viewed for tenant {TenantId}", keyId, tenantId);
+        logger.LogInformation("API key {KeyId} marked as viewed for tenant {TenantId}", keyId, tenantId);
     }
 
     public async Task<OneTimeApiKeyResult> RegenerateApiKeyAsync(
@@ -355,7 +346,7 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
 
             await tx.CommitAsync(cancellationToken);
 
-            _logger.LogInformation("API key regenerated for tenant {TenantId} by {UserId}", tenantId, normalizedUserId);
+            logger.LogInformation("API key regenerated for tenant {TenantId} by {UserId}", tenantId, normalizedUserId);
 
             var dockerCommand = GenerateDockerCommand(key);
             var mcpConfig = GenerateMcpConfig(key);
@@ -477,8 +468,8 @@ public sealed class DeveloperOnboardingService : IDeveloperOnboardingService
             </html>
             """;
 
-        await _emailService.SendAsync(email, subject, htmlBody, cancellationToken);
-        _logger.LogInformation("Welcome email sent to {Email}", email);
+        await emailService.SendAsync(email, subject, htmlBody, cancellationToken);
+        logger.LogInformation("Welcome email sent to {Email}", email);
     }
 
     private static async Task LogSecurityEventAsync(

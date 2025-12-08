@@ -31,7 +31,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        // Use TEXT type for event_type to handle both enum schemas (PascalCase/snake_case)
+        // Cast event_type text to graph_event_type enum
         var sql = """
             INSERT INTO graph_events (
                 event_id, event_type,
@@ -41,7 +41,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 previous_state, new_state, confidence,
                 triggered_by, memory_id, session_id, occurred_at, metadata
             ) VALUES (
-                @EventId, @EventType,
+                @EventId, @EventType::graph_event_type,
                 @NodeId, @NodeName, @NodeType,
                 @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                 @SourceNodeName, @TargetNodeName,
@@ -85,7 +85,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         {
             foreach (var evt in events)
             {
-                // Use TEXT type for event_type to handle both enum schemas (PascalCase/snake_case)
+                // Cast event_type text to graph_event_type enum
                 var sql = """
                     INSERT INTO graph_events (
                         event_id, event_type,
@@ -95,7 +95,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                         previous_state, new_state, confidence,
                         triggered_by, memory_id, session_id, occurred_at, metadata
                     ) VALUES (
-                        @EventId, @EventType,
+                        @EventId, @EventType::graph_event_type,
                         @NodeId, @NodeName, @NodeType,
                         @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                         @SourceNodeName, @TargetNodeName,
