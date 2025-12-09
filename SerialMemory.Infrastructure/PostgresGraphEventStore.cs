@@ -14,15 +14,10 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     /// <summary>
-    /// Converts PascalCase enum to snake_case for PostgreSQL CHECK constraint.
-    /// e.g., "NodeCreated" -> "node_created"
+    /// Returns the event type as a string matching the PostgreSQL enum values.
+    /// The enum uses PascalCase: 'NodeCreated', 'NodeUpdated', etc.
     /// </summary>
-    private static string ToSnakeCase(GraphEventType eventType)
-    {
-        var pascal = eventType.ToString();
-        return string.Concat(pascal.Select((c, i) =>
-            i > 0 && char.IsUpper(c) ? "_" + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString()));
-    }
+    private static string ToDbEventType(GraphEventType eventType) => eventType.ToString();
 
     private NpgsqlConnection CreateConnection() => new(connectionString);
 
@@ -54,7 +49,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         return await conn.ExecuteScalarAsync<Guid>(sql, new
         {
             graphEvent.EventId,
-            EventType = ToSnakeCase(graphEvent.EventType),
+            EventType = ToDbEventType(graphEvent.EventType),
             graphEvent.NodeId,
             graphEvent.NodeName,
             graphEvent.NodeType,
@@ -107,7 +102,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 await conn.ExecuteAsync(sql, new
                 {
                     evt.EventId,
-                    EventType = ToSnakeCase(evt.EventType),
+                    EventType = ToDbEventType(evt.EventType),
                     evt.NodeId,
                     evt.NodeName,
                     evt.NodeType,
@@ -163,7 +158,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         await conn.OpenAsync(ct);
 
         // Use snake_case to match the database CHECK constraint
-        var dbEventType = ToSnakeCase(eventType);
+        var dbEventType = ToDbEventType(eventType);
 
         var sql = """
             SELECT event_id, event_type,
@@ -374,15 +369,15 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
         stats.MaxDegree = degreeStats.max_degree;
         stats.IsolatedNodes = degreeStats.isolated;
 
-        // Growth metrics from graph_events (using snake_case to match CHECK constraint)
+        // Growth metrics from graph_events (using PascalCase to match enum)
         stats.NodesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.EdgesLast24Hours = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '24 hours'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.NodesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_created' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
         stats.EdgesLast7Days = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_created' AND occurred_at > NOW() - INTERVAL '7 days'");
+            "SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '7 days'");
 
         // Store snapshot
         var insertSql = """

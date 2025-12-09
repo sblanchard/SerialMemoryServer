@@ -65,7 +65,7 @@ if (!string.IsNullOrEmpty(openAiApiKey))
         ?? "text-embedding-3-small";
     var openAiClient = new OpenAiClient(
         apiKey: openAiApiKey,
-        chatModel: "gpt-4.1-mini",
+        chatModel: "gpt-5-nano",
         embedModel: openAiEmbedModel,
         embeddingDimension: 1536);
     builder.Services.AddSingleton(openAiClient); // Register OpenAiClient directly for MemorySummarizationService

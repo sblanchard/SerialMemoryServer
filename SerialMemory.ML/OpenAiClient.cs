@@ -15,7 +15,7 @@ namespace SerialMemory.ML;
 /// Environment variables:
 /// - OPENAI_API_KEY: System-level API key (fallback)
 /// - OPENAI_ENDPOINT: Custom endpoint (optional, for Azure OpenAI)
-/// - OPENAI_MODEL: Default chat model (default: gpt-4.1-mini)
+/// - OPENAI_MODEL: Default chat model (default: gpt-5-nano)
 /// - OPENAI_EMBED_MODEL: Default embedding model (default: text-embedding-3-small)
 /// </summary>
 public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
@@ -37,7 +37,7 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
     /// </summary>
     /// <param name="apiKey">API key (falls back to OPENAI_API_KEY env var)</param>
     /// <param name="endpoint">Custom endpoint (optional, for Azure OpenAI)</param>
-    /// <param name="chatModel">Chat model (default: gpt-4.1-mini)</param>
+    /// <param name="chatModel">Chat model (default: gpt-5-nano)</param>
     /// <param name="embedModel">Embedding model (default: text-embedding-3-small)</param>
     /// <param name="embeddingDimension">Embedding dimension (default: 1536 for text-embedding-3-small)</param>
     /// <param name="logger">Optional logger</param>
@@ -58,7 +58,7 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
 
         _chatModel = chatModel
             ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
-            ?? "gpt-4.1-mini";
+            ?? "gpt-5-nano";
 
         _embedModel = embedModel
             ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
@@ -385,7 +385,7 @@ public sealed class OpenAiClientFactory
         _systemEndpoint = systemEndpoint ?? Environment.GetEnvironmentVariable("OPENAI_ENDPOINT");
         _defaultChatModel = defaultChatModel
             ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
-            ?? "gpt-4.1-mini";
+            ?? "gpt-5-nano";
         _defaultEmbedModel = defaultEmbedModel
             ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
             ?? "text-embedding-3-small";

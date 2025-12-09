@@ -70,6 +70,11 @@ services:
     # Linux: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, Stripe, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
@@ -251,6 +256,11 @@ services:
     # Linux: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=contextdb_app;Password=contextdb_app_secure_password_change_me
