@@ -52,14 +52,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tools", "Tools", "{65B5A42A
 	ProjectSection(SolutionItems) = preProject
 		tools\embedding_http_service.py = tools\embedding_http_service.py
 		tools\export_model_to_onnx.py = tools\export_model_to_onnx.py
-		tools\README.md = tools\README.md
 		tools\reembed_memories.cs = tools\reembed_memories.cs
 		tools\replay_tool.cs = tools\replay_tool.cs
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RebuildIntegrityChain", "tools\RebuildIntegrityChain\RebuildIntegrityChain.csproj", "{019B04F4-1234-7000-8000-REBUILD00001}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SDK", "SDK", "{060D1B27-92CD-4911-8A8E-A45DD924AF05}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RebuildIntegrityChain", "tools\RebuildIntegrityChain\RebuildIntegrityChain.csproj", "{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -299,6 +298,18 @@ Global
 		{B1B8016B-926A-41B0-8F52-794159EF33FE}.Release|x64.Build.0 = Release|Any CPU
 		{B1B8016B-926A-41B0-8F52-794159EF33FE}.Release|x86.ActiveCfg = Release|Any CPU
 		{B1B8016B-926A-41B0-8F52-794159EF33FE}.Release|x86.Build.0 = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|x64.Build.0 = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Debug|x86.Build.0 = Debug|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|x64.ActiveCfg = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|x64.Build.0 = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|x86.ActiveCfg = Release|Any CPU
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -307,8 +318,8 @@ Global
 		{E8F9B2A3-4C5D-6E7F-8091-A2B3C4D5E6F7} = {F977646F-2595-4843-A156-4B7094E58A09}
 		{B1B8016B-926A-41B0-8F52-794159EF33FE} = {F977646F-2595-4843-A156-4B7094E58A09}
 		{40D729E9-098F-4CE4-8F4A-E6E0F9A071EE} = {65B5A42A-AD8F-4FDB-971E-C814D3C3A266}
-		{019B04F4-1234-7000-8000-REBUILD00001} = {65B5A42A-AD8F-4FDB-971E-C814D3C3A266}
 		{ADE34D45-965E-49AE-94A2-9F2741E71627} = {060D1B27-92CD-4911-8A8E-A45DD924AF05}
 		{CCB29A20-EE3F-43D9-8B51-F52F011F1638} = {060D1B27-92CD-4911-8A8E-A45DD924AF05}
+		{4E39866B-BA01-4F7C-B9E9-D1F3AAB177FD} = {65B5A42A-AD8F-4FDB-971E-C814D3C3A266}
 	EndGlobalSection
 EndGlobal
