@@ -45,7 +45,14 @@ public sealed class MemoryLayerWorker : BackgroundService
             EnableL0ToL1 = configuration.GetValue("MemoryLayerWorker:L0ToL1:Enabled", true),
             EnableL1ToL2 = configuration.GetValue("MemoryLayerWorker:L1ToL2:Enabled", true),
             EnableL2ToL3 = configuration.GetValue("MemoryLayerWorker:L2ToL3:Enabled", true),
-            EnableL3ToL4 = configuration.GetValue("MemoryLayerWorker:L3ToL4:Enabled", false) // Heuristic learning disabled by default
+            EnableL3ToL4 = configuration.GetValue("MemoryLayerWorker:L3ToL4:Enabled", false), // Heuristic learning disabled by default
+            // L1 → L2 thresholds
+            L1ToL2_MinAgeHours = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinAgeHours", 1),
+            L1ToL2_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L1ToL2:MinAccessCount", 1),
+            // L2 → L3 thresholds
+            L2ToL3_MinAccessCount = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinAccessCount", 5),
+            L2ToL3_MinConfidence = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinConfidence", 0.7f),
+            L2ToL3_MinAgeDays = configuration.GetValue("MemoryLayerWorker:L2ToL3:MinAgeDays", 1)
         };
 
         _processingInterval = TimeSpan.FromSeconds(_config.ProcessingIntervalSeconds);
@@ -564,10 +571,10 @@ public sealed class MemoryLayerWorker : BackgroundService
         // This triggers the MemorySummarizationService to process clusters
 
         // L1 memories need to mature before summarization:
-        // - Minimum age of 1 hour (to allow related memories to accumulate)
+        // - Minimum age (to allow related memories to accumulate)
         // - Minimum access count to show relevance
-        var minAgeHours = 1;
-        var minAccessCount = 1; // At least accessed once
+        var minAgeHours = _config.L1ToL2_MinAgeHours;
+        var minAccessCount = _config.L1ToL2_MinAccessCount;
 
         // Check if there are enough mature L1 memories for summarization
         var l1Count = await conn.QueryFirstAsync<int>("""
@@ -622,11 +629,11 @@ public sealed class MemoryLayerWorker : BackgroundService
     private async Task<List<TransitionCandidate>> FindL2ToL3CandidatesAsync(
         NpgsqlConnection conn, Guid tenantId, CancellationToken ct)
     {
-        // Use the same thresholds as LayerPromotionService
+        // Use configurable thresholds (aligned with LayerPromotionService)
         // L2 memories need to mature: be accessed multiple times and have high confidence
-        var minAccessCount = 5;  // L2ToL3_MinAccessCount default
-        var minConfidence = 0.7f; // L2ToL3_MinConfidence default
-        var minAgeDays = 1; // Require at least 1 day in L2 before promotion
+        var minAccessCount = _config.L2ToL3_MinAccessCount;
+        var minConfidence = _config.L2ToL3_MinConfidence;
+        var minAgeDays = _config.L2ToL3_MinAgeDays;
 
         var candidates = await conn.QueryAsync<TransitionCandidate>("""
             SELECT
@@ -937,4 +944,13 @@ public sealed class MemoryLayerWorkerConfig
     public bool EnableL1ToL2 { get; set; } = true;
     public bool EnableL2ToL3 { get; set; } = true;
     public bool EnableL3ToL4 { get; set; } = true;
+
+    // L1 → L2 transition thresholds
+    public int L1ToL2_MinAgeHours { get; set; } = 1;
+    public int L1ToL2_MinAccessCount { get; set; } = 1;
+
+    // L2 → L3 transition thresholds
+    public int L2ToL3_MinAccessCount { get; set; } = 5;
+    public float L2ToL3_MinConfidence { get; set; } = 0.7f;
+    public int L2ToL3_MinAgeDays { get; set; } = 1;
 }

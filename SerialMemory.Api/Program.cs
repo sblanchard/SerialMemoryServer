@@ -217,7 +217,12 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
 
 // OAuth service for ChatGPT and other OAuth clients
 builder.Services.AddSingleton<OAuthService>(sp =>
-    new OAuthService(pgConnectionString, jwtSecret, jwtIssuer, jwtAudience));
+    new OAuthService(
+        pgConnectionString,
+        jwtSecret,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<OAuthService>(),
+        jwtIssuer,
+        jwtAudience));
 
 // MassTransit Configuration (optional - for event publishing)
 try

@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -17,22 +19,33 @@ public sealed class OAuthService : IDisposable
     private readonly string _issuer;
     private readonly string _audience;
     private readonly byte[] _signingKey;
+    private readonly ILogger<OAuthService> _logger;
 
     private const int AuthCodeExpirationMinutes = 10;
     private const int AccessTokenExpirationMinutes = 60;
     private const int RefreshTokenExpirationDays = 30;
+    private const int MinimumJwtSecretLength = 32;
 
-    public OAuthService(string connectionString, string jwtSecret, string? issuer = null, string? audience = null)
+    public OAuthService(
+        string connectionString,
+        string jwtSecret,
+        ILogger<OAuthService>? logger = null,
+        string? issuer = null,
+        string? audience = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(connectionString);
         ArgumentException.ThrowIfNullOrEmpty(jwtSecret);
 
+        if (jwtSecret.Length < MinimumJwtSecretLength)
+            throw new ArgumentException($"JWT secret must be at least {MinimumJwtSecretLength} characters for security", nameof(jwtSecret));
+
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         _dataSource = builder.Build();
 
+        _logger = logger ?? NullLogger<OAuthService>.Instance;
         _issuer = issuer ?? "serialmemory";
         _audience = audience ?? "serialmemory-api";
-        _signingKey = Encoding.UTF8.GetBytes(jwtSecret.PadRight(64, '0'));
+        _signingKey = Encoding.UTF8.GetBytes(jwtSecret);
     }
 
     /// <summary>
@@ -96,6 +109,31 @@ public sealed class OAuthService : IDisposable
         await conn.ExecuteAsync(
             "UPDATE oauth_refresh_tokens SET revoked_at = NOW() WHERE client_id = @Id",
             new { Id = apiKeyId });
+    }
+
+    /// <summary>
+    /// Validates that an OAuth client_id exists (without verifying secret).
+    /// Used for the authorize endpoint to prevent client_id enumeration.
+    /// </summary>
+    public async Task<bool> ClientExistsAsync(string clientId, CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(clientId, out var apiKeyId))
+            return false;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+
+        return await conn.ExecuteScalarAsync<bool>(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM tenant_api_keys ak
+                JOIN tenants t ON ak.tenant_id = t.id
+                WHERE ak.id = @ApiKeyId
+                  AND ak.oauth_enabled = TRUE
+                  AND ak.revoked_at IS NULL
+                  AND t.status = 'active'
+            )
+            """,
+            new { ApiKeyId = apiKeyId });
     }
 
     /// <summary>
@@ -208,7 +246,7 @@ public sealed class OAuthService : IDisposable
         var client = await ValidateClientAsync(clientId, clientSecret, ct);
         if (client == null)
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: invalid client credentials for {clientId}");
+            _logger.LogWarning("OAuth ExchangeCode failed: invalid client credentials for {ClientId}", clientId);
             return null;
         }
 
@@ -225,35 +263,36 @@ public sealed class OAuthService : IDisposable
 
         if (authCode == null)
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: code not found");
+            _logger.LogWarning("OAuth ExchangeCode failed: code not found for {ClientId}", clientId);
             return null;
         }
 
         // Validate code hasn't been used
         if (authCode.used_at.HasValue)
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: code already used");
+            _logger.LogWarning("OAuth ExchangeCode failed: code already used for {ClientId}", clientId);
             return null;
         }
 
         // Validate code hasn't expired
         if (authCode.expires_at < DateTimeOffset.UtcNow)
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: code expired");
+            _logger.LogWarning("OAuth ExchangeCode failed: code expired for {ClientId}", clientId);
             return null;
         }
 
         // Validate redirect URI matches (case-insensitive comparison for URLs)
         if (!string.Equals(authCode.redirect_uri, redirectUri, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: redirect_uri mismatch. Expected={authCode.redirect_uri}, Got={redirectUri}");
+            _logger.LogWarning("OAuth ExchangeCode failed: redirect_uri mismatch for {ClientId}. Expected={Expected}, Got={Got}",
+                clientId, authCode.redirect_uri, redirectUri);
             return null;
         }
 
         // Validate client matches
         if (authCode.client_id != client.ApiKeyId)
         {
-            Console.WriteLine($"[OAuth] ExchangeCode failed: client_id mismatch");
+            _logger.LogWarning("OAuth ExchangeCode failed: client_id mismatch for {ClientId}", clientId);
             return null;
         }
 
@@ -262,7 +301,7 @@ public sealed class OAuthService : IDisposable
         {
             if (string.IsNullOrEmpty(codeVerifier))
             {
-                Console.WriteLine($"[OAuth] ExchangeCode failed: PKCE code_verifier required but not provided");
+                _logger.LogWarning("OAuth ExchangeCode failed: PKCE code_verifier required but not provided for {ClientId}", clientId);
                 return null;
             }
 
@@ -272,7 +311,7 @@ public sealed class OAuthService : IDisposable
 
             if (expectedChallenge != authCode.code_challenge)
             {
-                Console.WriteLine($"[OAuth] ExchangeCode failed: PKCE code_verifier mismatch");
+                _logger.LogWarning("OAuth ExchangeCode failed: PKCE code_verifier mismatch for {ClientId}", clientId);
                 return null;
             }
         }
@@ -283,7 +322,7 @@ public sealed class OAuthService : IDisposable
             new { Code = code });
 
         // Generate tokens
-        var accessToken = GenerateAccessToken(client.TenantId, authCode.scope);
+        var accessToken = GenerateAccessToken(client.ApiKeyId, client.TenantId, authCode.scope);
         var refreshToken = await CreateRefreshTokenAsync(client.ApiKeyId, client.TenantId, authCode.scope, ct);
 
         return new OAuthTokenResponse
@@ -317,7 +356,7 @@ public sealed class OAuthService : IDisposable
         if (grantedScopes.Length == 0)
             grantedScopes = client.Scopes;
 
-        var accessToken = GenerateAccessToken(client.TenantId, grantedScopes);
+        var accessToken = GenerateAccessToken(client.ApiKeyId, client.TenantId, grantedScopes);
 
         return new OAuthTokenResponse
         {
@@ -366,7 +405,7 @@ public sealed class OAuthService : IDisposable
             return null;
 
         // Generate new access token
-        var accessToken = GenerateAccessToken(storedToken.tenant_id, storedToken.scope);
+        var accessToken = GenerateAccessToken(storedToken.client_id, storedToken.tenant_id, storedToken.scope);
 
         return new OAuthTokenResponse
         {
@@ -392,7 +431,7 @@ public sealed class OAuthService : IDisposable
             new { TokenHash = tokenHash });
     }
 
-    private string GenerateAccessToken(Guid tenantId, string[] scopes)
+    private string GenerateAccessToken(Guid clientId, Guid tenantId, string[] scopes)
     {
         var handler = new JsonWebTokenHandler();
         var key = new SymmetricSecurityKey(_signingKey);
@@ -402,7 +441,8 @@ public sealed class OAuthService : IDisposable
         {
             Subject = new System.Security.Claims.ClaimsIdentity(
             [
-                new("sub", $"oauth-client"),
+                new("sub", $"oauth-client:{clientId}"),
+                new("client_id", clientId.ToString()),
                 new("tenant_id", tenantId.ToString()),
                 new("scope", string.Join(" ", scopes)),
                 new("role", "service")
