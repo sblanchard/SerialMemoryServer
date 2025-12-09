@@ -62,12 +62,16 @@ public static class OAuthEndpoints
             return Results.BadRequest(new { error = "unsupported_response_type" });
         }
 
-        // For ChatGPT integration, we auto-approve since the client is pre-authenticated
-        // In a full implementation, you'd show a consent screen here
+        // Validate client_id exists before showing auth page (prevent enumeration)
+        if (string.IsNullOrEmpty(client_id) || !await oauthService.ClientExistsAsync(client_id, context.RequestAborted))
+        {
+            return Results.BadRequest(new { error = "invalid_client", error_description = "Unknown client_id" });
+        }
 
-        // Validate client exists
-        // Note: For authorize flow, we don't have the client_secret yet, just validate client_id exists
-        var requestedScopes = scope?.Split(' ', StringSplitOptions.RemoveEmptyEntries) ?? ["serialmemory.core"];
+        // Parse requested scopes with explicit null handling
+        var requestedScopes = string.IsNullOrEmpty(scope)
+            ? new[] { "serialmemory.core" }
+            : scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         // Return a simple authorization page
         var html = GenerateAuthorizePage(client_id, redirect_uri, state, code_challenge, code_challenge_method, requestedScopes);
