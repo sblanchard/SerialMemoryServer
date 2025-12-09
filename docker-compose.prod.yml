@@ -145,6 +145,11 @@ services:
     # Linux VPS: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, Stripe, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
@@ -277,6 +282,11 @@ services:
     # Linux VPS: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -299,6 +300,205 @@ public static class ApiKeysEndpoints
         .Produces(StatusCodes.Status404NotFound);
 
         // =============================================================================
+        // POST /api-keys/{keyId}/oauth/enable - Enable OAuth for an API key
+        // =============================================================================
+        group.MapPost("/{keyId:guid}/oauth/enable", async (
+            Guid keyId,
+            [FromBody] EnableOAuthRequest request,
+            ClaimsPrincipal user,
+            NpgsqlDataSource dataSource,
+            [FromServices] OAuthService oauthService,
+            CancellationToken ct) =>
+        {
+            var tenantId = GetTenantId(user, selfHostedMode);
+
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
+            await conn.SetInternalAdminWithTenantAsync(tenantId);
+
+            // Verify key belongs to tenant
+            var keyExists = await conn.QueryFirstOrDefaultAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM tenant_api_keys WHERE id = @KeyId AND tenant_id = @TenantId AND revoked_at IS NULL)",
+                new { KeyId = keyId, TenantId = tenantId });
+
+            if (!keyExists)
+                return Results.NotFound(new { error = "not_found", message = "API key not found" });
+
+            var redirectUris = request.RedirectUris ?? ["https://chat.openai.com/aip/plugin"];
+
+            try
+            {
+                var credentials = await oauthService.EnableOAuthAsync(keyId, redirectUris, ct);
+
+                return Results.Ok(new
+                {
+                    clientId = credentials.ClientId,
+                    clientSecret = credentials.ClientSecret,
+                    redirectUris = credentials.RedirectUris,
+                    message = "OAuth enabled. Save the client secret - it will not be shown again."
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = "oauth_error", message = ex.Message });
+            }
+        })
+        .WithName("EnableOAuth")
+        .WithDescription("Enables OAuth for an API key and returns client credentials")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // =============================================================================
+        // POST /api-keys/{keyId}/oauth/disable - Disable OAuth for an API key
+        // =============================================================================
+        group.MapPost("/{keyId:guid}/oauth/disable", async (
+            Guid keyId,
+            ClaimsPrincipal user,
+            NpgsqlDataSource dataSource,
+            [FromServices] OAuthService oauthService,
+            CancellationToken ct) =>
+        {
+            var tenantId = GetTenantId(user, selfHostedMode);
+
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
+            await conn.SetInternalAdminWithTenantAsync(tenantId);
+
+            // Verify key belongs to tenant
+            var keyExists = await conn.QueryFirstOrDefaultAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM tenant_api_keys WHERE id = @KeyId AND tenant_id = @TenantId AND revoked_at IS NULL)",
+                new { KeyId = keyId, TenantId = tenantId });
+
+            if (!keyExists)
+                return Results.NotFound(new { error = "not_found", message = "API key not found" });
+
+            await oauthService.DisableOAuthAsync(keyId, ct);
+
+            return Results.Ok(new { message = "OAuth disabled and all refresh tokens revoked" });
+        })
+        .WithName("DisableOAuth")
+        .WithDescription("Disables OAuth for an API key and revokes all tokens")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // =============================================================================
+        // GET /api-keys/{keyId}/oauth - Get OAuth status for an API key
+        // =============================================================================
+        group.MapGet("/{keyId:guid}/oauth", async (
+            Guid keyId,
+            ClaimsPrincipal user,
+            NpgsqlDataSource dataSource,
+            CancellationToken ct) =>
+        {
+            var tenantId = GetTenantId(user, selfHostedMode);
+
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
+            await conn.SetInternalAdminWithTenantAsync(tenantId);
+
+            var oauthInfo = await conn.QueryFirstOrDefaultAsync<OAuthInfoDto>(
+                """
+                SELECT
+                    id,
+                    key_prefix AS clientId,
+                    oauth_enabled AS enabled,
+                    redirect_uris AS redirectUris,
+                    oauth_metadata AS metadata
+                FROM tenant_api_keys
+                WHERE id = @KeyId AND tenant_id = @TenantId
+                """,
+                new { KeyId = keyId, TenantId = tenantId });
+
+            if (oauthInfo == null)
+                return Results.NotFound(new { error = "not_found", message = "API key not found" });
+
+            return Results.Ok(oauthInfo);
+        })
+        .WithName("GetOAuthStatus")
+        .WithDescription("Gets OAuth status and configuration for an API key")
+        .Produces<OAuthInfoDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // =============================================================================
+        // PUT /api-keys/{keyId}/oauth/redirect-uris - Update redirect URIs
+        // =============================================================================
+        group.MapPut("/{keyId:guid}/oauth/redirect-uris", async (
+            Guid keyId,
+            [FromBody] UpdateRedirectUrisRequest request,
+            ClaimsPrincipal user,
+            NpgsqlDataSource dataSource,
+            CancellationToken ct) =>
+        {
+            var tenantId = GetTenantId(user, selfHostedMode);
+
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
+            await conn.SetInternalAdminWithTenantAsync(tenantId);
+
+            var affected = await conn.ExecuteAsync(
+                """
+                UPDATE tenant_api_keys
+                SET redirect_uris = @RedirectUris
+                WHERE id = @KeyId AND tenant_id = @TenantId AND oauth_enabled = TRUE
+                """,
+                new { KeyId = keyId, TenantId = tenantId, RedirectUris = request.RedirectUris });
+
+            if (affected == 0)
+                return Results.NotFound(new { error = "not_found", message = "API key not found or OAuth not enabled" });
+
+            return Results.Ok(new { redirectUris = request.RedirectUris, message = "Redirect URIs updated" });
+        })
+        .WithName("UpdateRedirectUris")
+        .WithDescription("Updates OAuth redirect URIs for an API key")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // =============================================================================
+        // POST /api-keys/{keyId}/oauth/rotate-secret - Rotate client secret
+        // =============================================================================
+        group.MapPost("/{keyId:guid}/oauth/rotate-secret", async (
+            Guid keyId,
+            ClaimsPrincipal user,
+            NpgsqlDataSource dataSource,
+            [FromServices] OAuthService oauthService,
+            CancellationToken ct) =>
+        {
+            var tenantId = GetTenantId(user, selfHostedMode);
+
+            await using var conn = await dataSource.OpenConnectionAsync(ct);
+            await conn.SetInternalAdminWithTenantAsync(tenantId);
+
+            // Get current redirect URIs
+            var currentInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                """
+                SELECT redirect_uris
+                FROM tenant_api_keys
+                WHERE id = @KeyId AND tenant_id = @TenantId AND oauth_enabled = TRUE AND revoked_at IS NULL
+                """,
+                new { KeyId = keyId, TenantId = tenantId });
+
+            if (currentInfo == null)
+                return Results.NotFound(new { error = "not_found", message = "API key not found or OAuth not enabled" });
+
+            // Disable and re-enable OAuth to get new secret
+            await oauthService.DisableOAuthAsync(keyId, ct);
+            var credentials = await oauthService.EnableOAuthAsync(keyId, (string[])currentInfo.redirect_uris, ct);
+
+            return Results.Ok(new
+            {
+                clientId = credentials.ClientId,
+                clientSecret = credentials.ClientSecret,
+                message = "Client secret rotated. Save the new secret - it will not be shown again."
+            });
+        })
+        .WithName("RotateOAuthSecret")
+        .WithDescription("Rotates the OAuth client secret")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // =============================================================================
         // GET /api-keys/stats - Get API key usage stats
         // =============================================================================
         group.MapGet("/stats", async (
@@ -376,3 +576,21 @@ public sealed record CreateApiKeyApiRequest(
     string[]? Scopes = null,
     DateTimeOffset? ExpiresAt = null
 );
+
+// OAuth-related DTOs
+public sealed record EnableOAuthRequest(
+    string[]? RedirectUris = null
+);
+
+public sealed record UpdateRedirectUrisRequest(
+    string[] RedirectUris
+);
+
+public sealed class OAuthInfoDto
+{
+    public Guid id { get; set; }
+    public string clientId { get; set; } = "";
+    public bool enabled { get; set; }
+    public string[]? redirectUris { get; set; }
+    public JsonDocument? metadata { get; set; }
+}

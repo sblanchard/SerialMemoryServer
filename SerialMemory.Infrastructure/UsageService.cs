@@ -295,37 +295,38 @@ public sealed class UsageService : IUsageService, IDisposable
                 evt.BillingCycleId = cycleId;
             }
 
-            // Batch insert using COPY for efficiency
-            await using var writer = await conn.BeginBinaryImportAsync(
-                """
-                COPY usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
-                                                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
-                                                     latency_ms, success, error_message, metadata)
-                                  FROM STDIN (FORMAT BINARY)
-                """);
+            // Use INSERT with ON CONFLICT to handle duplicates gracefully
+            // This is slightly less efficient than COPY but prevents duplicate key errors
+            const string insertSql = """
+                INSERT INTO usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
+                                          credits_consumed, event_timestamp, memory_id, user_id, session_id,
+                                          latency_ms, success, error_message, metadata)
+                VALUES (@Id, @TenantId, @WorkspaceId, @BillingCycleId, @EventType::usage_event_type,
+                        @CreditsConsumed, @EventTimestamp, @MemoryId, @UserId, @SessionId,
+                        @LatencyMs, @Success, @ErrorMessage, @Metadata::jsonb)
+                ON CONFLICT (id) DO NOTHING
+                """;
 
             foreach (var evt in events)
             {
-                await writer.StartRowAsync();
-                await writer.WriteAsync(evt.Id, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.TenantId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.WorkspaceId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.BillingCycleId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(UsageCreditCosts.ToSnakeCase(evt.EventType), NpgsqlTypes.NpgsqlDbType.Unknown);
-                await writer.WriteAsync(evt.CreditsConsumed, NpgsqlTypes.NpgsqlDbType.Numeric);
-                await writer.WriteAsync(evt.EventTimestamp, NpgsqlTypes.NpgsqlDbType.TimestampTz);
-                await writer.WriteAsync(evt.MemoryId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.UserId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.SessionId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.LatencyMs, NpgsqlTypes.NpgsqlDbType.Integer);
-                await writer.WriteAsync(evt.Success, NpgsqlTypes.NpgsqlDbType.Boolean);
-                await writer.WriteAsync(evt.ErrorMessage, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(
-                    evt.Metadata != null ? JsonSerializer.Serialize(evt.Metadata) : null,
-                    NpgsqlTypes.NpgsqlDbType.Jsonb);
+                await conn.ExecuteAsync(insertSql, new
+                {
+                    evt.Id,
+                    evt.TenantId,
+                    evt.WorkspaceId,
+                    evt.BillingCycleId,
+                    EventType = UsageCreditCosts.ToSnakeCase(evt.EventType),
+                    evt.CreditsConsumed,
+                    evt.EventTimestamp,
+                    evt.MemoryId,
+                    evt.UserId,
+                    evt.SessionId,
+                    evt.LatencyMs,
+                    evt.Success,
+                    evt.ErrorMessage,
+                    Metadata = evt.Metadata != null ? JsonSerializer.Serialize(evt.Metadata) : null
+                });
             }
-
-            await writer.CompleteAsync();
 
             _logger.LogDebug("Persisted {Count} usage events", events.Count);
         }

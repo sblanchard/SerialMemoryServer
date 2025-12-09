@@ -79,7 +79,9 @@ public sealed class ApiKeyAuthMiddleware
             // Dashboard auth endpoints (forms post to these)
             "/login",
             "/signup",
-            "/logout"
+            "/logout",
+            // OAuth 2.0 endpoints (for ChatGPT integration)
+            "/.well-known/oauth-authorization-server"
         };
     }
 
@@ -448,6 +450,10 @@ public sealed class ApiKeyAuthMiddleware
 
         // Scale prediction endpoints (operational, for self-host control room)
         if (path.StartsWith("/api/scale/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // OAuth 2.0 endpoints (for ChatGPT integration)
+        if (path.StartsWith("/oauth/", StringComparison.OrdinalIgnoreCase))
             return true;
 
         return false;

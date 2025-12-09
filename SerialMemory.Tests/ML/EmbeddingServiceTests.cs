@@ -217,7 +217,7 @@ public class OpenAiClientTests
         client.Should().NotBeNull();
         client.EmbeddingDimension.Should().Be(1536); // Default for text-embedding-3-small
         client.ProviderName.Should().Be("OpenAI");
-        client.ModelName.Should().Be("gpt-4.1-mini");
+        client.ModelName.Should().Be("gpt-5-nano");
     }
 
     [Fact]

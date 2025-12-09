@@ -74,7 +74,7 @@ public static class LlmConfiguration
                 ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
             ChatModel = configuration["OpenAI:Model"]
                 ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
-                ?? "gpt-4.1-mini",
+                ?? "gpt-5-nano",
             EmbedModel = configuration["OpenAI:EmbedModel"]
                 ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
                 ?? "text-embedding-3-small",

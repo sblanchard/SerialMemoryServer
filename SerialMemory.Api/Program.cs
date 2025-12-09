@@ -215,6 +215,10 @@ builder.Services.AddSingleton<IApiKeyService>(sp =>
         jwtIssuer,
         jwtAudience));
 
+// OAuth service for ChatGPT and other OAuth clients
+builder.Services.AddSingleton<OAuthService>(sp =>
+    new OAuthService(pgConnectionString, jwtSecret, jwtIssuer, jwtAudience));
+
 // MassTransit Configuration (optional - for event publishing)
 try
 {
@@ -549,6 +553,9 @@ app.MapLlmEndpoints();
 
 // Auth Endpoints (whoami only - signup/verification now in Dashboard endpoints)
 app.MapAuthEndpoints();
+
+// OAuth Endpoints (for ChatGPT and other OAuth clients)
+app.MapOAuthEndpoints();
 
 // Dashboard API Endpoints (consolidated from SerialMemory.Api.Dashboard)
 app.MapDashboardEndpoints();

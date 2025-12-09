@@ -11,7 +11,7 @@ public interface ILlmService
     string ProviderName { get; }
 
     /// <summary>
-    /// Model name (e.g., "gpt-4.1-mini", "qwen2.5:7b")
+    /// Model name (e.g., "gpt-5-nano", "qwen2.5:7b")
     /// </summary>
     string ModelName { get; }
 

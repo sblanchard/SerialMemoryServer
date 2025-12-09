@@ -159,6 +159,61 @@ public sealed class ApiKeysModel : PageModel
         return Page();
     }
 
+    // OAuth credentials shown after enabling
+    public string? OAuthClientId { get; set; }
+    public string? OAuthClientSecret { get; set; }
+
+    public async Task<IActionResult> OnPostEnableOAuthAsync(Guid keyId)
+    {
+        try
+        {
+            var client = _apiClient.CreateClient("DashboardApi");
+            var request = new { redirectUris = new[] { "https://chat.openai.com/aip/plugin", "https://mcp.serialmemory.dev/mcp" } };
+            var response = await client.PostAsJsonAsync($"/api-keys/{keyId}/oauth/enable", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<EnableOAuthResult>();
+                OAuthClientId = result?.ClientId;
+                OAuthClientSecret = result?.ClientSecret;
+                SuccessMessage = "OAuth enabled successfully. Save the client secret - it will not be shown again!";
+            }
+            else
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? error?.Error ?? $"Failed to enable OAuth ({response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to enable OAuth: {content}";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = $"Failed to enable OAuth ({response.StatusCode})";
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            ErrorMessage = $"Could not connect to the server: {ex.Message}";
+        }
+
+        await LoadApiKeysAsync();
+        return Page();
+    }
+
+    private sealed class EnableOAuthResult
+    {
+        public string? ClientId { get; init; }
+        public string? ClientSecret { get; init; }
+    }
+
     private async Task LoadApiKeysAsync()
     {
         try

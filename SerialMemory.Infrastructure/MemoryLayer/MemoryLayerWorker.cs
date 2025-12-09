@@ -563,23 +563,31 @@ public sealed class MemoryLayerWorker : BackgroundService
         // Queue cluster-based summarization batches
         // This triggers the MemorySummarizationService to process clusters
 
-        // Check if there are enough L1 memories for summarization
+        // L1 memories need to mature before summarization:
+        // - Minimum age of 1 hour (to allow related memories to accumulate)
+        // - Minimum access count to show relevance
+        var minAgeHours = 1;
+        var minAccessCount = 1; // At least accessed once
+
+        // Check if there are enough mature L1 memories for summarization
         var l1Count = await conn.QueryFirstAsync<int>("""
             SELECT COUNT(*)
             FROM memories
             WHERE tenant_id = @TenantId::uuid
               AND layer = 'L1_CONTEXT'
+              AND updated_at < NOW() - @MinAgeHours * INTERVAL '1 hour'
+              AND COALESCE(access_count, 0) >= @MinAccessCount
               AND NOT EXISTS (
                   SELECT 1 FROM layer_transition_queue q
                   WHERE q.memory_id = memories.id
                     AND q.to_layer = 'L2_SUMMARY'
                     AND q.status IN ('pending', 'processing', 'completed')
               )
-            """, new { TenantId = tenantId });
+            """, new { TenantId = tenantId, MinAgeHours = minAgeHours, MinAccessCount = minAccessCount });
 
         if (l1Count >= 3) // Minimum cluster size
         {
-            // Queue summarization work
+            // Queue summarization work - only for mature L1 memories
             await conn.ExecuteAsync("""
                 INSERT INTO layer_transition_queue (
                     id, tenant_id, memory_id, from_layer, to_layer, priority, status, scheduled_at, metadata
@@ -597,6 +605,8 @@ public sealed class MemoryLayerWorker : BackgroundService
                 FROM memories m
                 WHERE m.tenant_id = @TenantId::uuid
                   AND m.layer = 'L1_CONTEXT'
+                  AND m.updated_at < NOW() - @MinAgeHours * INTERVAL '1 hour'
+                  AND COALESCE(m.access_count, 0) >= @MinAccessCount
                   AND NOT EXISTS (
                       SELECT 1 FROM layer_transition_queue q
                       WHERE q.memory_id = m.id
@@ -605,13 +615,19 @@ public sealed class MemoryLayerWorker : BackgroundService
                   )
                 LIMIT @Limit
                 ON CONFLICT DO NOTHING
-                """, new { TenantId = tenantId, Limit = _config.BatchSize });
+                """, new { TenantId = tenantId, Limit = _config.BatchSize, MinAgeHours = minAgeHours, MinAccessCount = minAccessCount });
         }
     }
 
     private async Task<List<TransitionCandidate>> FindL2ToL3CandidatesAsync(
         NpgsqlConnection conn, Guid tenantId, CancellationToken ct)
     {
+        // Use the same thresholds as LayerPromotionService
+        // L2 memories need to mature: be accessed multiple times and have high confidence
+        var minAccessCount = 5;  // L2ToL3_MinAccessCount default
+        var minConfidence = 0.7f; // L2ToL3_MinConfidence default
+        var minAgeDays = 1; // Require at least 1 day in L2 before promotion
+
         var candidates = await conn.QueryAsync<TransitionCandidate>("""
             SELECT
                 m.id AS MemoryId,
@@ -622,8 +638,9 @@ public sealed class MemoryLayerWorker : BackgroundService
             FROM memories m
             WHERE m.tenant_id = @TenantId::uuid
               AND m.layer = 'L2_SUMMARY'
-              AND COALESCE(m.access_count, 0) >= 0
-              AND COALESCE((m.metadata->>'confidence')::float, 0.5) >= 0.3
+              AND COALESCE(m.access_count, 0) >= @MinAccessCount
+              AND COALESCE((m.metadata->>'confidence')::float, 0.5) >= @MinConfidence
+              AND m.updated_at < NOW() - @MinAgeDays * INTERVAL '1 day'
               AND NOT EXISTS (
                   SELECT 1 FROM layer_transition_queue q
                   WHERE q.memory_id = m.id
@@ -632,7 +649,7 @@ public sealed class MemoryLayerWorker : BackgroundService
               )
             ORDER BY Score DESC
             LIMIT @Limit
-            """, new { TenantId = tenantId, Limit = _config.BatchSize });
+            """, new { TenantId = tenantId, Limit = _config.BatchSize, MinAccessCount = minAccessCount, MinConfidence = minConfidence, MinAgeDays = minAgeDays });
 
         return candidates.ToList();
     }

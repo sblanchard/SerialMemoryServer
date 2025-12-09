@@ -22,7 +22,7 @@ public sealed class OpenAiEntityExtractionService : IEntityExtractionService, ID
         _client = new OpenAiClient(
             apiKey: apiKey,
             endpoint: endpoint,
-            chatModel: model ?? "gpt-4.1-mini",
+            chatModel: model ?? "gpt-5-nano",
             logger: null);
         _logger = logger;
     }
