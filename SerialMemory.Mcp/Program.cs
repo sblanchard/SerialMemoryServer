@@ -139,7 +139,7 @@ if (!string.IsNullOrEmpty(openAiApiKey))
 {
     var openAiClient = new OpenAiClient(
         apiKey: openAiApiKey,
-        chatModel: "gpt-5-nano",  // Not used for embeddings
+        chatModel: "gpt-5-nano-2025-08-07",  // Not used for embeddings
         embedModel: openAiEmbedModel,
         embeddingDimension: 1536);
     embeddingService = openAiClient;
