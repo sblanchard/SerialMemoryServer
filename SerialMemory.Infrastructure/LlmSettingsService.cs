@@ -59,7 +59,7 @@ public sealed class LlmSettingsService
                 LlmProvider = "ollama",
                 EmbeddingProvider = "ollama",
                 EntityExtractionProvider = "ollama",
-                OpenAiModel = "gpt-5-nano",
+                OpenAiModel = "gpt-5-nano-2025-08-07",
                 OpenAiEmbedModel = "text-embedding-3-small"
             };
         }
@@ -76,7 +76,7 @@ public sealed class LlmSettingsService
             TenantId = tenantId,
             LlmProvider = settings.LlmProvider ?? "ollama",
             OpenAiApiKey = apiKey,
-            OpenAiModel = settings.OpenaiModel ?? "gpt-5-nano",
+            OpenAiModel = settings.OpenaiModel ?? "gpt-5-nano-2025-08-07",
             OpenAiEmbedModel = settings.OpenaiEmbedModel ?? "text-embedding-3-small",
             OpenAiEndpoint = settings.OpenaiEndpoint,
             EmbeddingProvider = settings.EmbeddingProvider ?? "ollama",
@@ -273,9 +273,9 @@ public sealed class LlmSettings
     public string? OpenAiApiKey { get; init; }
 
     /// <summary>
-    /// OpenAI chat model (default: gpt-5-nano)
+    /// OpenAI chat model (default: gpt-5-nano-2025-08-07)
     /// </summary>
-    public string OpenAiModel { get; init; } = "gpt-5-nano";
+    public string OpenAiModel { get; init; } = "gpt-5-nano-2025-08-07";
 
     /// <summary>
     /// OpenAI embedding model (default: text-embedding-3-small)
