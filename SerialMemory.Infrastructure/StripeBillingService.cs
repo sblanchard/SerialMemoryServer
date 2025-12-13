@@ -46,6 +46,16 @@ public sealed class StripeBillingService : IMockableBillingService
     {
         try
         {
+            if (string.IsNullOrEmpty(request.TenantId))
+            {
+                return new CheckoutSessionResult
+                {
+                    Success = false,
+                    ErrorCode = "tenant_required",
+                    ErrorMessage = "TenantId is required to create a checkout session"
+                };
+            }
+
             var priceId = await GetPriceIdForPlanAsync(request.PlanName, cancellationToken);
             if (priceId == null)
             {
