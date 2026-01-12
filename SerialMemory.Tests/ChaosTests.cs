@@ -449,7 +449,7 @@ public class ChaosTests
         }
 
         // Assert - recovery should be possible after timeout
-        recoverySteps.Should().HaveCountGreaterOrEqualTo(0);
+        recoverySteps.Should().HaveCountGreaterThanOrEqualTo(0);
     }
 
     /// <summary>

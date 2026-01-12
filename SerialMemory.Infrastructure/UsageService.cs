@@ -125,6 +125,11 @@ public sealed class UsageService : IUsageService, IDisposable
 
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
+
         var cycle = await conn.QueryFirstOrDefaultAsync<BillingCycle>(
             """
             SELECT id, tenant_id AS TenantId, workspace_id AS WorkspaceId, plan_id AS PlanId,
@@ -153,6 +158,11 @@ public sealed class UsageService : IUsageService, IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
 
         var rollups = await conn.QueryAsync<UsageDailyRollupDto>(
             """
@@ -188,6 +198,11 @@ public sealed class UsageService : IUsageService, IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        // Set tenant context for RLS
+        await conn.ExecuteAsync(
+            "SELECT set_config('app.tenant_id', @TenantId, false); SELECT set_config('app.current_tenant_id', @TenantId, false);",
+            new { TenantId = tenantId });
 
         var events = await conn.QueryAsync<UsageEventDto>(
             """
@@ -264,6 +279,14 @@ public sealed class UsageService : IUsageService, IDisposable
         {
             await using var conn = await _dataSource.OpenConnectionAsync();
 
+            // Set tenant context for RLS
+            await conn.ExecuteAsync(
+                """
+                SELECT set_config('app.tenant_id', @TenantId, false);
+                SELECT set_config('app.current_tenant_id', @TenantId, false);
+                """,
+                new { TenantId = _tenantId });
+
             // Ensure we have a billing cycle
             var cycleId = await EnsureBillingCycleAsync(conn);
 
@@ -272,37 +295,38 @@ public sealed class UsageService : IUsageService, IDisposable
                 evt.BillingCycleId = cycleId;
             }
 
-            // Batch insert using COPY for efficiency
-            await using var writer = await conn.BeginBinaryImportAsync(
-                """
-                COPY usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
-                                                     credits_consumed, event_timestamp, memory_id, user_id, session_id,
-                                                     latency_ms, success, error_message, metadata)
-                                  FROM STDIN (FORMAT BINARY)
-                """);
+            // Use INSERT with ON CONFLICT to handle duplicates gracefully
+            // This is slightly less efficient than COPY but prevents duplicate key errors
+            const string insertSql = """
+                INSERT INTO usage_events (id, tenant_id, workspace_id, billing_cycle_id, event_type,
+                                          credits_consumed, event_timestamp, memory_id, user_id, session_id,
+                                          latency_ms, success, error_message, metadata)
+                VALUES (@Id, @TenantId, @WorkspaceId, @BillingCycleId, @EventType::usage_event_type,
+                        @CreditsConsumed, @EventTimestamp, @MemoryId, @UserId, @SessionId,
+                        @LatencyMs, @Success, @ErrorMessage, @Metadata::jsonb)
+                ON CONFLICT (id) DO NOTHING
+                """;
 
             foreach (var evt in events)
             {
-                await writer.StartRowAsync();
-                await writer.WriteAsync(evt.Id, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.TenantId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.WorkspaceId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.BillingCycleId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(UsageCreditCosts.ToSnakeCase(evt.EventType), NpgsqlTypes.NpgsqlDbType.Unknown);
-                await writer.WriteAsync(evt.CreditsConsumed, NpgsqlTypes.NpgsqlDbType.Numeric);
-                await writer.WriteAsync(evt.EventTimestamp, NpgsqlTypes.NpgsqlDbType.TimestampTz);
-                await writer.WriteAsync(evt.MemoryId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.UserId, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(evt.SessionId, NpgsqlTypes.NpgsqlDbType.Uuid);
-                await writer.WriteAsync(evt.LatencyMs, NpgsqlTypes.NpgsqlDbType.Integer);
-                await writer.WriteAsync(evt.Success, NpgsqlTypes.NpgsqlDbType.Boolean);
-                await writer.WriteAsync(evt.ErrorMessage, NpgsqlTypes.NpgsqlDbType.Text);
-                await writer.WriteAsync(
-                    evt.Metadata != null ? JsonSerializer.Serialize(evt.Metadata) : null,
-                    NpgsqlTypes.NpgsqlDbType.Jsonb);
+                await conn.ExecuteAsync(insertSql, new
+                {
+                    evt.Id,
+                    evt.TenantId,
+                    evt.WorkspaceId,
+                    evt.BillingCycleId,
+                    EventType = UsageCreditCosts.ToSnakeCase(evt.EventType),
+                    evt.CreditsConsumed,
+                    evt.EventTimestamp,
+                    evt.MemoryId,
+                    evt.UserId,
+                    evt.SessionId,
+                    evt.LatencyMs,
+                    evt.Success,
+                    evt.ErrorMessage,
+                    Metadata = evt.Metadata != null ? JsonSerializer.Serialize(evt.Metadata) : null
+                });
             }
-
-            await writer.CompleteAsync();
 
             _logger.LogDebug("Persisted {Count} usage events", events.Count);
         }
@@ -502,22 +526,13 @@ public static class UsageTrackingExtensions
 /// <summary>
 /// Factory for creating tenant-scoped usage services.
 /// </summary>
-public sealed class UsageServiceFactory : IUsageServiceFactory
+public sealed class UsageServiceFactory(string connectionString, ILoggerFactory loggerFactory) : IUsageServiceFactory
 {
-    private readonly string _connectionString;
-    private readonly ILoggerFactory _loggerFactory;
-
-    public UsageServiceFactory(string connectionString, ILoggerFactory loggerFactory)
-    {
-        _connectionString = connectionString;
-        _loggerFactory = loggerFactory;
-    }
-
     public IUsageService CreateForTenant(string tenantId, string workspaceId)
     {
         return new UsageService(
-            _connectionString,
-            _loggerFactory.CreateLogger<UsageService>(),
+            connectionString,
+            loggerFactory.CreateLogger<UsageService>(),
             tenantId,
             workspaceId);
     }

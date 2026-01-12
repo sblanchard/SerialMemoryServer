@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -25,7 +26,8 @@ public sealed class PostgresEventStore : IEventStore
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false
+            WriteIndented = false,
+            Converters = { new JsonStringEnumConverter() }
         };
     }
 
@@ -161,7 +163,9 @@ public sealed class PostgresEventStore : IEventStore
         {
             EventId = row.event_id,
             StreamId = row.stream_id,
-            EventType = Enum.Parse<MemoryEventType>(row.event_type),
+            EventType = Enum.TryParse<MemoryEventType>(row.event_type, ignoreCase: true, out var eventType)
+                ? eventType
+                : MemoryEventType.Unknown,
             EventVersion = row.event_version,
             GlobalSequence = row.global_sequence,
             EventData = row.event_data,
@@ -235,7 +239,11 @@ public sealed class PostgresEventStore : IEventStore
 
     private IMemoryEvent DeserializeEvent(StoredEventRow row)
     {
-        var eventType = Enum.Parse<MemoryEventType>(row.event_type);
+        if (!Enum.TryParse<MemoryEventType>(row.event_type, ignoreCase: true, out var eventType))
+        {
+            _logger.LogWarning("Unknown event type '{EventType}' for event {EventId}, treating as Unknown", row.event_type, row.event_id);
+            eventType = MemoryEventType.Unknown;
+        }
 
         return eventType switch
         {
@@ -246,7 +254,18 @@ public sealed class PostgresEventStore : IEventStore
             MemoryEventType.MemoryDecayed => JsonSerializer.Deserialize<MemoryDecayedEvent>(row.event_data, _jsonOptions)!,
             MemoryEventType.MemoryReinforced => JsonSerializer.Deserialize<MemoryReinforcedEvent>(row.event_data, _jsonOptions)!,
             MemoryEventType.MemoryLayerTransitioned => JsonSerializer.Deserialize<MemoryLayerTransitionedEvent>(row.event_data, _jsonOptions)!,
-            _ => throw new InvalidOperationException($"Unknown event type: {eventType}")
+            // For unknown/unhandled events, return a generic event that can be safely skipped
+            _ => new UnknownEvent
+            {
+                EventId = row.event_id,
+                StreamId = row.stream_id,
+                EventType = eventType,
+                EventVersion = row.event_version,
+                CreatedAt = row.created_at,
+                CreatedBy = row.created_by,
+                ContentHash = row.content_hash,
+                RawEventData = row.event_data
+            }
         };
     }
 

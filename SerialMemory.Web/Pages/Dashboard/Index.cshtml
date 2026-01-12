@@ -4,10 +4,11 @@
     ViewData["Title"] = "Dashboard";
 }
 
+@Html.AntiForgeryToken()
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
-        <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
-        <p class="mt-2 text-gray-600">Welcome back! Here's an overview of your SerialMemory usage.</p>
+        <h1 class="text-3xl font-bold text-soft-white">Dashboard</h1>
+        <p class="mt-2 text-graphite">Welcome back! Here's an overview of your SerialMemory usage.</p>
     </div>
 
     <!-- Quickstart Card (Phase 14) -->
@@ -18,9 +19,8 @@
                 <div>
                     <h2 class="text-xl font-semibold mb-2">Get Started with SerialMemory</h2>
                     <p class="text-indigo-100 mb-4">Follow these steps to integrate memory into your AI agent:</p>
-                    <ol class="list-decimal list-inside space-y-2 text-indigo-100">
-                        <li>Copy your API key below</li>
-                        <li>Configure your MCP client (Claude Desktop, Cursor, etc.)</li>
+                    <ol class="list-decimal list-inside space-y-2 text-indigo-100"> 
+                        <li>Configure your MCP client using your api key (Claude Desktop, Cursor, etc.)</li>
                         <li>Try ingesting and searching memories</li>
                     </ol>
                 </div>
@@ -29,21 +29,10 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
-            </div>
-
-            <div class="mt-6 bg-white/10 rounded-lg p-4">
-                <h3 class="font-semibold mb-2">Your API Key</h3>
-                <div class="flex items-center gap-2">
-                    <code class="flex-1 bg-black/20 px-3 py-2 rounded font-mono text-sm">@Model.ApiKey</code>
-                    <button onclick="copyToClipboard('@Model.ApiKey')" class="bg-white/20 hover:bg-white/30 px-3 py-2 rounded text-sm">
-                        Copy
-                    </button>
-                </div>
-            </div>
-
+            </div>  
             <div class="mt-4 bg-white/10 rounded-lg p-4">
                 <h3 class="font-semibold mb-2">Quick Test (curl)</h3>
-                <pre class="bg-black/20 px-3 py-2 rounded font-mono text-xs overflow-x-auto">curl -X POST @Model.ApiBaseUrl/memory_ingest \
+                <pre class="bg-black/20 px-3 py-2 rounded font-mono text-xs overflow-x-auto">curl -X POST https://api.serialmemory.dev/api/mcp/tools/memory_ingest \
   -H "Authorization: Bearer @Model.ApiKey" \
   -H "Content-Type: application/json" \
   -d '{"content": "Hello, SerialMemory!"}'</pre>
@@ -54,44 +43,44 @@
     <!-- Stats Grid -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div class="card">
-            <div class="text-sm font-medium text-gray-500">Current Plan</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900">@Model.PlanName</div>
+            <div class="text-sm font-medium text-graphite">Current Plan</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.PlanName</div>
         </div>
         <div class="card">
-            <div class="text-sm font-medium text-gray-500">Credits Used</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900">@Model.CreditsUsed.ToString("N0") / @Model.CreditsAllocated.ToString("N0")</div>
-            <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-indigo-600 h-2 rounded-full" style="width: @(Model.UsagePercent)%"></div>
+            <div class="text-sm font-medium text-graphite">Credits Used</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.CreditsUsed.ToString("N0") / @Model.CreditsAllocated.ToString("N0")</div>
+            <div class="mt-2 w-full rounded-full h-2" style="background: rgba(55, 65, 81, 0.5);">
+                <div class="bg-cyan h-2 rounded-full" style="width: @(Model.UsagePercent)%"></div>
             </div>
         </div>
         <div class="card">
-            <div class="text-sm font-medium text-gray-500">Memories Stored</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900">@Model.MemoryCount.ToString("N0")</div>
+            <div class="text-sm font-medium text-graphite">Memories Stored</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.MemoryCount.ToString("N0")</div>
         </div>
         <div class="card">
-            <div class="text-sm font-medium text-gray-500">Cycle Ends</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900">@Model.CycleEnd?.ToString("MMM dd")</div>
+            <div class="text-sm font-medium text-graphite">Cycle Ends</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.CycleEnd?.ToString("MMM dd")</div>
         </div>
     </div>
 
     <!-- Quick Actions -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div class="card">
-            <h3 class="text-lg font-semibold mb-4">Quick Actions</h3>
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Quick Actions</h3>
             <div class="space-y-3">
-                <a href="/dashboard/api-keys" class="flex items-center text-indigo-600 hover:text-indigo-700">
+                <a href="/dashboard/api-keys" class="flex items-center text-cyan hover:text-electric">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                     </svg>
                     Manage API Keys
                 </a>
-                <a href="/dashboard/usage" class="flex items-center text-indigo-600 hover:text-indigo-700">
+                <a href="/dashboard/usage" class="flex items-center text-cyan hover:text-electric">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                     </svg>
                     View Usage Details
                 </a>
-                <a href="/dashboard/billing" class="flex items-center text-indigo-600 hover:text-indigo-700">
+                <a href="/dashboard/billing" class="flex items-center text-cyan hover:text-electric">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                     </svg>
@@ -101,21 +90,21 @@
         </div>
 
         <div class="card">
-            <h3 class="text-lg font-semibold mb-4">Documentation</h3>
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Documentation</h3>
             <div class="space-y-3">
-                <a href="https://docs.serialmemory.io/quickstart" target="_blank" class="flex items-center text-gray-600 hover:text-gray-800">
+                <a href="/docs" class="flex items-center text-graphite hover:text-soft-white">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                     </svg>
                     Quickstart Guide
                 </a>
-                <a href="https://docs.serialmemory.io/mcp" target="_blank" class="flex items-center text-gray-600 hover:text-gray-800">
+                <a href="/docs" class="flex items-center text-graphite hover:text-soft-white">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
                     MCP Integration
                 </a>
-                <a href="https://docs.serialmemory.io/api" target="_blank" class="flex items-center text-gray-600 hover:text-gray-800">
+                <a href="/docs" class="flex items-center text-graphite hover:text-soft-white">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
@@ -127,24 +116,26 @@
 
     <!-- Live Test Widget (Phase 14) -->
     <div class="card">
-        <h3 class="text-lg font-semibold mb-4">Live Memory Test</h3>
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Live Memory Test</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">Ingest Memory</label>
+                <label class="block text-sm font-medium text-graphite mb-2">Ingest Memory</label>
                 <textarea id="ingestContent" rows="3"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    class="w-full px-3 py-2 rounded-md text-soft-white placeholder-graphite focus:outline-none focus:ring-2 focus:ring-cyan"
+                    style="background: #0B0F1A; border: 1px solid #374151;"
                     placeholder="Enter a memory to store..."></textarea>
-                <button onclick="testIngest()" class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm">
+                <button onclick="testIngest()" class="mt-2 btn-primary px-4 py-2 rounded-md text-sm">
                     Ingest Memory
                 </button>
                 <div id="ingestResult" class="mt-2 text-sm"></div>
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">Search Memories</label>
+                <label class="block text-sm font-medium text-graphite mb-2">Search Memories</label>
                 <input type="text" id="searchQuery"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    class="w-full px-3 py-2 rounded-md text-soft-white placeholder-graphite focus:outline-none focus:ring-2 focus:ring-cyan"
+                    style="background: #0B0F1A; border: 1px solid #374151;"
                     placeholder="Enter search query...">
-                <button onclick="testSearch()" class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm">
+                <button onclick="testSearch()" class="mt-2 btn-primary px-4 py-2 rounded-md text-sm">
                     Search Memories
                 </button>
                 <div id="searchResult" class="mt-2 text-sm max-h-48 overflow-y-auto"></div>
@@ -156,7 +147,6 @@
 @section Scripts {
 <script>
     const apiKey = '@Model.ApiKey';
-    const apiBaseUrl = '@Model.ApiBaseUrl';
 
     function copyToClipboard(text) {
         navigator.clipboard.writeText(text);
@@ -177,27 +167,28 @@
             return;
         }
 
-        resultDiv.innerHTML = '<span class="text-gray-600">Ingesting...</span>';
+        resultDiv.innerHTML = '<span class="text-graphite">Ingesting...</span>';
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/memory/ingest`, {
+            // Use server-side proxy to avoid CORS and API key issues
+            const response = await fetch('/dashboard?handler=Ingest', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]')?.value || ''
                 },
                 body: JSON.stringify({ content })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                resultDiv.innerHTML = `<span class="text-green-600">Memory ingested! ID: ${data.memoryId}</span>`;
+            const result = await response.json();
+            if (result.success) {
+                const data = result.data;
+                resultDiv.innerHTML = `<span class="text-green-600">Memory ingested! ID: ${data?.id || data?.memoryId || 'Success'}</span>`;
             } else {
-                const error = await response.json();
-                resultDiv.innerHTML = `<span class="text-red-600">Error: ${error.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-600">Error: ${result.error}</span>`;
             }
         } catch (e) {
-            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message}</span>`;
+            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message || 'Network error'}</span>`;
         }
     }
 
@@ -210,33 +201,38 @@
             return;
         }
 
-        resultDiv.innerHTML = '<span class="text-gray-600">Searching...</span>';
+        resultDiv.innerHTML = '<span class="text-graphite">Searching...</span>';
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/memory/search?query=${encodeURIComponent(query)}`, {
+            // Use server-side proxy to avoid CORS and API key issues
+            const response = await fetch('/dashboard?handler=Search', {
+                method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${apiKey}`
-                }
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]')?.value || ''
+                },
+                body: JSON.stringify({ query })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.memories && data.memories.length > 0) {
-                    resultDiv.innerHTML = data.memories.map(m =>
-                        `<div class="p-2 bg-gray-50 rounded mb-2">
-                            <div class="text-gray-900">${m.content}</div>
-                            <div class="text-xs text-gray-500">Score: ${(m.score * 100).toFixed(1)}%</div>
+            const result = await response.json();
+            if (result.success) {
+                const data = result.data;
+                const memories = data?.memories || data?.results || (Array.isArray(data) ? data : []);
+                if (memories.length > 0) {
+                    resultDiv.innerHTML = memories.map(m =>
+                        `<div class="p-2 bg-slate/30 rounded mb-2">
+                            <div class="text-soft-white">${m.content}</div>
+                            <div class="text-xs text-graphite">Score: ${((m.score || m.similarity || 0) * 100).toFixed(1)}%</div>
                         </div>`
                     ).join('');
                 } else {
-                    resultDiv.innerHTML = '<span class="text-gray-600">No memories found</span>';
+                    resultDiv.innerHTML = '<span class="text-graphite">No memories found</span>';
                 }
             } else {
-                const error = await response.json();
-                resultDiv.innerHTML = `<span class="text-red-600">Error: ${error.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-600">Error: ${result.error}</span>`;
             }
         } catch (e) {
-            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message}</span>`;
+            resultDiv.innerHTML = `<span class="text-red-600">Error: ${e.message || 'Network error'}</span>`;
         }
     }
 

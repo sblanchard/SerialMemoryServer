@@ -1,0 +1,268 @@
+@page
+@model DocsModel
+@{
+    ViewData["Title"] = "Documentation";
+    ViewData["Description"] = "SerialMemory API and MCP documentation for developers.";
+}
+
+<!-- Header -->
+<section class="gradient-bg py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h1 class="text-4xl font-bold text-soft-white mb-6">SerialMemory Documentation</h1>
+        <p class="text-graphite text-lg leading-relaxed">
+            SerialMemory provides persistent, tenant-isolated memory for AI agents and developer systems.
+            It combines vector search, knowledge graphs, and deterministic reasoning into one unified API.
+        </p>
+        <p class="text-graphite text-lg mt-4">
+            This documentation focuses on practical usage, patterns, and real-world integration.
+        </p>
+    </div>
+</section>
+
+<!-- Quickstart -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Quickstart</h2>
+
+        <div class="rounded-lg overflow-hidden border border-slate mb-8">
+            <div class="flex items-center gap-2 px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #EF4444;"></div>
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #FACC15;"></div>
+                <div class="w-2.5 h-2.5 rounded-full" style="background: #22C55E;"></div>
+                <span class="ml-2 text-graphite text-xs font-mono">terminal</span>
+            </div>
+            <div class="px-6 py-4" style="background: #0B0F1A;">
+                <code class="text-cyan font-mono">docker run -it serialcoder/serialmemory-mcp</code>
+            </div>
+        </div>
+
+        <h3 class="text-lg font-semibold text-soft-white mb-4">First run flow:</h3>
+        <ul class="space-y-3 text-graphite">
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">1.</span>
+                <span>The MCP client will ask for your API key.</span>
+            </li>
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">2.</span>
+                <span>Press Enter to accept the default server URL.</span>
+            </li>
+            <li class="flex items-start gap-3">
+                <span class="text-cyan mt-1">3.</span>
+                <span>The client starts a local MCP bridge.</span>
+            </li>
+        </ul>
+
+        <div class="mt-8 p-4 rounded-lg border border-slate" style="background: rgba(34, 211, 238, 0.05);">
+            <p class="text-soft-white">There is no config file required.</p>
+            <p class="text-soft-white">There are no environment variables required.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Core Concepts -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Core Concepts</h2>
+
+        <h3 class="text-xl font-semibold text-soft-white mb-4">Memory Types</h3>
+        <p class="text-graphite mb-6">SerialMemory stores structured memory in multiple layers:</p>
+
+        <div class="rounded-lg overflow-hidden border border-slate mb-6">
+            <div class="px-6 py-4 font-mono text-sm" style="background: #0B0F1A;">
+                <div class="grid gap-2">
+                    <div><span class="text-cyan">L0_RAW</span><span class="text-graphite ml-8">- Raw user or system input</span></div>
+                    <div><span class="text-cyan">L1_CONTEXT</span><span class="text-graphite ml-4">- Interpreted meaning</span></div>
+                    <div><span class="text-cyan">L2_SUMMARY</span><span class="text-graphite ml-4">- Compressed understanding</span></div>
+                    <div><span class="text-cyan">L3_KNOWLEDGE</span><span class="text-graphite ml-2">- Extracted facts</span></div>
+                    <div><span class="text-cyan">L4_HEURISTIC</span><span class="text-graphite ml-2">- Learned system patterns</span></div>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-graphite">Each layer can be queried independently.</p>
+        <p class="text-graphite">All writes are versioned and traceable.</p>
+    </div>
+</section>
+
+<!-- MCP Tools Reference -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">MCP Tools Reference</h2>
+
+        <div class="rounded-lg overflow-hidden border border-slate mb-6">
+            <div class="px-6 py-4 font-mono text-sm" style="background: #0B0F1A;">
+                <div class="grid gap-1">
+                    <div class="text-cyan">memory_ingest</div>
+                    <div class="text-cyan">memory_search</div>
+                    <div class="text-cyan">memory_multi_hop_search</div>
+                    <div class="text-cyan">memory_update</div>
+                    <div class="text-cyan">memory_delete</div>
+                    <div class="text-cyan">crawl_relationships</div>
+                    <div class="text-cyan">export_memories</div>
+                    <div class="text-cyan">get_graph_statistics</div>
+                    <div class="text-cyan">memory_about_user</div>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-graphite">
+            These tools are exposed through MCP and can be called directly from Claude, Cursor, or custom agents.
+        </p>
+    </div>
+</section>
+
+<!-- Typical Usage Patterns -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Typical Usage Patterns</h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">Before answering a question:</h3>
+                <ol class="space-y-3 text-graphite">
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">1.</span>
+                        <span>Run <code class="text-cyan">memory_search</code></span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">2.</span>
+                        <span>Use the top results as context</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">3.</span>
+                        <span>Answer the user</span>
+                    </li>
+                </ol>
+            </div>
+
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">After answering:</h3>
+                <ol class="space-y-3 text-graphite">
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">1.</span>
+                        <span>Run <code class="text-cyan">memory_ingest</code></span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">2.</span>
+                        <span>Store both the question and the answer</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <span class="text-cyan font-mono">3.</span>
+                        <span>Let SerialMemory extract entities and relationships automatically</span>
+                    </li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Tenant Isolation -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Tenant Isolation</h2>
+
+        <p class="text-graphite mb-6">SerialMemory enforces tenant isolation at three layers:</p>
+
+        <div class="space-y-4 mb-8">
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Application Layer</h3>
+                    <p class="text-graphite">Tenant-scoped access control on every API call</p>
+                </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Database Layer</h3>
+                    <p class="text-graphite">Row Level Security policies enforced at PostgreSQL level</p>
+                </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background: rgba(34, 211, 238, 0.2);">
+                    <svg class="w-4 h-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-soft-white font-semibold">Vector Layer</h3>
+                    <p class="text-graphite">Tenant-isolated embeddings in pgvector</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 rounded-lg border" style="background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3);">
+            <p class="text-soft-white font-medium">A tenant can never access data belonging to another tenant.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Example Claude Prompt -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Example Claude Prompt</h2>
+
+        <div class="rounded-lg overflow-hidden border border-slate">
+            <div class="flex items-center justify-between px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                <span class="text-graphite text-xs font-mono">system prompt snippet</span>
+                <button onclick="navigator.clipboard.writeText(document.getElementById('prompt-code').innerText)" class="text-xs text-cyan hover:text-electric transition-colors">Copy</button>
+            </div>
+            <div class="px-6 py-4" style="background: #0B0F1A;">
+<pre id="prompt-code" class="text-soft-white font-mono text-sm whitespace-pre-wrap"><code>Before answering:
+1. Use memory_search for relevant context.
+2. Use that context in reasoning.
+
+After answering:
+Store important information using memory_ingest.</code></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Roadmap -->
+<section class="bg-midnight py-16">
+    <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-2xl font-bold text-soft-white mb-8">Roadmap</h2>
+
+        <div class="space-y-4">
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Live graph streaming (SignalR)</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Deterministic replay for reasoning</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Time travel debugging for memory state</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-cyan"></div>
+                <span class="text-graphite">Self-hosted enterprise mode (on-request)</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="bg-navy py-16">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-2xl font-bold text-soft-white mb-4">Ready to integrate?</h2>
+        <p class="text-graphite mb-8">Get your API key and start building agents with persistent memory.</p>
+        <div class="flex flex-col sm:flex-row justify-center gap-4">
+            <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold">Get API Key</a>
+            <a href="/developers" class="btn-outline px-8 py-3 rounded-xl font-semibold">Developers</a>
+        </div>
+    </div>
+</section>

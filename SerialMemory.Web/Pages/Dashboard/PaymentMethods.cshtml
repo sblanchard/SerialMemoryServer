@@ -1,0 +1,202 @@
+@page "/dashboard/payment-methods"
+@model SerialMemory.Web.Pages.Dashboard.PaymentMethodsModel
+@{
+    ViewData["Title"] = "Payment Methods";
+}
+
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Payment Methods</h1>
+        <p class="mt-2 text-graphite">Manage your payment methods for subscriptions and purchases.</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="bg-green-900/30 border border-green-500/50 text-green-300 px-4 py-3 rounded mb-6">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                @Model.SuccessMessage
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded mb-6">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                </svg>
+                @Model.ErrorMessage
+            </div>
+        </div>
+    }
+
+    <!-- Add New Payment Method -->
+    <div class="card mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-soft-white">Add Payment Method</h3>
+        </div>
+        <p class="text-graphite mb-4">Add a new credit or debit card to your account.</p>
+        <form method="post" asp-page-handler="AddCard">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium inline-flex items-center">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Add New Card
+            </button>
+        </form>
+    </div>
+
+    <!-- Current Payment Methods -->
+    <div class="card">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Your Payment Methods</h3>
+
+        @if (Model.PaymentMethods.Count == 0)
+        {
+            <div class="text-center py-12">
+                <svg class="mx-auto h-12 w-12 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                <h3 class="mt-2 text-sm font-medium text-soft-white">No payment methods</h3>
+                <p class="mt-1 text-sm text-graphite">Add a payment method to subscribe to paid plans.</p>
+            </div>
+        }
+        else
+        {
+            <div class="space-y-4">
+                @foreach (var pm in Model.PaymentMethods)
+                {
+                    <div class="flex items-center justify-between p-4 rounded-lg @(pm.IsDefault ? "bg-indigo-900/20 border border-indigo-500/50" : "bg-charcoal/30 border border-graphite/30")">
+                        <div class="flex items-center">
+                            <!-- Card Brand Icon -->
+                            <div class="w-12 h-8 rounded bg-slate flex items-center justify-center mr-4">
+                                @switch (pm.Brand?.ToLower())
+                                {
+                                    case "visa":
+                                        <span class="text-blue-400 font-bold text-xs">VISA</span>
+                                        break;
+                                    case "mastercard":
+                                        <span class="text-orange-400 font-bold text-xs">MC</span>
+                                        break;
+                                    case "amex":
+                                        <span class="text-blue-300 font-bold text-xs">AMEX</span>
+                                        break;
+                                    default:
+                                        <svg class="w-6 h-6 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                                        </svg>
+                                        break;
+                                }
+                            </div>
+
+                            <div>
+                                <div class="flex items-center">
+                                    <span class="text-soft-white font-medium capitalize">@pm.Brand</span>
+                                    <span class="text-graphite ml-2">ending in @pm.Last4</span>
+                                    @if (pm.IsDefault)
+                                    {
+                                        <span class="ml-3 px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-600/50 text-indigo-300">Default</span>
+                                    }
+                                </div>
+                                <div class="text-sm text-graphite">
+                                    Expires @pm.ExpMonth.ToString("00")/@pm.ExpYear
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            @if (!pm.IsDefault)
+                            {
+                                <form method="post" asp-page-handler="SetDefault" class="inline">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="paymentMethodId" value="@pm.Id" />
+                                    <button type="submit" class="text-indigo-400 hover:text-indigo-300 text-sm font-medium">
+                                        Set as Default
+                                    </button>
+                                </form>
+                            }
+
+                            <form method="post" asp-page-handler="Delete"
+                                  onsubmit="return confirm('Are you sure you want to remove this payment method?');"
+                                  class="inline">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="paymentMethodId" value="@pm.Id" />
+                                <button type="submit" class="text-red-400 hover:text-red-300 text-sm font-medium ml-4">
+                                    Remove
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <!-- Billing Address Section -->
+    <div class="card mt-8">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Billing Information</h3>
+
+        @if (Model.BillingAddress != null)
+        {
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-medium text-graphite">Name</label>
+                    <p class="mt-1 text-soft-white">@Model.BillingAddress.Name</p>
+                </div>
+                @if (!string.IsNullOrEmpty(Model.BillingAddress.Email))
+                {
+                    <div>
+                        <label class="block text-sm font-medium text-graphite">Email</label>
+                        <p class="mt-1 text-soft-white">@Model.BillingAddress.Email</p>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(Model.BillingAddress.Line1))
+                {
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-graphite">Address</label>
+                        <p class="mt-1 text-soft-white">
+                            @Model.BillingAddress.Line1<br />
+                            @if (!string.IsNullOrEmpty(Model.BillingAddress.Line2))
+                            {
+                                @Model.BillingAddress.Line2<br />
+                            }
+                            @Model.BillingAddress.City, @Model.BillingAddress.State @Model.BillingAddress.PostalCode<br />
+                            @Model.BillingAddress.Country
+                        </p>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="text-graphite mb-4">No billing address on file.</p>
+        }
+
+        <form method="post" asp-page-handler="UpdateBilling">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="bg-slate/50 hover:bg-slate text-soft-white px-4 py-2 rounded-md text-sm font-medium">
+                Update Billing Information
+            </button>
+        </form>
+    </div>
+
+    <!-- Quick Links -->
+    <div class="mt-8 flex flex-wrap gap-4">
+        <a href="/dashboard/billing" class="text-indigo-400 hover:text-indigo-300 text-sm font-medium inline-flex items-center">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Billing
+        </a>
+        <a href="/dashboard/plans" class="text-indigo-400 hover:text-indigo-300 text-sm font-medium inline-flex items-center">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            View Plans
+        </a>
+    </div>
+</div>

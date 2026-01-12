@@ -167,7 +167,7 @@ public sealed class AdminService : IAdminService
             CreditsUsed = (decimal)(quota?.credits_used ?? 0),
             CreditsLimit = (decimal)(quota?.credits_limit ?? 100),
             PercentUsed = quota?.credits_limit > 0
-                ? (decimal)(quota?.credits_used ?? 0) / (decimal)quota.credits_limit * 100
+                ? (decimal)(quota?.credits_used ?? 0) / (decimal)(quota?.credits_limit ?? 0) * 100
                 : 0,
             MemoriesCount = (int)(quota?.memories_count ?? 0),
             MemoriesLimit = (int?)quota?.max_memories,
@@ -316,5 +316,38 @@ public sealed class AdminService : IAdminService
             RateLimiter = rateLimiterHealth,
             Stats = systemStats
         };
+    }
+
+    public async Task<IReadOnlyList<TenantSearchResult>> SearchTenantsAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        var searchPattern = $"%{query}%";
+
+        const string sql = """
+            SELECT
+                t.id AS TenantId,
+                t.name AS Name,
+                t.slug AS Slug,
+                tu.email AS Email,
+                t.status AS Status,
+                t.created_at AS CreatedAt
+            FROM tenants t
+            LEFT JOIN tenant_users tu ON tu.tenant_id = t.id AND tu.role = 'owner'
+            WHERE t.name ILIKE @Pattern
+               OR t.slug ILIKE @Pattern
+               OR tu.email ILIKE @Pattern
+            ORDER BY t.created_at DESC
+            LIMIT @Limit
+            """;
+
+        var results = await connection.QueryAsync<TenantSearchResult>(
+            sql,
+            new { Pattern = searchPattern, Limit = limit });
+
+        return results.ToList();
     }
 }

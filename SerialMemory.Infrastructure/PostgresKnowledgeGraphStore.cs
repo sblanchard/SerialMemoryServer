@@ -1,3 +1,4 @@
+using System.Dynamic;
 using Dapper;
 using Npgsql;
 using Pgvector;
@@ -191,17 +192,17 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new
-            {
-                id = reader.GetGuid(0),
-                content = reader.GetString(1),
-                created_at = reader.GetDateTime(2),
-                updated_at = reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3),
-                source = reader.IsDBNull(4) ? null : reader.GetString(4),
-                conversation_session_id = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5),
-                metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
-                similarity = reader.GetFloat(7)
-            });
+            dynamic row = new ExpandoObject();
+            var dict = (IDictionary<string, object?>)row;
+            dict["id"] = reader.GetGuid(0);
+            dict["content"] = reader.GetString(1);
+            dict["created_at"] = reader.GetDateTime(2);
+            dict["updated_at"] = reader.IsDBNull(3) ? null : reader.GetDateTime(3);
+            dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
+            dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
+            dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
+            dict["similarity"] = reader.GetFloat(7);
+            results.Add(row);
         }
 
         return results.Select(MapToMemory).ToList();
@@ -616,9 +617,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     private static Memory MapToMemory(dynamic row)
     {
-        var rowDict = (IDictionary<string, object>)row;
+        // Handle both DapperRow (which implements IDictionary<string, object>) and anonymous types
+        IDictionary<string, object>? rowDict = row as IDictionary<string, object>;
 
-        return new Memory
+        var memory = new Memory
         {
             Id = row.id,
             Content = row.content,
@@ -626,11 +628,24 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             UpdatedAt = row.updated_at,
             Source = row.source,
             ConversationSessionId = row.conversation_session_id,
-            Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null,
-            // Map search scores when available from query results
-            Similarity = rowDict.TryGetValue("similarity", out var sim) && sim != null ? Convert.ToSingle(sim) : 0f,
-            Rank = rowDict.TryGetValue("rank", out var rank) && rank != null ? Convert.ToSingle(rank) : 0f
+            Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
         };
+
+        // Map search scores when available from query results
+        if (rowDict != null)
+        {
+            // For DapperRow, use dictionary access for optional properties
+            memory.Similarity = rowDict.TryGetValue("similarity", out var sim) && sim != null ? Convert.ToSingle(sim) : 0f;
+            memory.Rank = rowDict.TryGetValue("rank", out var rank) && rank != null ? Convert.ToSingle(rank) : 0f;
+        }
+        else
+        {
+            // For anonymous types or other dynamic objects, try direct property access with fallback
+            try { memory.Similarity = (float)(row.similarity ?? 0f); } catch { memory.Similarity = 0f; }
+            try { memory.Rank = (float)(row.rank ?? 0f); } catch { memory.Rank = 0f; }
+        }
+
+        return memory;
     }
 
     private static Entity MapToEntity(dynamic row)
@@ -649,7 +664,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     private static EntityRelationship MapToEntityRelationship(dynamic row)
     {
-        var rowDict = (IDictionary<string, object>)row;
+        // Handle both DapperRow (which implements IDictionary<string, object>) and anonymous types
+        IDictionary<string, object>? rowDict = row as IDictionary<string, object>;
 
         var relationship = new EntityRelationship
         {
@@ -664,28 +680,69 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         };
 
         // Populate navigation properties when joined entity data is available
-        if (rowDict.TryGetValue("source_name", out var sourceName) && sourceName != null)
+        if (rowDict != null)
         {
-            relationship.SourceEntity = new Entity
+            // For DapperRow, use dictionary access for optional joined properties
+            if (rowDict.TryGetValue("source_name", out var sourceName) && sourceName != null)
             {
-                Id = row.source_entity_id,
-                Name = sourceName.ToString()!,
-                EntityType = rowDict.TryGetValue("source_type", out var sourceType) && sourceType != null
-                    ? sourceType.ToString()!
-                    : "UNKNOWN"
-            };
-        }
+                relationship.SourceEntity = new Entity
+                {
+                    Id = row.source_entity_id,
+                    Name = sourceName.ToString()!,
+                    EntityType = rowDict.TryGetValue("source_type", out var sourceType) && sourceType != null
+                        ? sourceType.ToString()!
+                        : "UNKNOWN"
+                };
+            }
 
-        if (rowDict.TryGetValue("target_name", out var targetName) && targetName != null)
-        {
-            relationship.TargetEntity = new Entity
+            if (rowDict.TryGetValue("target_name", out var targetName) && targetName != null)
             {
-                Id = row.target_entity_id,
-                Name = targetName.ToString()!,
-                EntityType = rowDict.TryGetValue("target_type", out var targetType) && targetType != null
-                    ? targetType.ToString()!
-                    : "UNKNOWN"
-            };
+                relationship.TargetEntity = new Entity
+                {
+                    Id = row.target_entity_id,
+                    Name = targetName.ToString()!,
+                    EntityType = rowDict.TryGetValue("target_type", out var targetType) && targetType != null
+                        ? targetType.ToString()!
+                        : "UNKNOWN"
+                };
+            }
+        }
+        else
+        {
+            // For anonymous types, try direct property access with fallback
+            try
+            {
+                string? sourceName = row.source_name;
+                if (sourceName != null)
+                {
+                    string? sourceType = null;
+                    try { sourceType = row.source_type; } catch { }
+                    relationship.SourceEntity = new Entity
+                    {
+                        Id = row.source_entity_id,
+                        Name = sourceName,
+                        EntityType = sourceType ?? "UNKNOWN"
+                    };
+                }
+            }
+            catch { /* Property doesn't exist on anonymous type */ }
+
+            try
+            {
+                string? targetName = row.target_name;
+                if (targetName != null)
+                {
+                    string? targetType = null;
+                    try { targetType = row.target_type; } catch { }
+                    relationship.TargetEntity = new Entity
+                    {
+                        Id = row.target_entity_id,
+                        Name = targetName,
+                        EntityType = targetType ?? "UNKNOWN"
+                    };
+                }
+            }
+            catch { /* Property doesn't exist on anonymous type */ }
         }
 
         return relationship;

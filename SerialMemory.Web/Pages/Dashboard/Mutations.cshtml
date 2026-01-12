@@ -1,0 +1,763 @@
+@page "/dashboard/mutations"
+@model SerialMemory.Web.Pages.Dashboard.MutationsModel
+@{
+    ViewData["Title"] = "Mutations";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8 flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-soft-white">Mutation Console</h1>
+            <p class="mt-2 text-graphite">Event-sourced mutation queue, replay engine, and state diff.</p>
+        </div>
+        <div class="flex gap-2">
+            @if (Model.Stats?.IsPaused == true)
+            {
+                <form method="post" asp-page-handler="ResumeProcessing" class="inline">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Resume Processing
+                    </button>
+                </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="PauseProcessing" class="inline">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Pause Processing
+                    </button>
+                </form>
+            }
+            <form method="post" asp-page-handler="ForceFlush" class="inline" onsubmit="return confirm('Force flush all pending mutations?');">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                    Force Flush
+                </button>
+            </form>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="mb-6 bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded-lg">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    @if (Model.PowerModeRequired)
+    {
+        <div class="mb-6 bg-amber-900/50 border border-amber-500 text-amber-200 px-4 py-3 rounded-lg">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span><strong>Power Mode Required</strong> — This page requires Power Mode access. Contact your administrator or enable Lab Mode in your subscription settings.</span>
+            </div>
+        </div>
+    }
+
+    <!-- Stats Overview -->
+    <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-8">
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Current Sequence</div>
+            <div class="mt-1 text-2xl font-semibold text-cyan font-mono">@Model.CurrentSequence.ToString("N0")</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Total Processed</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.TotalProcessed.ToString("N0") ?? "—")</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Pending</div>
+            <div class="mt-1 text-2xl font-semibold text-yellow-400">@(Model.Stats?.PendingCount ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Failed</div>
+            <div class="mt-1 text-2xl font-semibold text-red-400">@(Model.Stats?.FailedCount ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Avg Processing</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.AvgProcessingMs.ToString("F1") ?? "—") ms</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Mutations/sec</div>
+            <div class="mt-1 text-2xl font-semibold text-electric">@(Model.Stats?.MutationsPerSecond.ToString("F2") ?? "—")</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Status</div>
+            <div class="mt-1 text-2xl font-semibold @(Model.Stats?.IsPaused == true ? "text-yellow-400" : "text-green-400")">
+                @(Model.Stats?.IsPaused == true ? "Paused" : "Running")
+            </div>
+        </div>
+    </div>
+
+    <!-- Time-Slider Replay Panel -->
+    <div class="card mb-6">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold text-soft-white">Time-Travel Replay</h3>
+            <div class="flex items-center gap-2">
+                <span class="text-xs text-graphite">Mode:</span>
+                <button id="replayModeBtn" onclick="togglePredictiveMode()" class="px-3 py-1 text-xs rounded transition bg-slate text-cyan hover:bg-slate/70">
+                    Replay
+                </button>
+                <button id="predictModeBtn" onclick="togglePredictiveMode()" class="px-3 py-1 text-xs rounded transition bg-slate text-graphite hover:bg-slate/70">
+                    Predict
+                </button>
+            </div>
+        </div>
+
+        <!-- Time Slider -->
+        <div class="bg-slate/30 rounded-lg p-4 mb-4">
+            <div class="flex items-center gap-4 mb-2">
+                <button onclick="stepSlider(-10)" class="text-cyan hover:text-white transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                    </svg>
+                </button>
+                <button onclick="stepSlider(-1)" class="text-cyan hover:text-white transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                    </svg>
+                </button>
+                <input type="range" id="timeSlider" min="0" max="100" value="100"
+                       class="flex-1 h-2 bg-slate rounded-lg appearance-none cursor-pointer accent-cyan"
+                       oninput="onSliderChange(this.value)">
+                <button onclick="stepSlider(1)" class="text-cyan hover:text-white transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                </button>
+                <button onclick="stepSlider(10)" class="text-cyan hover:text-white transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                    </svg>
+                </button>
+            </div>
+            <div class="flex justify-between text-xs text-graphite">
+                <span>From: <span id="fromSeqLabel" class="font-mono text-cyan">0</span></span>
+                <span>Current: <span id="currentSeqLabel" class="font-mono text-soft-white">—</span></span>
+                <span>To: <span id="toSeqLabel" class="font-mono text-cyan">@Model.CurrentSequence</span></span>
+            </div>
+            <div class="mt-2 text-center">
+                <span id="replayStatus" class="text-sm text-graphite">Slide to select replay range</span>
+            </div>
+        </div>
+
+        <!-- Graph Diff Visualization -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <!-- Replay State (Left) -->
+            <div class="bg-slate/20 rounded-lg p-2">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-xs font-medium text-cyan">REPLAY STATE</span>
+                    <span id="replayNodeCount" class="text-xs text-graphite">0 nodes</span>
+                </div>
+                <canvas id="replayCanvas" class="w-full rounded" height="200"></canvas>
+            </div>
+            <!-- Live State (Right) -->
+            <div class="bg-slate/20 rounded-lg p-2">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-xs font-medium text-green-400">LIVE STATE</span>
+                    <span id="liveNodeCount" class="text-xs text-graphite">0 nodes</span>
+                </div>
+                <canvas id="liveCanvas" class="w-full rounded" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- Diff Legend -->
+        <div class="flex justify-center gap-6 mb-4 text-xs">
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-green-900/300 animate-pulse"></span>
+                <span class="text-graphite">Added</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-red-500 opacity-70"></span>
+                <span class="text-graphite">Removed</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-amber-500"></span>
+                <span class="text-graphite">Modified</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Memory Diff Table -->
+    <div class="card mb-6">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">State Diff</h3>
+        <div class="overflow-x-auto max-h-[300px]">
+            <table class="min-w-full">
+                <thead class="sticky top-0 bg-navy">
+                    <tr class="border-b border-slate">
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">ID</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Type</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Change</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-graphite uppercase">Details</th>
+                    </tr>
+                </thead>
+                <tbody id="diffTableBody" class="divide-y divide-slate">
+                    <tr>
+                        <td colspan="4" class="px-3 py-8 text-center text-graphite">
+                            Slide the time slider to compare states
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Pending Mutations -->
+        <div class="card">
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Pending Mutations (@Model.PendingMutations.Count)</h3>
+            <div class="space-y-3 max-h-[400px] overflow-y-auto">
+                @foreach (var mutation in Model.PendingMutations)
+                {
+                    <div class="bg-slate/30 rounded-md p-3">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="px-2 py-1 text-xs rounded bg-yellow-600 text-white">@mutation.MutationType</span>
+                            <span class="text-xs text-graphite">@mutation.Status</span>
+                        </div>
+                        <div class="text-xs font-mono text-graphite mb-1">Target: @mutation.TargetMemoryId.ToString()[..8]...</div>
+                        @if (!string.IsNullOrEmpty(mutation.Summary))
+                        {
+                            <div class="text-sm text-soft-white mb-2">@mutation.Summary</div>
+                        }
+                        <div class="flex justify-between items-center text-xs text-graphite mb-2">
+                            <span>Queued: @mutation.QueuedAt.ToString("HH:mm:ss")</span>
+                            @if (mutation.RetryCount > 0)
+                            {
+                                <span class="text-yellow-400">Retries: @mutation.RetryCount</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrEmpty(mutation.PayloadJson))
+                        {
+                            <details class="mb-2">
+                                <summary class="text-xs text-electric cursor-pointer hover:underline">View Payload</summary>
+                                <pre class="mt-2 text-xs bg-slate/50 rounded-md p-2 overflow-x-auto text-graphite">@mutation.PayloadJson</pre>
+                            </details>
+                        }
+                        <div class="flex gap-2">
+                            <form method="post" asp-page-handler="ApproveMutation" class="inline">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="mutationId" value="@mutation.Id" />
+                                <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs transition">
+                                    Approve
+                                </button>
+                            </form>
+                            <button onclick="showRejectModal('@mutation.Id')" class="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition">
+                                Reject
+                            </button>
+                        </div>
+                    </div>
+                }
+                @if (Model.PendingMutations.Count == 0)
+                {
+                    <div class="text-center text-graphite py-8">No pending mutations</div>
+                }
+            </div>
+        </div>
+
+        <!-- Recent Mutations (Processed) -->
+        <div class="card">
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Recent Mutations</h3>
+            <div class="overflow-x-auto max-h-[400px]">
+                <table class="min-w-full">
+                    <thead class="sticky top-0 bg-navy">
+                        <tr class="border-b border-slate">
+                            <th class="px-2 py-2 text-left text-xs font-medium text-graphite uppercase">Seq</th>
+                            <th class="px-2 py-2 text-left text-xs font-medium text-graphite uppercase">Type</th>
+                            <th class="px-2 py-2 text-left text-xs font-medium text-graphite uppercase">Status</th>
+                            <th class="px-2 py-2 text-left text-xs font-medium text-graphite uppercase">Time</th>
+                            <th class="px-2 py-2 text-right text-xs font-medium text-graphite uppercase">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate">
+                        @foreach (var mutation in Model.RecentMutations)
+                        {
+                            <tr class="hover:bg-slate/30">
+                                <td class="px-2 py-2 text-sm font-mono text-graphite">@mutation.SequenceNumber</td>
+                                <td class="px-2 py-2 text-sm text-soft-white">@mutation.MutationType</td>
+                                <td class="px-2 py-2">
+                                    <span class="px-2 py-0.5 text-xs rounded @(mutation.Status == "Completed" ? "bg-green-600" : mutation.Status == "Failed" ? "bg-red-600" : "bg-yellow-600") text-white">
+                                        @mutation.Status
+                                    </span>
+                                </td>
+                                <td class="px-2 py-2 text-sm text-graphite">@mutation.ProcessedAt.ToString("HH:mm:ss")</td>
+                                <td class="px-2 py-2 text-sm text-right @(mutation.DurationMs > 500 ? "text-yellow-400" : "text-soft-white")">
+                                    @mutation.DurationMs.ToString("F1") ms
+                                </td>
+                            </tr>
+                            @if (!string.IsNullOrEmpty(mutation.Error))
+                            {
+                                <tr class="bg-red-900/20">
+                                    <td colspan="5" class="px-2 py-1 text-xs text-red-300">@mutation.Error</td>
+                                </tr>
+                            }
+                        }
+                        @if (Model.RecentMutations.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="5" class="px-2 py-4 text-center text-graphite">No recent mutations</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reject Modal -->
+<div id="rejectModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="bg-navy border border-slate rounded-lg p-6 max-w-md w-full mx-4">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Reject Mutation</h3>
+        <form method="post" asp-page-handler="RejectMutation">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="mutationId" id="rejectMutationId" />
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-graphite mb-2">Reason for rejection</label>
+                <textarea name="reason" rows="3" required placeholder="Enter reason..."
+                          class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric"></textarea>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="hideRejectModal()" class="bg-slate hover:bg-gray-600 text-soft-white px-4 py-2 rounded-md text-sm font-medium transition">
+                    Cancel
+                </button>
+                <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                    Reject
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@section Scripts {
+<script src="~/js/dashboard-api.js"></script>
+<script>
+    // Configure DashboardApi with page model values
+    window.dashboardConfig = {
+        apiBaseUrl: '@Model.ApiBaseUrl',
+        serviceApiKey: '@Model.ServiceApiKey',
+        signalRToken: '@Model.SignalRToken'
+    };
+
+    // Configuration - use same-origin paths to go through web admin's /api/* proxy
+    const maxSequence = @Model.CurrentSequence;
+    let isPredictiveMode = false;
+    let debounceTimer = null;
+    let replayData = null;
+    let predictData = null;
+
+    // Canvas setup
+    const replayCanvas = document.getElementById('replayCanvas');
+    const liveCanvas = document.getElementById('liveCanvas');
+    const replayCtx = replayCanvas?.getContext('2d');
+    const liveCtx = liveCanvas?.getContext('2d');
+    let animationId = null;
+    let frame = 0;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadEventRange();
+        resizeCanvases();
+        startAnimation();
+    });
+
+    window.addEventListener('resize', resizeCanvases);
+
+    function resizeCanvases() {
+        if (replayCanvas) {
+            const rect = replayCanvas.parentElement.getBoundingClientRect();
+            replayCanvas.width = rect.width - 16;
+        }
+        if (liveCanvas) {
+            const rect = liveCanvas.parentElement.getBoundingClientRect();
+            liveCanvas.width = rect.width - 16;
+        }
+    }
+
+    async function loadEventRange() {
+        try {
+            const response = await DashboardApi.get('/api/mutations/range');
+            if (response.ok) {
+                const data = await response.json();
+                const slider = document.getElementById('timeSlider');
+                const maxSeq = Math.max(data.memoryEvents?.maxSequence || 0, data.graphEvents?.maxSequence || 0);
+                slider.max = maxSeq || 100;
+                slider.value = slider.max;
+                document.getElementById('toSeqLabel').textContent = maxSeq || '0';
+            }
+        } catch (e) {
+            console.warn('Failed to load event range:', e);
+        }
+    }
+
+    function togglePredictiveMode() {
+        isPredictiveMode = !isPredictiveMode;
+        document.getElementById('replayModeBtn').className = isPredictiveMode
+            ? 'px-3 py-1 text-xs rounded transition bg-slate text-graphite hover:bg-slate/70'
+            : 'px-3 py-1 text-xs rounded transition bg-cyan/20 text-cyan border border-cyan';
+        document.getElementById('predictModeBtn').className = isPredictiveMode
+            ? 'px-3 py-1 text-xs rounded transition bg-purple-600/20 text-purple-400 border border-purple-500'
+            : 'px-3 py-1 text-xs rounded transition bg-slate text-graphite hover:bg-slate/70';
+
+        if (isPredictiveMode) {
+            loadPrediction();
+        }
+    }
+
+    function stepSlider(delta) {
+        const slider = document.getElementById('timeSlider');
+        slider.value = Math.max(0, Math.min(parseInt(slider.max), parseInt(slider.value) + delta));
+        onSliderChange(slider.value);
+    }
+
+    function onSliderChange(value) {
+        document.getElementById('currentSeqLabel').textContent = value;
+        document.getElementById('replayStatus').textContent = 'Loading...';
+
+        // Debounce the API call
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            if (isPredictiveMode) {
+                loadPrediction();
+            } else {
+                loadReplay(0, parseInt(value));
+            }
+        }, 200);
+    }
+
+    async function loadReplay(fromSeq, toSeq) {
+        try {
+            replayData = await DashboardApi.postJson('/api/mutations/replay', {
+                fromSequence: fromSeq,
+                toSequence: toSeq
+            });
+            updateUI(replayData);
+        } catch (e) {
+            console.error('Replay error:', e);
+            document.getElementById('replayStatus').textContent = 'Error: ' + e.message;
+        }
+    }
+
+    async function loadPrediction() {
+        try {
+            predictData = await DashboardApi.postJson('/api/mutations/predict', {
+                horizonMinutes: 30
+            });
+            updatePredictionUI(predictData);
+        } catch (e) {
+            console.error('Prediction error:', e);
+        }
+    }
+
+    function updateUI(data) {
+        const summary = data.summary;
+        document.getElementById('replayStatus').textContent =
+            `Processed ${summary.memoryEventsProcessed} memory events, ${summary.graphEventsProcessed} graph events in ${summary.processingTimeMs}ms`;
+
+        // Update node counts
+        const replayMemories = Object.keys(data.replayState?.memories || {}).length;
+        const replayEntities = Object.keys(data.replayState?.entities || {}).length;
+        document.getElementById('replayNodeCount').textContent = `${replayMemories} memories, ${replayEntities} entities`;
+
+        const liveMemories = Object.keys(data.diff?.memories?.added || []).length + replayMemories;
+        const liveEntities = Object.keys(data.diff?.entities?.added || []).length + replayEntities;
+        document.getElementById('liveNodeCount').textContent = `${liveMemories} memories, ${liveEntities} entities`;
+
+        // Update diff table
+        updateDiffTable(data.diff);
+    }
+
+    function updatePredictionUI(data) {
+        document.getElementById('replayStatus').textContent =
+            `Prediction for ${data.horizonMinutes} minutes: ${data.growthTrend?.projectedNewMemories || 0} new memories expected`;
+
+        document.getElementById('replayNodeCount').textContent = `${data.currentStats?.totalMemories || 0} current`;
+        document.getElementById('liveNodeCount').textContent = `+${data.growthTrend?.projectedNewMemories || 0} predicted`;
+
+        // Show prediction in diff table
+        updatePredictionTable(data);
+    }
+
+    function updateDiffTable(diff) {
+        const tbody = document.getElementById('diffTableBody');
+        let html = '';
+
+        // Added
+        (diff?.memories?.added || []).forEach(item => {
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-graphite">${item.id.substring(0, 8)}...</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Memory</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded bg-green-600 text-white">Added</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${item.details || 'New memory'}</td>
+            </tr>`;
+        });
+
+        // Removed
+        (diff?.memories?.removed || []).forEach(item => {
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-graphite">${item.id.substring(0, 8)}...</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Memory</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded bg-red-600 text-white">Removed</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${item.details || 'Memory removed'}</td>
+            </tr>`;
+        });
+
+        // Changed
+        (diff?.memories?.changed || []).forEach(item => {
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-graphite">${item.id.substring(0, 8)}...</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Memory</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded bg-amber-600 text-white">Modified</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${item.details || 'State changed'}</td>
+            </tr>`;
+        });
+
+        // Entity changes
+        (diff?.entities?.added || []).forEach(item => {
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-graphite">${item.id.substring(0, 8)}...</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Entity</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded bg-green-600 text-white">Added</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${item.details || 'New entity'}</td>
+            </tr>`;
+        });
+
+        if (!html) {
+            html = '<tr><td colspan="4" class="px-3 py-8 text-center text-graphite">No differences detected</td></tr>';
+        }
+
+        tbody.innerHTML = html;
+    }
+
+    function updatePredictionTable(data) {
+        const tbody = document.getElementById('diffTableBody');
+        let html = '';
+
+        // Growth predictions
+        if (data.growthTrend?.projectedNewMemories > 0) {
+            html += `<tr class="hover:bg-slate/30 opacity-70">
+                <td class="px-3 py-2 text-xs font-mono text-purple-400">predicted</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Memories</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded bg-purple-600 text-white border border-dashed">Projected</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">+${data.growthTrend.projectedNewMemories} in ${data.horizonMinutes}min (${(data.growthTrend.confidence * 100).toFixed(0)}% confidence)</td>
+            </tr>`;
+        }
+
+        // Conflict risk
+        if (data.conflictPrediction) {
+            const cp = data.conflictPrediction;
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-amber-400">risk</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Conflicts</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded ${cp.riskLevel === 'High' ? 'bg-red-600' : cp.riskLevel === 'Medium' ? 'bg-amber-600' : 'bg-green-600'} text-white">${cp.riskLevel}</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${cp.currentUnresolvedConflicts} unresolved, ${(cp.predictedLikelihood * 100).toFixed(1)}% likelihood</td>
+            </tr>`;
+        }
+
+        // Hallucination risk
+        if (data.hallucinationRisk) {
+            const hr = data.hallucinationRisk;
+            html += `<tr class="hover:bg-slate/30">
+                <td class="px-3 py-2 text-xs font-mono text-red-400">risk</td>
+                <td class="px-3 py-2 text-sm text-soft-white">Hallucination</td>
+                <td class="px-3 py-2"><span class="px-2 py-0.5 text-xs rounded ${hr.riskLevel === 'High' ? 'bg-red-600' : hr.riskLevel === 'Medium' ? 'bg-amber-600' : 'bg-green-600'} text-white">${hr.riskLevel}</span></td>
+                <td class="px-3 py-2 text-xs text-graphite">${hr.lowConfidenceMemories} low-confidence, ${hr.unvalidatedMemories} unvalidated</td>
+            </tr>`;
+        }
+
+        if (!html) {
+            html = '<tr><td colspan="4" class="px-3 py-8 text-center text-graphite">No prediction data available</td></tr>';
+        }
+
+        tbody.innerHTML = html;
+    }
+
+    // Canvas animation
+    function startAnimation() {
+        function animate() {
+            frame++;
+            drawReplayCanvas();
+            drawLiveCanvas();
+            animationId = requestAnimationFrame(animate);
+        }
+        animate();
+    }
+
+    function drawReplayCanvas() {
+        if (!replayCtx || !replayCanvas) return;
+        const ctx = replayCtx;
+        const w = replayCanvas.width;
+        const h = replayCanvas.height;
+
+        // Clear with fade
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.3)';
+        ctx.fillRect(0, 0, w, h);
+
+        // Draw grid
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.1)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < w; x += 30) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+        }
+        for (let y = 0; y < h; y += 30) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+
+        // Draw nodes from replay data
+        if (replayData?.replayState?.memories) {
+            const memories = Object.values(replayData.replayState.memories);
+            const nodeCount = Math.min(memories.length, 20);
+
+            for (let i = 0; i < nodeCount; i++) {
+                const x = 30 + (i % 5) * 60 + Math.sin(frame * 0.02 + i) * 5;
+                const y = 30 + Math.floor(i / 5) * 50;
+                const mem = memories[i];
+
+                // Node glow
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, 20);
+                gradient.addColorStop(0, mem.isActive ? 'rgba(0, 212, 255, 0.3)' : 'rgba(239, 68, 68, 0.3)');
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(x - 20, y - 20, 40, 40);
+
+                // Node circle
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = mem.isActive ? '#00d4ff' : '#ef4444';
+                ctx.fill();
+            }
+        } else if (isPredictiveMode && predictData?.predictedGraph?.nodes) {
+            // Draw predicted nodes with dashed style
+            const nodes = predictData.predictedGraph.nodes;
+            for (let i = 0; i < Math.min(nodes.length, 15); i++) {
+                const x = 30 + (i % 5) * 60;
+                const y = 30 + Math.floor(i / 5) * 50;
+                const opacity = nodes[i].probability;
+
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(168, 85, 247, ${opacity})`;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([3, 3]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+    }
+
+    function drawLiveCanvas() {
+        if (!liveCtx || !liveCanvas) return;
+        const ctx = liveCtx;
+        const w = liveCanvas.width;
+        const h = liveCanvas.height;
+
+        // Clear with fade
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.3)';
+        ctx.fillRect(0, 0, w, h);
+
+        // Draw grid
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.1)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < w; x += 30) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+        }
+        for (let y = 0; y < h; y += 30) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+
+        // Draw diff highlights
+        if (replayData?.diff) {
+            const diff = replayData.diff;
+
+            // Added nodes (green pulsing)
+            const addedCount = (diff.memories?.added?.length || 0) + (diff.entities?.added?.length || 0);
+            for (let i = 0; i < Math.min(addedCount, 10); i++) {
+                const x = 30 + (i % 5) * 60;
+                const y = 30 + Math.floor(i / 5) * 50;
+                const pulse = 1 + Math.sin(frame * 0.1) * 0.3;
+
+                ctx.beginPath();
+                ctx.arc(x, y, 10 * pulse, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(34, 197, 94, 0.5)';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = '#22c55e';
+                ctx.fill();
+            }
+
+            // Removed nodes (red fading)
+            const removedCount = (diff.memories?.removed?.length || 0) + (diff.entities?.removed?.length || 0);
+            for (let i = 0; i < Math.min(removedCount, 10); i++) {
+                const x = w - 30 - (i % 5) * 60;
+                const y = h - 30 - Math.floor(i / 5) * 50;
+                const fade = 0.3 + Math.sin(frame * 0.05 + i) * 0.2;
+
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(239, 68, 68, ${fade})`;
+                ctx.fill();
+
+                // Dotted outline for removed
+                ctx.setLineDash([2, 2]);
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Changed nodes (amber ring)
+            const changedCount = diff.memories?.changed?.length || 0;
+            for (let i = 0; i < Math.min(changedCount, 5); i++) {
+                const x = w / 2 + (i - 2) * 40;
+                const y = h / 2;
+                const ringSize = 12 + Math.sin(frame * 0.08 + i) * 3;
+
+                ctx.beginPath();
+                ctx.arc(x, y, ringSize, 0, Math.PI * 2);
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fill();
+            }
+        }
+    }
+
+    // Modal functions
+    function showRejectModal(mutationId) {
+        document.getElementById('rejectMutationId').value = mutationId;
+        document.getElementById('rejectModal').classList.remove('hidden');
+        document.getElementById('rejectModal').classList.add('flex');
+    }
+
+    function hideRejectModal() {
+        document.getElementById('rejectModal').classList.add('hidden');
+        document.getElementById('rejectModal').classList.remove('flex');
+    }
+</script>
+}

@@ -1,0 +1,279 @@
+@page "/dashboard/shadow"
+@model SerialMemory.Web.Pages.Dashboard.ShadowModel
+@{
+    ViewData["Title"] = "Shadow Branches";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Shadow Branches</h1>
+        <p class="mt-2 text-graphite">Experiment with memory changes in isolated branches before promoting to main.</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="mb-6 bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded-lg">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left Column: Branch List -->
+        <div class="lg:col-span-1 space-y-6">
+            <!-- Create Branch -->
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">Create New Branch</h3>
+                <form method="post" asp-page-handler="CreateBranch">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Branch Name</label>
+                        <input type="text" name="BranchName" required placeholder="e.g., experiment-v2"
+                               class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Description (optional)</label>
+                        <textarea name="BranchDescription" rows="2" placeholder="What is this branch for?"
+                                  class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric"></textarea>
+                    </div>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium w-full">
+                        Create Branch
+                    </button>
+                </form>
+            </div>
+
+            <!-- Branch List -->
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">Branches (@Model.Branches.Count)</h3>
+                <div class="space-y-2 max-h-[400px] overflow-y-auto">
+                    @foreach (var branch in Model.Branches)
+                    {
+                        <a href="/dashboard/shadow?id=@branch.Id"
+                           class="block bg-slate/30 hover:bg-slate/50 rounded-md p-3 transition @(Model.SelectedBranch?.Id == branch.Id ? "border border-electric" : "")">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="text-sm font-medium text-soft-white">@branch.Name</span>
+                                <span class="px-2 py-0.5 text-xs rounded @(branch.Status == "Active" ? "bg-green-600" : branch.Status == "Frozen" ? "bg-blue-600" : "bg-gray-600") text-white">
+                                    @branch.Status
+                                </span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(branch.Description))
+                            {
+                                <div class="text-xs text-graphite mb-2 line-clamp-2">@branch.Description</div>
+                            }
+                            <div class="flex justify-between text-xs text-graphite">
+                                <span>@branch.MemoryCount memories</span>
+                                <span>@branch.CreatedAt.ToString("MMM dd")</span>
+                            </div>
+                        </a>
+                    }
+                    @if (Model.Branches.Count == 0)
+                    {
+                        <div class="text-center text-graphite py-4">No branches yet. Create one to get started.</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Branch Detail -->
+        <div class="lg:col-span-2 space-y-6">
+            @if (Model.SelectedBranch != null)
+            {
+                <!-- Branch Info -->
+                <div class="card">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-soft-white">@Model.SelectedBranch.Name</h3>
+                            @if (!string.IsNullOrEmpty(Model.SelectedBranch.Description))
+                            {
+                                <p class="text-sm text-graphite mt-1">@Model.SelectedBranch.Description</p>
+                            }
+                        </div>
+                        <span class="px-2 py-1 text-xs rounded @(Model.SelectedBranch.Status == "Active" ? "bg-green-600" : Model.SelectedBranch.Status == "Frozen" ? "bg-blue-600" : "bg-gray-600") text-white">
+                            @Model.SelectedBranch.Status
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-4 gap-4 mb-4 text-center">
+                        <div>
+                            <div class="text-xs text-graphite">Memories</div>
+                            <div class="text-lg font-semibold text-soft-white">@Model.SelectedBranch.MemoryCount</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Created</div>
+                            <div class="text-sm text-soft-white">@Model.SelectedBranch.CreatedAt.ToString("MMM dd HH:mm")</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Created By</div>
+                            <div class="text-sm text-soft-white">@(Model.SelectedBranch.CreatedBy ?? "Unknown")</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Frozen At</div>
+                            <div class="text-sm text-soft-white">@(Model.SelectedBranch.FrozenAt?.ToString("MMM dd HH:mm") ?? "—")</div>
+                        </div>
+                    </div>
+
+                    <!-- Branch Actions -->
+                    <div class="flex flex-wrap gap-2 pt-4 border-t border-slate">
+                        @if (Model.SelectedBranch.Status == "Active")
+                        {
+                            <form method="post" asp-page-handler="PromoteBranch" class="inline" onsubmit="return confirm('Promote this branch to main? This will merge all branch memories into the main knowledge graph.');">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="branchId" value="@Model.SelectedBranch.Id" />
+                                <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                                    Promote to Main
+                                </button>
+                            </form>
+                            <form method="post" asp-page-handler="FreezeBranch" class="inline">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="branchId" value="@Model.SelectedBranch.Id" />
+                                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                                    Freeze Branch
+                                </button>
+                            </form>
+                        }
+                        else if (Model.SelectedBranch.Status == "Frozen")
+                        {
+                            <form method="post" asp-page-handler="UnfreezeBranch" class="inline">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="branchId" value="@Model.SelectedBranch.Id" />
+                                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                                    Unfreeze Branch
+                                </button>
+                            </form>
+                        }
+                        <form method="post" asp-page-handler="DiscardBranch" class="inline" onsubmit="return confirm('Discard this branch? All branch memories will be deleted. This cannot be undone.');">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="branchId" value="@Model.SelectedBranch.Id" />
+                            <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                                Discard Branch
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Branch Diff -->
+                @if (Model.Diff != null)
+                {
+                    <div class="card">
+                        <h3 class="text-lg font-semibold text-soft-white mb-4">Diff vs Main</h3>
+                        <div class="grid grid-cols-3 gap-4 mb-4 text-center">
+                            <div class="bg-green-900/30 rounded-md p-3">
+                                <div class="text-2xl font-semibold text-green-400">+@Model.Diff.AddedCount</div>
+                                <div class="text-xs text-graphite">Added</div>
+                            </div>
+                            <div class="bg-blue-900/30 rounded-md p-3">
+                                <div class="text-2xl font-semibold text-blue-400">~@Model.Diff.ModifiedCount</div>
+                                <div class="text-xs text-graphite">Modified</div>
+                            </div>
+                            <div class="bg-red-900/30 rounded-md p-3">
+                                <div class="text-2xl font-semibold text-red-400">-@Model.Diff.DeletedCount</div>
+                                <div class="text-xs text-graphite">Deleted</div>
+                            </div>
+                        </div>
+
+                        @if (Model.Diff.Items.Count > 0)
+                        {
+                            <div class="space-y-3 max-h-[300px] overflow-y-auto">
+                                @foreach (var item in Model.Diff.Items)
+                                {
+                                    <div class="bg-slate/30 rounded-md p-3 border-l-4 @(item.DiffType == "Added" ? "border-green-500" : item.DiffType == "Modified" ? "border-blue-500" : "border-red-500")">
+                                        <div class="flex justify-between items-start mb-2">
+                                            <span class="text-xs font-mono text-graphite">@item.MemoryId.ToString()[..8]...</span>
+                                            <span class="px-2 py-0.5 text-xs rounded @(item.DiffType == "Added" ? "bg-green-600" : item.DiffType == "Modified" ? "bg-blue-600" : "bg-red-600") text-white">
+                                                @item.DiffType
+                                            </span>
+                                        </div>
+                                        @if (item.DiffType == "Modified")
+                                        {
+                                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                                <div>
+                                                    <div class="text-graphite mb-1">Main</div>
+                                                    <div class="bg-slate/50 rounded p-2 text-soft-white line-clamp-3">@item.MainContent</div>
+                                                </div>
+                                                <div>
+                                                    <div class="text-graphite mb-1">Branch</div>
+                                                    <div class="bg-slate/50 rounded p-2 text-soft-white line-clamp-3">@item.BranchContent</div>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="text-sm text-soft-white line-clamp-2">@(item.BranchContent ?? item.MainContent)</div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Add Memory to Branch -->
+                @if (Model.SelectedBranch.Status == "Active")
+                {
+                    <div class="card">
+                        <h3 class="text-lg font-semibold text-soft-white mb-4">Add Memory to Branch</h3>
+                        <form method="post" asp-page-handler="AddMemory">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="branchId" value="@Model.SelectedBranch.Id" />
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-graphite mb-2">Memory Content</label>
+                                <textarea name="MemoryContent" rows="4" required placeholder="Enter memory content..."
+                                          class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric"></textarea>
+                            </div>
+                            <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium">
+                                Add Memory
+                            </button>
+                        </form>
+                    </div>
+                }
+
+                <!-- Branch Memories -->
+                <div class="card">
+                    <h3 class="text-lg font-semibold text-soft-white mb-4">Branch Memories (@Model.BranchMemories.Count)</h3>
+                    <div class="space-y-3 max-h-[400px] overflow-y-auto">
+                        @foreach (var memory in Model.BranchMemories)
+                        {
+                            <div class="bg-slate/30 rounded-md p-3 @(memory.IsNew ? "border-l-4 border-green-500" : "")">
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-xs font-mono text-graphite">@memory.Id.ToString()[..8]...</span>
+                                    <div class="flex items-center gap-2">
+                                        @if (memory.IsNew)
+                                        {
+                                            <span class="px-2 py-0.5 text-xs rounded bg-green-600 text-white">New</span>
+                                        }
+                                        <span class="text-xs text-cyan">@((memory.Confidence * 100).ToString("F0"))%</span>
+                                    </div>
+                                </div>
+                                <div class="text-sm text-soft-white mb-2">@memory.Content</div>
+                                <div class="flex justify-between text-xs text-graphite">
+                                    <span>@memory.Layer</span>
+                                    <span>@memory.AddedAt.ToString("MMM dd HH:mm")</span>
+                                </div>
+                            </div>
+                        }
+                        @if (Model.BranchMemories.Count == 0)
+                        {
+                            <div class="text-center text-graphite py-8">No memories in this branch yet.</div>
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="card text-center text-graphite py-12">
+                    <svg class="w-16 h-16 mx-auto mb-4 text-graphite" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <h3 class="text-lg font-medium text-soft-white mb-2">No Branch Selected</h3>
+                    <p class="text-graphite">Create a new branch or select an existing one to view its details.</p>
+                </div>
+            }
+        </div>
+    </div>
+</div>

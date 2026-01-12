@@ -1,0 +1,421 @@
+# =============================================================================
+# SerialMemory Production Stack (VPS Hardened)
+# =============================================================================
+# Security-hardened deployment for VPS/cloud environments.
+#
+# Prerequisites:
+#   1. Copy .env.production.example to .env and fill in ALL values
+#   2. Generate strong passwords for all services
+#   3. Configure firewall to only expose necessary ports
+#
+# Quick Start:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# External Ports (configure firewall):
+#   - 5000: API (behind reverse proxy recommended)
+#   - 5002: Web Admin (behind reverse proxy recommended)
+#   - 5001: Dashboard API (internal only, or behind reverse proxy)
+#
+# Internal Only (NOT exposed to host):
+#   - PostgreSQL: 5432 (internal network only)
+#   - Redis: 6379 (internal network only)
+#   - RabbitMQ: 5672 (internal network only)
+#   - Prometheus: 9090 (internal network only)
+#   - Grafana: 3000 (internal network only)
+#
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Database: PostgreSQL with pgvector (HARDENED)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: serialmemory-postgres
+    environment:
+      # Superuser - only used for initial setup, not by application
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-pgadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+      POSTGRES_DB: contextdb
+      # Application user credentials (used in init script)
+      APP_DB_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      APP_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    # NO external port exposure - only accessible via internal network
+    ports:
+      - "5435:5432"
+    volumes:
+      # Security init script creates app user with limited privileges
+      - ./ops/init-security.sh:/docker-entrypoint-initdb.d/00-security.sh:ro
+      - ./ops/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./ops/eventsourcing_schema.sql:/docker-entrypoint-initdb.d/02-eventsourcing.sql:ro
+      - ./ops/multi_tenant_schema.sql:/docker-entrypoint-initdb.d/03-multi-tenant.sql:ro
+      - ./ops/rls_policies.sql:/docker-entrypoint-initdb.d/04-rls.sql:ro
+      - ./ops/usage_metering_schema.sql:/docker-entrypoint-initdb.d/05-usage-metering.sql:ro
+      - ./ops/admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin-actions.sql:ro
+      - ./ops/job_supervision_schema.sql:/docker-entrypoint-initdb.d/07-job-supervision.sql:ro
+      - ./ops/telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
+      - ./ops/graph_events_schema.sql:/docker-entrypoint-initdb.d/08b-graph-events.sql:ro
+      - ./ops/power_user_schema.sql:/docker-entrypoint-initdb.d/08c-power-user.sql:ro
+      - ./ops/reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
+      - ./ops/mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind-health.sql:ro
+      - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
+      - ./ops/classification_schema.sql:/docker-entrypoint-initdb.d/12-classification.sql:ro
+      - ./ops/fix_memories_columns.sql:/docker-entrypoint-initdb.d/13-fix-memories-columns.sql:ro
+      - ./ops/email_verification_schema.sql:/docker-entrypoint-initdb.d/14-email-verification.sql:ro
+      - ./ops/shadow_memory_schema.sql:/docker-entrypoint-initdb.d/15-shadow-memory.sql:ro
+      - ./ops/migrations/20251201_comprehensive_fixes_v1.sql:/docker-entrypoint-initdb.d/16-comprehensive-fixes.sql:ro
+      - ./ops/migrations/20251203_fix_memory_events_schema.sql:/docker-entrypoint-initdb.d/17-fix-memory-events.sql:ro
+      - ./ops/emergency_rls_fix.sql:/docker-entrypoint-initdb.d/98-rls-fix.sql:ro
+      - ./ops/init-grants.sh:/docker-entrypoint-initdb.d/99-grants.sh:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-pgadmin} -d contextdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+    # Security: run as non-root where possible
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Redis (HARDENED - with authentication)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: serialmemory-redis
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    # NO external port exposure
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ (HARDENED)
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: serialmemory-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      # Disable guest user
+      RABBITMQ_DEFAULT_VHOST: serialmemory
+    # NO external port exposure - management UI only via internal network
+    expose:
+      - "5672"
+      - "15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - internal
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # SerialMemory API (Production)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: SerialMemory.Api/Dockerfile
+    container_name: serialmemory-api
+    ports:
+      - "${API_PORT:-5000}:8080"
+    # Linux VPS: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, Stripe, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      # Database - uses app user, not admin
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=contextdb
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      # Redis with auth
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      # RabbitMQ
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__User=${RABBITMQ_USER}
+      - RabbitMq__Password=${RABBITMQ_PASSWORD}
+      - RabbitMq__VHost=serialmemory
+      # Embeddings
+      - OLLAMA_BASE_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_MODEL:-nomic-embed-text}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
+      # Security
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_ISSUER=${JWT_ISSUER:-serialmemory}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-serialmemory-api}
+      - INTERNAL_TOKEN_KEY=${INTERNAL_TOKEN_KEY:?INTERNAL_TOKEN_KEY is required}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:?SERVICE_API_KEY is required}
+      # Stripe (for billing endpoints)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - STRIPE_ENTERPRISE_PRICE_ID=${STRIPE_ENTERPRISE_PRICE_ID:-}
+      # Email (for signup/verification)
+      - SERIALMEMORY_ACS_CONNECTION=${SERIALMEMORY_ACS_CONNECTION:-}
+      - SERIALMEMORY_EMAIL_SENDER=${SERIALMEMORY_EMAIL_SENDER:-}
+      - SERIALMEMORY_BASE_URL=${SERIALMEMORY_BASE_URL:-https://serialmemory.dev}
+      # Deployment
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
+      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-true}
+      - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL:?SERIALMEMORY_ROOT_ADMIN_EMAIL is required}
+      # Feature flags (production defaults)
+      - FEATURE_EMBEDDING_CACHE=${FEATURE_EMBEDDING_CACHE:-true}
+      - FEATURE_DETERMINISTIC_INFERENCE=${FEATURE_DETERMINISTIC_INFERENCE:-true}
+      - FEATURE_MEMORY_COMPILATION=${FEATURE_MEMORY_COMPILATION:-true}
+      - FEATURE_CONTEXT_OPTIMIZATION=${FEATURE_CONTEXT_OPTIMIZATION:-true}
+      - FEATURE_LOCAL_ENCRYPTION=${FEATURE_LOCAL_ENCRYPTION:-true}
+      - FEATURE_DUAL_PASS_REASONING=${FEATURE_DUAL_PASS_REASONING:-true}
+      - FEATURE_GRAPH_RECRAWL=${FEATURE_GRAPH_RECRAWL:-true}
+      - FEATURE_TIME_TRAVEL=${FEATURE_TIME_TRAVEL:-true}
+      - FEATURE_OBSERVE_ONLY_MODE=${FEATURE_OBSERVE_ONLY_MODE:-false}
+      - FEATURE_MIN_TIER=${FEATURE_MIN_TIER:-free}
+      - SELF_HOST_METRICS_MODE=${SELF_HOST_METRICS_MODE:-live}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Web Admin Portal (Production)
+  # ---------------------------------------------------------------------------
+  web-admin:
+    build:
+      context: .
+      dockerfile: SerialMemory.Web/Dockerfile.admin
+    container_name: serialmemory-web-admin
+    ports:
+      - "${WEB_ADMIN_PORT:-5002}:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - API_BASE_URL=http://api:8080
+      - DASHBOARD_API_URL=http://api:8080
+      - PUBLIC_API_URL=${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - SERVICE_API_KEY=${SERVICE_API_KEY}
+      # JWT
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ISSUER=${JWT_ISSUER:-serialmemory}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-serialmemory-api}
+      # Data Protection
+      - DATA_PROTECTION_PATH=/app/keys
+      # Deployment
+      - SERIALMEMORY_DEPLOYMENT_MODE=${SERIALMEMORY_DEPLOYMENT_MODE:-PublicSaaS}
+      - SERIALMEMORY_ENABLE_QUOTAS=${SERIALMEMORY_ENABLE_QUOTAS:-true}
+      - SERIALMEMORY_DISABLE_POWER_MODE=${SERIALMEMORY_DISABLE_POWER_MODE:-false}
+      - SERIALMEMORY_ROOT_ADMIN_EMAIL=${SERIALMEMORY_ROOT_ADMIN_EMAIL}
+    volumes:
+      - web_admin_keys:/app/keys
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Worker (Background Processing)
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: SerialMemory.Worker/Dockerfile
+    container_name: serialmemory-worker
+    # NO external port exposure
+    expose:
+      - "8081"
+    # Linux VPS: Add host.docker.internal support (native on Windows/Mac Docker Desktop)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Explicit DNS for external API calls (OpenAI, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=contextdb;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__User=${RABBITMQ_USER}
+      - RabbitMq__Password=${RABBITMQ_PASSWORD}
+      - RabbitMq__VHost=serialmemory
+      # Embeddings
+      - OLLAMA_BASE_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_MODEL:-nomic-embed-text}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
+      # Feature flags
+      - FEATURE_EMBEDDING_CACHE=${FEATURE_EMBEDDING_CACHE:-true}
+      - FEATURE_DETERMINISTIC_INFERENCE=${FEATURE_DETERMINISTIC_INFERENCE:-true}
+      - FEATURE_MEMORY_COMPILATION=${FEATURE_MEMORY_COMPILATION:-true}
+      - FEATURE_CONTEXT_OPTIMIZATION=${FEATURE_CONTEXT_OPTIMIZATION:-true}
+      - FEATURE_LOCAL_ENCRYPTION=${FEATURE_LOCAL_ENCRYPTION:-true}
+      - FEATURE_DUAL_PASS_REASONING=${FEATURE_DUAL_PASS_REASONING:-true}
+      - FEATURE_GRAPH_RECRAWL=${FEATURE_GRAPH_RECRAWL:-true}
+      - FEATURE_TIME_TRAVEL=${FEATURE_TIME_TRAVEL:-true}
+      - FEATURE_OBSERVE_ONLY_MODE=${FEATURE_OBSERVE_ONLY_MODE:-false}
+      - FEATURE_MIN_TIER=${FEATURE_MIN_TIER:-free}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Monitoring (Internal Only)
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: serialmemory-prometheus
+    # NO external port - access via tunnel or internal network only
+    expose:
+      - "9090"
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - internal
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: serialmemory-grafana
+    # NO external port - access via tunnel or internal network only
+    expose:
+      - "3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?GRAFANA_PASSWORD is required}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
+    depends_on:
+      - prometheus
+    networks:
+      - internal
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # MCP Client (Optional - for programmatic access)
+  # ---------------------------------------------------------------------------
+  mcp-client:
+    build:
+      context: SerialMemory.McpClient
+      dockerfile: Dockerfile
+    container_name: serialmemory-mcp-client
+    image: serialcoder/serialmemory-mcp:latest
+    environment:
+      - MCP_SERVER_URL=http://api:8080
+      - MCP_API_KEY=${MCP_API_KEY:-}
+      - MCP_MODE=developer
+    stdin_open: true
+    tty: true
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+    profiles:
+      - mcp
+    security_opt:
+      - no-new-privileges:true
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  # Internal network - services communicate here
+  internal:
+    driver: bridge
+    internal: true  # No external access
+
+  # External network - services that need to be accessed from outside
+  external:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  grafana_data:
+  prometheus_data:
+  web_admin_keys:

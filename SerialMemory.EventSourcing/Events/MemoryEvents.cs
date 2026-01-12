@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using SerialMemory.Core.Interfaces;
 
 namespace SerialMemory.EventSourcing.Events;
 
@@ -10,7 +11,14 @@ namespace SerialMemory.EventSourcing.Events;
 public abstract record MemoryEventBase : IMemoryEvent
 {
     public Guid EventId { get; init; } = Guid.CreateVersion7();
-    public required Guid StreamId { get; init; }
+
+    /// <summary>
+    /// The stream (memory) ID this event belongs to.
+    /// Made optional with default for backwards compatibility with legacy events.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("streamId")]
+    public Guid StreamId { get; init; } = Guid.Empty;
+
     public abstract MemoryEventType EventType { get; }
     public long EventVersion { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
@@ -35,8 +43,14 @@ public sealed record MemoryCreatedEvent : MemoryEventBase
 {
     public override MemoryEventType EventType => MemoryEventType.MemoryCreated;
 
-    public required string Content { get; init; }
-    public required MemoryLayer Layer { get; init; }
+    /// <summary>
+    /// Memory content. Made optional with default for backwards compatibility.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("content")]
+    public string Content { get; init; } = "";
+
+    [System.Text.Json.Serialization.JsonPropertyName("layer")]
+    public MemoryLayer Layer { get; init; } = MemoryLayer.L0_RAW;
     public float[] Embedding { get; init; } = [];
     public float ConfidenceScore { get; init; } = 1.0f;
     public int HalfLifeDays { get; init; } = 30;
@@ -57,7 +71,11 @@ public sealed record MemoryUpdatedEvent : MemoryEventBase
 {
     public override MemoryEventType EventType => MemoryEventType.MemoryUpdated;
 
-    public required string NewContent { get; init; }
+    /// <summary>
+    /// New content for the memory. Made optional with default for backwards compatibility.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("newContent")]
+    public string NewContent { get; init; } = "";
     public string? PreviousContentHash { get; init; }
     public float[]? NewEmbedding { get; init; }
     public string? Reason { get; init; }
@@ -272,4 +290,23 @@ public sealed record MemorySplitEvent : MemoryEventBase
 
     protected override string GetHashableContent() =>
         JsonSerializer.Serialize(new { ChildMemoryIds, SplitStrategy, Reason });
+}
+
+/// <summary>
+/// Event: Unknown or legacy event type that cannot be deserialized.
+/// Used for backwards compatibility when encountering event types
+/// that were added in newer versions or removed in older versions.
+/// </summary>
+public sealed record UnknownEvent : IMemoryEvent
+{
+    public Guid EventId { get; init; }
+    public Guid StreamId { get; init; }
+    public MemoryEventType EventType { get; init; }
+    public long EventVersion { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public string? CreatedBy { get; init; }
+    public string ContentHash { get; init; } = "";
+
+    /// <summary>Raw event data for debugging/logging</summary>
+    public string? RawEventData { get; init; }
 }

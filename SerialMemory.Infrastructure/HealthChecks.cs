@@ -7,18 +7,9 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// Database connectivity health check.
 /// </summary>
-public sealed class DatabaseHealthCheck : IHealthCheck
+public sealed class DatabaseHealthCheck(string connectionString, int timeoutSeconds = 3) : IHealthCheck
 {
-    private readonly string _connectionString;
-    private readonly int _timeoutSeconds;
-
     public string Name => "database";
-
-    public DatabaseHealthCheck(string connectionString, int timeoutSeconds = 3)
-    {
-        _connectionString = connectionString;
-        _timeoutSeconds = timeoutSeconds;
-    }
 
     public async Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -27,14 +18,14 @@ public sealed class DatabaseHealthCheck : IHealthCheck
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds));
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
-            await using var conn = new NpgsqlConnection(_connectionString);
+            await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(cts.Token);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT 1";
-            cmd.CommandTimeout = _timeoutSeconds;
+            cmd.CommandTimeout = timeoutSeconds;
 
             await cmd.ExecuteScalarAsync(cts.Token);
 
@@ -56,7 +47,7 @@ public sealed class DatabaseHealthCheck : IHealthCheck
                 Name = Name,
                 Status = "unhealthy",
                 DurationMs = sw.ElapsedMilliseconds,
-                Error = $"Database health check timed out after {_timeoutSeconds}s"
+                Error = $"Database health check timed out after {timeoutSeconds}s"
             };
         }
         catch (Exception ex)
@@ -77,18 +68,9 @@ public sealed class DatabaseHealthCheck : IHealthCheck
 /// RLS (Row-Level Security) guardrail health check.
 /// Verifies that the require_tenant_context() function is installed and working.
 /// </summary>
-public sealed class RlsHealthCheck : IHealthCheck
+public sealed class RlsHealthCheck(string connectionString, int timeoutSeconds = 3) : IHealthCheck
 {
-    private readonly string _connectionString;
-    private readonly int _timeoutSeconds;
-
     public string Name => "rls_guardrail";
-
-    public RlsHealthCheck(string connectionString, int timeoutSeconds = 3)
-    {
-        _connectionString = connectionString;
-        _timeoutSeconds = timeoutSeconds;
-    }
 
     public async Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -97,9 +79,9 @@ public sealed class RlsHealthCheck : IHealthCheck
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds));
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
-            await using var conn = new NpgsqlConnection(_connectionString);
+            await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(cts.Token);
 
             // Check 1: Verify require_tenant_context function exists
@@ -109,7 +91,7 @@ public sealed class RlsHealthCheck : IHealthCheck
                     SELECT 1 FROM pg_proc
                     WHERE proname = 'require_tenant_context'
                 )";
-            checkFuncCmd.CommandTimeout = _timeoutSeconds;
+            checkFuncCmd.CommandTimeout = timeoutSeconds;
 
             var funcExists = (bool?)await checkFuncCmd.ExecuteScalarAsync(cts.Token) ?? false;
 
@@ -130,7 +112,7 @@ public sealed class RlsHealthCheck : IHealthCheck
             checkRlsCmd.CommandText = @"
                 SELECT relrowsecurity FROM pg_class
                 WHERE relname = 'memories'";
-            checkRlsCmd.CommandTimeout = _timeoutSeconds;
+            checkRlsCmd.CommandTimeout = timeoutSeconds;
 
             var rlsEnabled = (bool?)await checkRlsCmd.ExecuteScalarAsync(cts.Token) ?? false;
 
@@ -151,7 +133,7 @@ public sealed class RlsHealthCheck : IHealthCheck
             {
                 await using var testCmd = conn.CreateCommand();
                 testCmd.CommandText = "SELECT require_tenant_context()";
-                testCmd.CommandTimeout = _timeoutSeconds;
+                testCmd.CommandTimeout = timeoutSeconds;
                 await testCmd.ExecuteScalarAsync(cts.Token);
 
                 // If we get here, guardrail FAILED (should have raised exception)
@@ -185,7 +167,7 @@ public sealed class RlsHealthCheck : IHealthCheck
                 Name = Name,
                 Status = "unhealthy",
                 DurationMs = sw.ElapsedMilliseconds,
-                Error = $"RLS health check timed out after {_timeoutSeconds}s"
+                Error = $"RLS health check timed out after {timeoutSeconds}s"
             };
         }
         catch (Exception ex)
@@ -205,18 +187,9 @@ public sealed class RlsHealthCheck : IHealthCheck
 /// <summary>
 /// Redis connectivity health check.
 /// </summary>
-public sealed class RedisHealthCheck : IHealthCheck
+public sealed class RedisHealthCheck(string connectionString, int timeoutSeconds = 3) : IHealthCheck
 {
-    private readonly string _connectionString;
-    private readonly int _timeoutSeconds;
-
     public string Name => "redis";
-
-    public RedisHealthCheck(string connectionString, int timeoutSeconds = 3)
-    {
-        _connectionString = connectionString;
-        _timeoutSeconds = timeoutSeconds;
-    }
 
     public async Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -225,10 +198,10 @@ public sealed class RedisHealthCheck : IHealthCheck
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds));
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
             await using var redis = await ConnectionMultiplexer.ConnectAsync(
-                _connectionString,
+                connectionString,
                 options => options.AbortOnConnectFail = true);
 
             var db = redis.GetDatabase();
@@ -252,7 +225,7 @@ public sealed class RedisHealthCheck : IHealthCheck
                 Name = Name,
                 Status = "unhealthy",
                 DurationMs = sw.ElapsedMilliseconds,
-                Error = $"Redis health check timed out after {_timeoutSeconds}s"
+                Error = $"Redis health check timed out after {timeoutSeconds}s"
             };
         }
         catch (Exception ex)

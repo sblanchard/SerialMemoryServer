@@ -1,0 +1,298 @@
+@page "/dashboard/control-room"
+@model SerialMemory.Web.Pages.Dashboard.ControlRoomModel
+@{
+    ViewData["Title"] = "Control Room";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Control Room</h1>
+        <p class="mt-2 text-graphite">Emergency controls and system-wide kill switches. Owner access only.</p>
+    </div>
+
+    @if (Model.IsSampleData)
+    {
+        <div class="mb-6 bg-blue-900/30 border border-blue-500/50 text-blue-300 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                </svg>
+                <span><strong>Sample Data:</strong> Dashboard API not available. Showing demonstration data.</span>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.StatusMessage))
+    {
+        <div class="mb-6 bg-green-900/30 border border-green-500/50 text-green-300 px-4 py-3 rounded-lg">
+            @Model.StatusMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="mb-6 bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded-lg">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <!-- Global Status Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="card @(Model.GlobalKillSwitchActive ? "border-red-500 bg-red-900/20" : "")">
+            <div class="flex items-center justify-between mb-4">
+                <div class="text-sm font-medium text-graphite">Global Kill Switch</div>
+                <div class="px-2 py-1 text-xs rounded @(Model.GlobalKillSwitchActive ? "bg-red-500 text-white" : "bg-green-500/20 text-green-400")">
+                    @(Model.GlobalKillSwitchActive ? "ACTIVE" : "Inactive")
+                </div>
+            </div>
+            @if (Model.GlobalKillSwitchActive)
+            {
+                <div class="text-red-400 text-sm mb-2">All API requests returning 503</div>
+                <div class="text-xs text-graphite">Reason: @Model.GlobalKillReason</div>
+                @if (Model.GlobalKillExpiresAt.HasValue)
+                {
+                    <div class="text-xs text-graphite">Expires: @Model.GlobalKillExpiresAt.Value.ToString("g")</div>
+                }
+            }
+            else
+            {
+                <div class="text-green-400 text-sm">System operational</div>
+            }
+        </div>
+
+        <div class="card @(Model.GlobalReadOnlyActive ? "border-yellow-500 bg-yellow-900/20" : "")">
+            <div class="flex items-center justify-between mb-4">
+                <div class="text-sm font-medium text-graphite">Global Read-Only</div>
+                <div class="px-2 py-1 text-xs rounded @(Model.GlobalReadOnlyActive ? "bg-yellow-500 text-black" : "bg-green-500/20 text-green-400")">
+                    @(Model.GlobalReadOnlyActive ? "ACTIVE" : "Inactive")
+                </div>
+            </div>
+            @if (Model.GlobalReadOnlyActive)
+            {
+                <div class="text-yellow-400 text-sm mb-2">Write operations blocked</div>
+                <div class="text-xs text-graphite">Reason: @Model.GlobalReadOnlyReason</div>
+            }
+            else
+            {
+                <div class="text-green-400 text-sm">Writes enabled</div>
+            }
+        </div>
+
+        <div class="card @(Model.TenantNoIngestActive ? "border-orange-500 bg-orange-900/20" : "")">
+            <div class="flex items-center justify-between mb-4">
+                <div class="text-sm font-medium text-graphite">Memory Ingestion</div>
+                <div class="px-2 py-1 text-xs rounded @(Model.TenantNoIngestActive ? "bg-orange-500 text-white" : "bg-green-500/20 text-green-400")">
+                    @(Model.TenantNoIngestActive ? "BLOCKED" : "Active")
+                </div>
+            </div>
+            @if (Model.TenantNoIngestActive)
+            {
+                <div class="text-orange-400 text-sm mb-2">New memories cannot be added</div>
+                @if (Model.IsAutoThrottled)
+                {
+                    <div class="text-xs text-graphite">Auto-throttled: 100% usage reached</div>
+                }
+            }
+            else
+            {
+                <div class="text-green-400 text-sm">Ingestion enabled</div>
+            }
+        </div>
+    </div>
+
+    <!-- Quota Status -->
+    <div class="card mb-8">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Current Usage</h3>
+        <div class="w-full bg-slate rounded-full h-4 mb-2">
+            <div class="@(Model.UsagePercent >= 100 ? "bg-red-500" : Model.UsagePercent >= 90 ? "bg-yellow-500" : "bg-electric") h-4 rounded-full transition-all duration-300"
+                style="width: @(Math.Min(100, Model.UsagePercent))%"></div>
+        </div>
+        <div class="flex justify-between text-sm text-graphite">
+            <span>@Model.CreditsUsed.ToString("N1") credits used</span>
+            <span>@Model.CreditsAllocated.ToString("N0") allocated (@Model.UsagePercent.ToString("N0")%)</span>
+        </div>
+        @if (Model.UsagePercent >= 100)
+        {
+            <div class="mt-4 bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded">
+                <strong>Auto-Throttled:</strong> Memory ingestion has been automatically disabled because usage reached 100%.
+            </div>
+        }
+    </div>
+
+    <!-- Control Actions -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <!-- Global Kill Switch Control -->
+        <div class="card">
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Global Kill Switch</h3>
+            <p class="text-graphite text-sm mb-4">
+                Blocks ALL API requests with 503 Service Unavailable. Use for critical emergencies only.
+            </p>
+
+            @if (Model.GlobalKillSwitchActive)
+            {
+                <form method="post" asp-page-handler="DisableGlobalKill">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason for disabling</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Issue resolved" required />
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Disable Kill Switch
+                    </button>
+                </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="EnableGlobalKill">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Security incident" required />
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Auto-expire (minutes, optional)</label>
+                        <input type="number" name="ExpiresInMinutes" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="Leave empty for indefinite" />
+                    </div>
+                    <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Enable Kill Switch
+                    </button>
+                </form>
+            }
+        </div>
+
+        <!-- Global Read-Only Control -->
+        <div class="card">
+            <h3 class="text-lg font-semibold text-soft-white mb-4">Global Read-Only Mode</h3>
+            <p class="text-graphite text-sm mb-4">
+                Blocks POST/PUT/PATCH/DELETE. Allows GET requests. Use for maintenance or migrations.
+            </p>
+
+            @if (Model.GlobalReadOnlyActive)
+            {
+                <form method="post" asp-page-handler="DisableGlobalReadOnly">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason for disabling</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Maintenance complete" required />
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Disable Read-Only
+                    </button>
+                </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="EnableGlobalReadOnly">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Database migration" required />
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Auto-expire (minutes, optional)</label>
+                        <input type="number" name="ExpiresInMinutes" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="Leave empty for indefinite" />
+                    </div>
+                    <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Enable Read-Only
+                    </button>
+                </form>
+            }
+        </div>
+    </div>
+
+    <!-- Tenant No-Ingest Control -->
+    <div class="card mb-8">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Memory Ingestion Control</h3>
+        <p class="text-graphite text-sm mb-4">
+            Blocks memory_ingest operations while allowing searches. Useful for quota management or data review.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            @if (Model.TenantNoIngestActive)
+            {
+                <form method="post" asp-page-handler="DisableTenantNoIngest">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason for re-enabling</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Review complete" required />
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Enable Ingestion
+                    </button>
+                </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="EnableTenantNoIngest">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Reason</label>
+                        <input type="text" name="Reason" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="e.g., Quota limit reached" required />
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Auto-expire (minutes, optional)</label>
+                        <input type="number" name="ExpiresInMinutes" class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white" placeholder="Leave empty for indefinite" />
+                    </div>
+                    <button type="submit" class="w-full bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                        Disable Ingestion
+                    </button>
+                </form>
+            }
+        </div>
+    </div>
+
+    <!-- Recent Actions Audit Log -->
+    <div class="card">
+        <h3 class="text-lg font-semibold text-soft-white mb-4">Recent Actions</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-graphite border-b border-slate">
+                        <th class="pb-3 pr-4">Action</th>
+                        <th class="pb-3 pr-4">Tenant</th>
+                        <th class="pb-3 pr-4">Reason</th>
+                        <th class="pb-3 pr-4">Actor</th>
+                        <th class="pb-3">Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var action in Model.RecentActions)
+                    {
+                        <tr class="border-b border-slate/50">
+                            <td class="py-3 pr-4">
+                                <span class="px-2 py-1 text-xs rounded @GetActionClass(action.ActionType)">
+                                    @action.ActionType.Replace("_", " ")
+                                </span>
+                            </td>
+                            <td class="py-3 pr-4 text-graphite">@(action.TenantId ?? "Global")</td>
+                            <td class="py-3 pr-4 text-soft-white">@action.Reason</td>
+                            <td class="py-3 pr-4 text-graphite">@action.ActorId</td>
+                            <td class="py-3 text-graphite">@action.Timestamp.ToString("g")</td>
+                        </tr>
+                    }
+                    @if (Model.RecentActions.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="5" class="py-4 text-center text-graphite">No recent actions</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@functions {
+    string GetActionClass(string actionType)
+    {
+        if (actionType.Contains("KILL") && actionType.Contains("ENABLED"))
+            return "bg-red-500/20 text-red-400";
+        if (actionType.Contains("READONLY") && actionType.Contains("ENABLED"))
+            return "bg-yellow-500/20 text-yellow-400";
+        if (actionType.Contains("NOINGEST") && actionType.Contains("ENABLED"))
+            return "bg-orange-500/20 text-orange-400";
+        if (actionType.Contains("DISABLED"))
+            return "bg-green-500/20 text-green-400";
+        return "bg-slate text-graphite";
+    }
+}

@@ -152,7 +152,7 @@ public sealed record PayloadLimits
     {
         MaxMemoryContentBytes = 1024 * 1024,      // 1 MB
         MaxMemoryContentChars = 500_000,          // ~500K chars
-        ExpectedEmbeddingDimension = 768,
+        ExpectedEmbeddingDimension = 1536,        // OpenAI text-embedding-3-small
         MaxBatchSize = 10000,
         MaxBatchTotalBytes = 100 * 1024 * 1024,   // 100 MB
         MaxExportRecords = 10_000_000,

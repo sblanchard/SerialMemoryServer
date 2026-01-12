@@ -4,7 +4,9 @@ WORKDIR /src
 # Copy csproj files and restore
 COPY ["SerialMemory.Worker/SerialMemory.Worker.csproj", "SerialMemory.Worker/"]
 COPY ["SerialMemory.Core/SerialMemory.Core.csproj", "SerialMemory.Core/"]
+COPY ["SerialMemory.Contracts/SerialMemory.Contracts.csproj", "SerialMemory.Contracts/"]
 COPY ["SerialMemory.Infrastructure/SerialMemory.Infrastructure.csproj", "SerialMemory.Infrastructure/"]
+COPY ["SerialMemory.EventSourcing/SerialMemory.EventSourcing.csproj", "SerialMemory.EventSourcing/"]
 COPY ["SerialMemory.ML/SerialMemory.ML.csproj", "SerialMemory.ML/"]
 RUN dotnet restore "SerialMemory.Worker/SerialMemory.Worker.csproj"
 
@@ -18,6 +20,13 @@ RUN dotnet publish "SerialMemory.Worker.csproj" -c Release -o /app/publish /p:Us
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+
+# Install Kerberos libraries required by Npgsql for GSSAPI auth
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libkrb5-3 \
+    libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 8081
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "SerialMemory.Worker.dll"]

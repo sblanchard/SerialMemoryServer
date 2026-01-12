@@ -43,6 +43,23 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
         _registry.SlowDetector.SetThreshold("db_insert", TimeSpan.FromMilliseconds(100));
         _registry.SlowDetector.SetThreshold("cache_get", TimeSpan.FromMilliseconds(5));
         _registry.SlowDetector.SetThreshold("cache_set", TimeSpan.FromMilliseconds(10));
+        _registry.SlowDetector.SetThreshold("http_request", TimeSpan.FromMilliseconds(500));
+    }
+
+    /// <inheritdoc />
+    public void RecordLatency(string operationName, TimeSpan duration, bool success = true, int? statusCode = null)
+    {
+        var histogram = _registry.Metrics.GetHistogram(operationName);
+        histogram.Record(duration);
+
+        var counter = _registry.Metrics.GetCounter(operationName);
+        if (success)
+            counter.RecordSuccess();
+        else
+            counter.RecordFailure();
+
+        // Check for slow operation
+        _registry.SlowDetector.RecordIfSlow(operationName, duration, statusCode?.ToString());
     }
 
     public Task<PerformanceSnapshot> GetSnapshotAsync(CancellationToken ct = default)
@@ -61,9 +78,59 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
         return Task.FromResult(_registry.SlowDetector.GetRecentSlowOperations(limit));
     }
 
-    public Task<CacheSnapshot> GetCacheStatsAsync(CancellationToken ct = default)
+    public async Task<CacheSnapshot> GetCacheStatsAsync(CancellationToken ct = default)
     {
-        return Task.FromResult(_registry.CacheMetrics.GetSnapshot());
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+
+            // Query actual embedding_cache table for real stats
+            // Use PascalCase aliases to match C# property names for Dapper mapping
+            var stats = await conn.QueryFirstOrDefaultAsync<EmbeddingCacheStats>(@"
+                SELECT
+                    COUNT(*) AS ""TotalItems"",
+                    COALESCE(SUM(access_count), 0) AS ""TotalHits"",
+                    COUNT(*) FILTER (WHERE access_count = 0) AS ""ItemsNeverAccessed"",
+                    COUNT(*) FILTER (WHERE is_compiled = true) AS ""CompiledCount"",
+                    COALESCE(AVG(access_count), 0) AS ""AvgAccessCount"",
+                    pg_size_pretty(pg_total_relation_size('embedding_cache')) AS ""TableSize""
+                FROM embedding_cache");
+
+            // Create a cache layer snapshot from actual data
+            var embeddingLayer = new CacheLayerSnapshot
+            {
+                Hits = stats?.TotalHits ?? 0,
+                Misses = 0, // Not tracked in DB
+                Evictions = 0, // Not tracked in DB
+                Writes = stats?.TotalItems ?? 0,
+                CurrentSize = stats?.TotalItems ?? 0,
+                HitRate = stats?.TotalItems > 0 ? (double)(stats.TotalHits) / (stats.TotalHits + stats.TotalItems) : 0
+            };
+
+            return new CacheSnapshot
+            {
+                Layers = new Dictionary<string, CacheLayerSnapshot>
+                {
+                    ["embedding_cache"] = embeddingLayer
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get cache stats from database, using in-memory stats");
+            return _registry.CacheMetrics.GetSnapshot();
+        }
+    }
+
+    private class EmbeddingCacheStats
+    {
+        public long TotalItems { get; set; }
+        public long TotalHits { get; set; }
+        public long ItemsNeverAccessed { get; set; }
+        public long CompiledCount { get; set; }
+        public double AvgAccessCount { get; set; }
+        public string? TableSize { get; set; }
     }
 
     public Task SetSlowThresholdAsync(string operationName, TimeSpan threshold, CancellationToken ct = default)
@@ -86,11 +153,12 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
             await conn.OpenAsync(ct);
 
             // Query PostgreSQL for connection stats
+            // Use PascalCase aliases to match C# property names for Dapper mapping
             var stats = await conn.QueryFirstOrDefaultAsync<PgStatActivity>(@"
                 SELECT
-                    count(*) FILTER (WHERE state = 'active') as active_count,
-                    count(*) FILTER (WHERE state = 'idle') as idle_count,
-                    count(*) as total_count
+                    count(*) FILTER (WHERE state = 'active') AS ""ActiveCount"",
+                    count(*) FILTER (WHERE state = 'idle') AS ""IdleCount"",
+                    count(*) AS ""TotalCount""
                 FROM pg_stat_activity
                 WHERE datname = current_database()
                   AND pid != pg_backend_pid()");
@@ -176,24 +244,20 @@ public sealed class PostgresPerformanceService : IPerformanceService, IDisposabl
         _activeOps.Clear();
     }
 
-    private sealed class ActiveOperationTracker : IDisposable
+    private sealed class ActiveOperationTracker(
+        PostgresPerformanceService service,
+        string operationName,
+        string? context)
+        : IDisposable
     {
-        private readonly PostgresPerformanceService _service;
         public string Id { get; } = Guid.CreateVersion7().ToString();
-        public string OperationName { get; }
+        public string OperationName { get; } = operationName;
         public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
-        public string? Context { get; }
-
-        public ActiveOperationTracker(PostgresPerformanceService service, string operationName, string? context)
-        {
-            _service = service;
-            OperationName = operationName;
-            Context = context;
-        }
+        public string? Context { get; } = context;
 
         public void Dispose()
         {
-            _service.CompleteTracking(Id);
+            service.CompleteTracking(Id);
         }
     }
 

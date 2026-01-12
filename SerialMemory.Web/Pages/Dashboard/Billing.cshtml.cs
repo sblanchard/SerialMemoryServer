@@ -1,19 +1,19 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class BillingModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
     private readonly AppConfig _config;
 
-    public BillingModel(IHttpClientFactory httpClientFactory, AppConfig config)
+    public BillingModel(ApiClientService apiClient, AppConfig config)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
         _config = config;
     }
 
@@ -50,19 +50,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostCheckoutAsync(string plan)
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("Api");
             var request = new
             {
                 PlanName = plan,
@@ -70,7 +60,7 @@ public sealed class BillingModel : PageModel
                 CancelUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing?canceled=true"
             };
 
-            var response = await client.PostAsJsonAsync("/billing/checkout", request);
+            var response = await client.PostAsJsonAsync("/api/billing/checkout", request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -79,10 +69,31 @@ public sealed class BillingModel : PageModel
                 {
                     return Redirect(result.CheckoutUrl);
                 }
+                ErrorMessage = "No checkout URL returned";
             }
-
-            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-            ErrorMessage = error?.Message ?? "Failed to create checkout session";
+            else
+            {
+                // Handle non-success responses
+                var content = await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrEmpty(content))
+                {
+                    try
+                    {
+                        var error = System.Text.Json.JsonSerializer.Deserialize<ErrorResponse>(content);
+                        ErrorMessage = error?.Message ?? $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                    }
+                    catch
+                    {
+                        ErrorMessage = $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                    }
+                }
+                else
+                {
+                    ErrorMessage = response.StatusCode == System.Net.HttpStatusCode.Forbidden
+                        ? "You don't have permission to upgrade. Please contact support."
+                        : $"Failed to create checkout session (HTTP {(int)response.StatusCode})";
+                }
+            }
         }
         catch (HttpRequestException)
         {
@@ -95,25 +106,15 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostPortalAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("Api");
             var request = new
             {
                 ReturnUrl = $"{Request.Scheme}://{Request.Host}/dashboard/billing"
             };
 
-            var response = await client.PostAsJsonAsync("/billing/portal", request);
+            var response = await client.PostAsJsonAsync("/api/billing/portal", request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -138,19 +139,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostCancelAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/billing/cancel", null);
 
             if (response.IsSuccessStatusCode)
@@ -174,19 +165,9 @@ public sealed class BillingModel : PageModel
 
     public async Task<IActionResult> OnPostResumeAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            ErrorMessage = "Authentication required";
-            await LoadBillingDataAsync();
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
+            var client = _apiClient.CreateClient("Api");
             var response = await client.PostAsync("/billing/resume", null);
 
             if (response.IsSuccessStatusCode)
@@ -210,20 +191,12 @@ public sealed class BillingModel : PageModel
 
     private async Task LoadBillingDataAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            LoadSampleData();
-            return;
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient("Api");
 
             // Get billing summary
-            var billingResponse = await client.GetAsync("/billing");
+            var billingResponse = await client.GetAsync("/api/billing");
             if (billingResponse.IsSuccessStatusCode)
             {
                 var billing = await billingResponse.Content.ReadFromJsonAsync<BillingSummary>();
@@ -252,35 +225,27 @@ public sealed class BillingModel : PageModel
                 }
             }
 
-            // If API returned empty data, show sample data
+            // If API returned empty data, show Free plan defaults
             if (string.IsNullOrEmpty(CurrentPlan) || CurrentPlan == "Free")
             {
                 if (!CurrentPeriodStart.HasValue && !CurrentPeriodEnd.HasValue)
                 {
-                    LoadSampleData();
+                    // Set default billing period for Free plan
+                    CurrentPeriodStart = DateTimeOffset.UtcNow;
+                    CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(30);
+                    CreditsIncluded = 1000; // Free plan default
                 }
             }
         }
         catch (HttpRequestException)
         {
-            // API unavailable - use sample data
-            LoadSampleData();
+            // API unavailable - show defaults, not sample data
+            CurrentPlan = "Free";
+            CurrentPeriodStart = DateTimeOffset.UtcNow;
+            CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(30);
+            CreditsIncluded = 1000;
+            PaymentHistory = [];
         }
-    }
-
-    private void LoadSampleData()
-    {
-        IsSampleData = true;
-        CurrentPlan = "Free";
-        CurrentPeriodStart = DateTimeOffset.UtcNow.AddDays(-15);
-        CurrentPeriodEnd = DateTimeOffset.UtcNow.AddDays(15);
-        CreditsIncluded = 100;
-        PaymentHistory = [];
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     public sealed class PaymentRecord

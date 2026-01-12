@@ -571,21 +571,14 @@ public sealed class InferenceSession : IInferenceSession
     }
 }
 
-internal sealed class DeterministicContext : IDisposable
+internal sealed class DeterministicContext(Random random) : IDisposable
 {
     private static readonly AsyncLocal<Random?> _currentRandom = new();
-    private readonly Random _random;
-    private readonly Random? _previousRandom;
-
-    public DeterministicContext(Random random)
-    {
-        _random = random;
-        _previousRandom = _currentRandom.Value;
-    }
+    private readonly Random? _previousRandom = _currentRandom.Value;
 
     public IDisposable Apply()
     {
-        _currentRandom.Value = _random;
+        _currentRandom.Value = random;
         return this;
     }
 

@@ -66,13 +66,9 @@ ALTER TABLE memory_entities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_personas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_sessions ENABLE ROW LEVEL SECURITY;
 
--- Usage/billing tables
-ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE billing_cycles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE usage_daily_rollups ENABLE ROW LEVEL SECURITY;
+-- Usage/billing tables (created in 05-usage-metering.sql, RLS enabled there)
 
--- Audit tables
-ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+-- Audit tables (created separately, RLS enabled there if needed)
 
 -- =============================================================================
 -- CREATE RLS POLICIES: Core Data Tables
@@ -121,39 +117,8 @@ CREATE POLICY tenant_isolation_conversation_sessions ON conversation_sessions
     WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
 -- =============================================================================
--- CREATE RLS POLICIES: Usage/Billing Tables
+-- Note: RLS POLICIES for Usage/Billing tables are in 05-usage-metering.sql
 -- =============================================================================
-
--- Note: These tables use tenant_id as TEXT, not UUID
--- We compare against the text representation of app.tenant_id
-
--- USAGE_EVENTS
-DROP POLICY IF EXISTS tenant_isolation_usage_events ON usage_events;
-CREATE POLICY tenant_isolation_usage_events ON usage_events
-    FOR ALL
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
-
--- BILLING_CYCLES
-DROP POLICY IF EXISTS tenant_isolation_billing_cycles ON billing_cycles;
-CREATE POLICY tenant_isolation_billing_cycles ON billing_cycles
-    FOR ALL
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
-
--- USAGE_DAILY_ROLLUPS
-DROP POLICY IF EXISTS tenant_isolation_usage_daily_rollups ON usage_daily_rollups;
-CREATE POLICY tenant_isolation_usage_daily_rollups ON usage_daily_rollups
-    FOR ALL
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
-
--- AUDIT_LOGS
-DROP POLICY IF EXISTS tenant_isolation_audit_logs ON audit_logs;
-CREATE POLICY tenant_isolation_audit_logs ON audit_logs
-    FOR ALL
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 -- =============================================================================
 -- CREATE SERVICE ROLE FOR BACKGROUND WORKERS

@@ -351,7 +351,7 @@ public sealed class AdminMcpServer : McpServerBase
                         var embedding = await EmbeddingService.EmbedTextAsync(memory.Content);
                         await using var connection = await vectorDataSource.OpenConnectionAsync();
                         await using var cmd = new NpgsqlCommand(
-                            """UPDATE memories SET embedding = @Embedding WHERE id = @Id""", connection);
+                            "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
                         cmd.Parameters.AddWithValue("@Id", memory.Id);
                         cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
                         await cmd.ExecuteNonQueryAsync();

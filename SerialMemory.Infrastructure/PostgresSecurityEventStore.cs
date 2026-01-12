@@ -9,22 +9,19 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL implementation of security event storage
 /// </summary>
-public class PostgresSecurityEventStore : ISecurityEventStore
+public class PostgresSecurityEventStore(string connectionString) : ISecurityEventStore
 {
-    private readonly string _connectionString;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public PostgresSecurityEventStore(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
-
-    private NpgsqlConnection CreateConnection() => new(_connectionString);
+    private NpgsqlConnection CreateConnection() => new(connectionString);
 
     public async Task<Guid> LogEventAsync(IntegrityEvent integrityEvent, CancellationToken ct = default)
     {
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
+
+        // Set internal_admin role to bypass RLS WITH CHECK policy for security_events
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
 
         var sql = """
             INSERT INTO security_events (
@@ -34,7 +31,7 @@ public class PostgresSecurityEventStore : ISecurityEventStore
                 loop_path, loop_depth,
                 occurred_at, detected_by, session_id, scan_batch_id
             ) VALUES (
-                @EventId, @EventType::security_event_type, @Severity::security_severity, @MemoryId, @EntityId,
+                @EventId, @EventType, @Severity, @MemoryId, @EntityId,
                 @Message, @Details::jsonb, @ExpectedHash, @ActualHash,
                 @ContradictingMemoryIds, @ContradictionScore,
                 @LoopPath, @LoopDepth,
@@ -72,6 +69,9 @@ public class PostgresSecurityEventStore : ISecurityEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
         await using var transaction = await conn.BeginTransactionAsync(ct);
+
+        // Set internal_admin role to bypass RLS WITH CHECK policy for security_events
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)", transaction: transaction);
 
         try
         {
@@ -156,7 +156,7 @@ public class PostgresSecurityEventStore : ISecurityEventStore
                    loop_path, loop_depth,
                    occurred_at, detected_by, session_id, scan_batch_id
             FROM security_events
-            WHERE event_type = @EventType::security_event_type
+            WHERE event_type = @EventType
             ORDER BY occurred_at DESC
             LIMIT @Limit
             """;

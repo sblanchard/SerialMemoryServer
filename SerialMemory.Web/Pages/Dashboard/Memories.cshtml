@@ -5,6 +5,7 @@
 }
 
 @section Styles {
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <style>
         .memory-card {
             background-color: var(--navy);
@@ -20,6 +21,8 @@
         .memory-content {
             color: var(--soft-white);
             line-height: 1.6;
+        }
+        .memory-content.text-only {
             white-space: pre-wrap;
         }
         .memory-meta {
@@ -93,6 +96,91 @@
             margin: 0 auto 1rem;
             opacity: 0.5;
         }
+
+        /* Code block styling */
+        .code-block-wrapper {
+            position: relative;
+            margin: 0.5rem 0;
+        }
+        .code-block-wrapper pre {
+            margin: 0;
+            border-radius: 0.5rem;
+            max-height: 300px;
+            overflow: auto;
+        }
+        .code-block-wrapper.collapsed pre {
+            max-height: 150px;
+            overflow: hidden;
+        }
+        .code-block-wrapper pre code {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .code-block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--slate);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            font-size: 0.7rem;
+            color: var(--graphite);
+        }
+        .code-block-header + pre {
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+        .code-block-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .code-action-btn {
+            background: transparent;
+            border: none;
+            color: var(--graphite);
+            cursor: pointer;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-size: 0.65rem;
+            transition: all 0.2s;
+        }
+        .code-action-btn:hover {
+            background: var(--navy);
+            color: var(--cyan);
+        }
+        .code-action-btn.copied {
+            color: var(--success);
+        }
+        .expand-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: linear-gradient(transparent, var(--navy));
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 0.5rem;
+        }
+        .expand-btn {
+            background: var(--slate);
+            border: 1px solid var(--graphite);
+            color: var(--soft-white);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .expand-btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+        .language-badge {
+            text-transform: uppercase;
+            font-weight: 600;
+        }
     </style>
 }
 
@@ -106,6 +194,111 @@
         <div class="text-right">
             <span class="text-2xl font-bold text-cyan" id="total-count">0</span>
             <span class="text-graphite text-sm block">total memories</span>
+        </div>
+    </div>
+
+    <!-- Layer Management Panel -->
+    <div class="card mb-6">
+        <div class="flex justify-between items-center cursor-pointer" onclick="toggleLayerPanel()">
+            <div class="flex items-center gap-3">
+                <svg class="w-5 h-5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                <span class="font-medium text-soft-white">Cognitive Layers</span>
+                <span class="text-xs text-graphite">(L0 Raw → L1 Context → L2 Summary → L3 Knowledge)</span>
+            </div>
+            <svg id="layer-panel-chevron" class="w-5 h-5 text-graphite transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </div>
+
+        <div id="layer-panel-content" class="hidden mt-4 pt-4 border-t border-slate">
+            <!-- Layer Distribution -->
+            <div class="grid grid-cols-4 gap-4 mb-4">
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-blue-400" id="layer-l0">0</div>
+                    <div class="text-xs text-graphite">L0 Raw</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l0" class="h-full bg-blue-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-green-400" id="layer-l1">0</div>
+                    <div class="text-xs text-graphite">L1 Context</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l1" class="h-full bg-green-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-yellow-400" id="layer-l2">0</div>
+                    <div class="text-xs text-graphite">L2 Summary</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l2" class="h-full bg-yellow-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-navy rounded-lg p-3 text-center">
+                    <div class="text-2xl font-bold text-purple-400" id="layer-l3">0</div>
+                    <div class="text-xs text-graphite">L3 Knowledge</div>
+                    <div class="w-full h-1 bg-slate rounded mt-2">
+                        <div id="layer-bar-l3" class="h-full bg-purple-400 rounded transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Queue Status -->
+            <div id="queue-status" class="mb-4 text-xs text-graphite">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <span class="font-medium">Queue:</span> <span id="queue-info">No pending transitions</span>
+                    </div>
+                    <div id="worker-status" class="flex items-center gap-1">
+                        <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                        <span>Worker Active</span>
+                    </div>
+                    <div id="last-activity" class="hidden">
+                        <span class="font-medium">Last:</span> <span id="last-activity-time">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-3">
+                <button id="btn-refresh-layers" class="btn-outline px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Refresh
+                </button>
+                <button id="btn-promote-all" class="bg-gradient-to-r from-electric to-cyan text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:opacity-90 transition-opacity">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                    </svg>
+                    Promote All Layers
+                </button>
+                <div id="promote-status" class="flex items-center text-sm text-graphite hidden">
+                    <div class="loading-spinner mr-2" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                    <span>Promoting...</span>
+                </div>
+            </div>
+
+            <!-- Promotion Result -->
+            <div id="promote-result" class="mt-4 p-3 bg-navy rounded-lg hidden">
+                <div class="text-sm font-medium text-soft-white mb-2">Promotion Complete</div>
+                <div class="grid grid-cols-3 gap-4 text-center text-xs">
+                    <div>
+                        <div class="text-lg font-bold text-blue-400" id="promoted-l0-l1">0</div>
+                        <div class="text-graphite">L0 → L1</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-bold text-green-400" id="promoted-l1-l2">0</div>
+                        <div class="text-graphite">L1 → L2</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-bold text-yellow-400" id="promoted-l2-l3">0</div>
+                        <div class="text-graphite">L2 → L3</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -153,14 +346,215 @@
 </div>
 
 @section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/csharp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <script src="~/js/dashboard-api.js"></script>
     <script>
-        const API_BASE = '@Model.ApiBaseUrl';
-        const AUTH_TOKEN = '@Model.AuthToken';
+        // Configure DashboardApi with page model values
+        window.dashboardConfig = {
+            apiBaseUrl: '@Model.ApiBaseUrl',
+            serviceApiKey: '@Model.ServiceApiKey',
+            signalRToken: '@Model.SignalRToken'
+        };
+
+        const COLLAPSE_THRESHOLD = 10; // Lines before collapsing
 
         let currentMode = 'hybrid';
         let currentQuery = '';
         let currentOffset = 0;
         const PAGE_SIZE = 20;
+        let blockIdCounter = 0;
+
+        // Detect language from content
+        function detectLanguage(content) {
+            if (!content || typeof content !== 'string') return 'text';
+            const trimmed = content.trim();
+
+            // Check for JSON
+            if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+                (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                try {
+                    JSON.parse(trimmed);
+                    return 'json';
+                } catch {}
+            }
+
+            // Check for XML/HTML
+            if (trimmed.startsWith('<') && /^<[a-zA-Z]/.test(trimmed)) {
+                if (trimmed.includes('<!DOCTYPE html') || trimmed.includes('<html')) return 'html';
+                return 'xml';
+            }
+
+            // Check for YAML
+            if (/^\s*[\w-]+\s*:\s*\S/m.test(trimmed) && !trimmed.includes(';') && !trimmed.includes('{')) {
+                return 'yaml';
+            }
+
+            // Check for SQL
+            if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|FROM|WHERE|JOIN|GROUP BY|ORDER BY)\b/i.test(trimmed)) {
+                return 'sql';
+            }
+
+            // Check for C#
+            const csharpIndicators = [
+                'builder.Services', 'IServiceCollection', 'AddScoped', 'AddSingleton', 'AddTransient',
+                'namespace ', 'using System', 'public class ', 'private class ', 'internal class ',
+                'public sealed class ', 'public interface ', 'async Task', '=> ', '.ConfigureAwait(',
+                'var ', 'ILogger<', 'IConfiguration', '[Authorize]', '[HttpGet]', '[HttpPost]',
+                'public record ', 'public enum '
+            ];
+            if (csharpIndicators.some(i => trimmed.includes(i))) return 'csharp';
+
+            // Semicolon-heavy with braces = C-style
+            const semicolonCount = (trimmed.match(/;/g) || []).length;
+            const lineCount = trimmed.split('\n').length;
+            if (lineCount > 2 && semicolonCount >= lineCount / 2 && trimmed.includes('{') && trimmed.includes('}')) {
+                return 'csharp';
+            }
+
+            // Check for JavaScript/TypeScript
+            if (/\b(function|const|let|var|=>|import|export|require\(|module\.exports)\b/.test(trimmed)) {
+                return 'javascript';
+            }
+
+            // Check for Python
+            if (/(^def |^class |^import |^from .+ import|if __name__|print\(|self\.|async def )/m.test(trimmed)) {
+                return 'python';
+            }
+
+            // Check for Bash
+            if (/(^#!\/bin\/|^\s*\$\s+|^echo |^export |^source |^alias |\|\s*grep|\|\s*awk|\|\s*sed)/m.test(trimmed)) {
+                return 'bash';
+            }
+
+            return 'text';
+        }
+
+        // Format JSON with pretty-printing
+        function formatJson(json) {
+            try {
+                return JSON.stringify(JSON.parse(json), null, 2);
+            } catch {
+                return json;
+            }
+        }
+
+        // Format memory content with code detection
+        function formatMemoryContent(content) {
+            if (!content) return { html: '', isCode: false };
+
+            // If already has fenced code blocks, parse and render them
+            if (content.includes('```')) {
+                return { html: renderMarkdownCodeBlocks(content), isCode: true };
+            }
+
+            const language = detectLanguage(content);
+
+            if (language === 'text') {
+                return { html: escapeHtml(content), isCode: false };
+            }
+
+            // Format JSON if detected
+            let code = content;
+            if (language === 'json') {
+                code = formatJson(content);
+            }
+
+            return { html: renderCodeBlock(code, language), isCode: true };
+        }
+
+        // Render markdown-style code blocks
+        function renderMarkdownCodeBlocks(content) {
+            const parts = [];
+            let lastIndex = 0;
+            const regex = /```(\w*)\n?([\s\S]*?)```/g;
+            let match;
+
+            while ((match = regex.exec(content)) !== null) {
+                // Add text before code block
+                if (match.index > lastIndex) {
+                    parts.push(escapeHtml(content.slice(lastIndex, match.index)));
+                }
+
+                const lang = match[1] || detectLanguage(match[2]);
+                parts.push(renderCodeBlock(match[2], lang));
+                lastIndex = match.index + match[0].length;
+            }
+
+            // Add remaining text
+            if (lastIndex < content.length) {
+                parts.push(escapeHtml(content.slice(lastIndex)));
+            }
+
+            return parts.join('');
+        }
+
+        // Render a single code block with header and actions
+        function renderCodeBlock(code, language) {
+            const blockId = `code-block-${++blockIdCounter}`;
+            const lineCount = code.split('\n').length;
+            const needsCollapse = lineCount > COLLAPSE_THRESHOLD;
+            const langDisplay = language === 'csharp' ? 'C#' : language.toUpperCase();
+
+            const escapedCode = escapeHtml(code.trim());
+            const highlightedCode = language !== 'text'
+                ? hljs.highlight(code.trim(), { language: language === 'csharp' ? 'csharp' : language }).value
+                : escapedCode;
+
+            return `
+                <div class="code-block-wrapper ${needsCollapse ? 'collapsed' : ''}" id="${blockId}" data-code="${encodeURIComponent(code.trim())}">
+                    <div class="code-block-header">
+                        <span class="language-badge">${langDisplay}</span>
+                        <div class="code-block-actions">
+                            <button class="code-action-btn" onclick="copyCode('${blockId}')" title="Copy code">Copy</button>
+                            ${needsCollapse ? `<button class="code-action-btn" onclick="toggleExpand('${blockId}')" title="Expand/collapse">Expand</button>` : ''}
+                        </div>
+                    </div>
+                    <pre><code class="hljs language-${language}">${highlightedCode}</code></pre>
+                    ${needsCollapse ? `
+                        <div class="expand-overlay">
+                            <button class="expand-btn" onclick="toggleExpand('${blockId}')">Show more (${lineCount} lines)</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Copy code to clipboard
+        async function copyCode(blockId) {
+            const block = document.getElementById(blockId);
+            const code = decodeURIComponent(block.dataset.code);
+            await navigator.clipboard.writeText(code);
+
+            const btn = block.querySelector('.code-action-btn');
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = 'Copy';
+                btn.classList.remove('copied');
+            }, 2000);
+        }
+
+        // Toggle expand/collapse
+        function toggleExpand(blockId) {
+            const block = document.getElementById(blockId);
+            const isCollapsed = block.classList.contains('collapsed');
+            block.classList.toggle('collapsed');
+
+            const overlay = block.querySelector('.expand-overlay');
+            const expandBtn = block.querySelector('.code-block-actions .code-action-btn:last-child');
+
+            if (isCollapsed) {
+                if (overlay) overlay.style.display = 'none';
+                if (expandBtn) expandBtn.textContent = 'Collapse';
+            } else {
+                if (overlay) overlay.style.display = 'flex';
+                if (expandBtn) expandBtn.textContent = 'Expand';
+            }
+        }
 
         // Format date
         function formatDate(dateStr) {
@@ -178,10 +572,11 @@
         function renderMemoryCard(memory) {
             const similarity = memory.similarity || memory.score || 0;
             const entities = memory.entities || [];
+            const formatted = formatMemoryContent(memory.content);
 
             return `
                 <div class="memory-card">
-                    <div class="memory-content mb-3">${escapeHtml(memory.content)}</div>
+                    <div class="memory-content mb-3 ${formatted.isCode ? '' : 'text-only'}">${formatted.html}</div>
                     <div class="flex justify-between items-end">
                         <div>
                             <div class="memory-meta mb-2">${formatDate(memory.createdAt)}</div>
@@ -227,18 +622,12 @@
             try {
                 let url;
                 if (query) {
-                    url = `${API_BASE}/api/memories/search?query=${encodeURIComponent(query)}&mode=${mode}&limit=${PAGE_SIZE}&offset=${offset}`;
+                    url = `/api/memories/search?query=${encodeURIComponent(query)}&mode=${mode}&limit=${PAGE_SIZE}&offset=${offset}`;
                 } else {
-                    url = `${API_BASE}/api/memories/recent?limit=${PAGE_SIZE}&offset=${offset}`;
+                    url = `/api/memories/recent?limit=${PAGE_SIZE}&offset=${offset}`;
                 }
 
-                const response = await fetch(url, {
-                    credentials: 'same-origin'
-                });
-
-                if (!response.ok) throw new Error('Failed to fetch memories');
-
-                const memories = await response.json();
+                const memories = await DashboardApi.getJson(url);
                 loading.classList.add('hidden');
 
                 if (memories.length === 0 && offset === 0) {
@@ -272,16 +661,184 @@
         // Fetch stats
         async function fetchStats() {
             try {
-                const response = await fetch(`${API_BASE}/api/stats`, {
-                    credentials: 'same-origin'
-                });
-
-                if (!response.ok) return;
-
-                const stats = await response.json();
+                const stats = await DashboardApi.getJson('/api/stats');
                 document.getElementById('total-count').textContent = stats.memories || 0;
             } catch (error) {
                 console.error('Error fetching stats:', error);
+            }
+        }
+
+        // Layer Panel Functions
+        let layerPanelOpen = false;
+        let layerSignalRConnection = null;
+
+        function toggleLayerPanel() {
+            layerPanelOpen = !layerPanelOpen;
+            const content = document.getElementById('layer-panel-content');
+            const chevron = document.getElementById('layer-panel-chevron');
+
+            if (layerPanelOpen) {
+                content.classList.remove('hidden');
+                chevron.style.transform = 'rotate(180deg)';
+                fetchLayerStatus();
+                connectLayerSignalR();
+            } else {
+                content.classList.add('hidden');
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        async function connectLayerSignalR() {
+            if (layerSignalRConnection) return;
+
+            try {
+                const token = window.dashboardConfig?.signalRToken || '';
+                layerSignalRConnection = new signalR.HubConnectionBuilder()
+                    .withUrl(`${window.dashboardConfig?.apiBaseUrl || ''}/live?access_token=${token}`)
+                    .withAutomaticReconnect()
+                    .build();
+
+                // Listen for layer transition events
+                layerSignalRConnection.on("LayerTransition", (evt) => {
+                    console.log('[Layers] Transition:', evt);
+                    showTransitionToast(evt);
+                });
+
+                // Listen for layer stats updates
+                layerSignalRConnection.on("LayerStatsUpdate", (evt) => {
+                    console.log('[Layers] Stats update:', evt);
+                    updateLayerStats(evt);
+                });
+
+                await layerSignalRConnection.start();
+                console.log('[Layers] SignalR connected');
+
+                // Subscribe to layer events
+                await layerSignalRConnection.invoke("SubscribeLayerEvents");
+            } catch (err) {
+                console.error('[Layers] SignalR connection failed:', err);
+            }
+        }
+
+        function showTransitionToast(evt) {
+            const result = document.getElementById('promote-result');
+            result.classList.remove('hidden');
+
+            // Update the transition counts based on the event
+            if (evt.status === 'completed') {
+                const fromTo = `${evt.fromLayer} → ${evt.toLayer}`;
+                if (fromTo.includes('L0_RAW') && fromTo.includes('L1_CONTEXT')) {
+                    const el = document.getElementById('promoted-l0-l1');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                } else if (fromTo.includes('L1_CONTEXT') && fromTo.includes('L2_SUMMARY')) {
+                    const el = document.getElementById('promoted-l1-l2');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                } else if (fromTo.includes('L2_SUMMARY') && fromTo.includes('L3_KNOWLEDGE')) {
+                    const el = document.getElementById('promoted-l2-l3');
+                    el.textContent = parseInt(el.textContent || '0') + 1;
+                }
+            }
+
+            // Update last activity time
+            const lastActivityEl = document.getElementById('last-activity');
+            const lastActivityTimeEl = document.getElementById('last-activity-time');
+            lastActivityEl.classList.remove('hidden');
+            lastActivityTimeEl.textContent = new Date().toLocaleTimeString();
+        }
+
+        function updateLayerStats(evt) {
+            const total = (evt.l0Count || 0) + (evt.l1Count || 0) + (evt.l2Count || 0) + (evt.l3Count || 0) || 1;
+
+            document.getElementById('layer-l0').textContent = evt.l0Count || 0;
+            document.getElementById('layer-l1').textContent = evt.l1Count || 0;
+            document.getElementById('layer-l2').textContent = evt.l2Count || 0;
+            document.getElementById('layer-l3').textContent = evt.l3Count || 0;
+
+            document.getElementById('layer-bar-l0').style.width = `${(evt.l0Count / total) * 100}%`;
+            document.getElementById('layer-bar-l1').style.width = `${(evt.l1Count / total) * 100}%`;
+            document.getElementById('layer-bar-l2').style.width = `${(evt.l2Count / total) * 100}%`;
+            document.getElementById('layer-bar-l3').style.width = `${(evt.l3Count / total) * 100}%`;
+
+            // Update queue status
+            const queueEl = document.getElementById('queue-status');
+            const queueInfo = document.getElementById('queue-info');
+            queueInfo.textContent = `${evt.queuePending || 0} pending, ${evt.queueProcessing || 0} processing, ${evt.completedLastHour || 0} completed/hr`;
+            queueEl.classList.remove('hidden');
+        }
+
+        async function fetchLayerStatus() {
+            try {
+                const data = await DashboardApi.getJson('/api/layers/status');
+
+                const layers = data.layers || {};
+                const total = Object.values(layers).reduce((a, b) => a + b, 0) || 1;
+
+                // Update layer counts and bars
+                const l0 = layers['L0_RAW'] || 0;
+                const l1 = layers['L1_CONTEXT'] || 0;
+                const l2 = layers['L2_SUMMARY'] || 0;
+                const l3 = layers['L3_KNOWLEDGE'] || 0;
+
+                document.getElementById('layer-l0').textContent = l0;
+                document.getElementById('layer-l1').textContent = l1;
+                document.getElementById('layer-l2').textContent = l2;
+                document.getElementById('layer-l3').textContent = l3;
+
+                document.getElementById('layer-bar-l0').style.width = `${(l0 / total) * 100}%`;
+                document.getElementById('layer-bar-l1').style.width = `${(l1 / total) * 100}%`;
+                document.getElementById('layer-bar-l2').style.width = `${(l2 / total) * 100}%`;
+                document.getElementById('layer-bar-l3').style.width = `${(l3 / total) * 100}%`;
+
+                // Update queue status
+                const queue = data.queue || [];
+                const queueEl = document.getElementById('queue-status');
+                const queueInfo = document.getElementById('queue-info');
+
+                if (queue.length > 0) {
+                    const pending = queue.filter(q => q.status === 'pending').reduce((a, b) => a + b.count, 0);
+                    const processing = queue.filter(q => q.status === 'processing').reduce((a, b) => a + b.count, 0);
+                    queueInfo.textContent = `${pending} pending, ${processing} processing`;
+                    queueEl.classList.remove('hidden');
+                } else {
+                    queueInfo.textContent = 'No pending transitions';
+                    queueEl.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Error fetching layer status:', error);
+            }
+        }
+
+        async function promoteAllLayers() {
+            const btn = document.getElementById('btn-promote-all');
+            const status = document.getElementById('promote-status');
+            const result = document.getElementById('promote-result');
+
+            btn.disabled = true;
+            status.classList.remove('hidden');
+            result.classList.add('hidden');
+
+            try {
+                const data = await DashboardApi.postJson('/api/layers/promote-all', {});
+
+                // Show results
+                const promoted = data.promoted || {};
+                document.getElementById('promoted-l0-l1').textContent = promoted.l0ToL1 || 0;
+                document.getElementById('promoted-l1-l2').textContent = promoted.l1ToL2 || 0;
+                document.getElementById('promoted-l2-l3').textContent = promoted.l2ToL3 || 0;
+
+                result.classList.remove('hidden');
+
+                // Refresh layer status
+                await fetchLayerStatus();
+
+                // Refresh stats in header
+                await fetchStats();
+            } catch (error) {
+                console.error('Error promoting layers:', error);
+                alert('Failed to promote layers: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                status.classList.add('hidden');
             }
         }
 
@@ -289,6 +846,10 @@
         document.addEventListener('DOMContentLoaded', async () => {
             await fetchStats();
             await searchMemories('', currentMode, 0);
+
+            // Layer panel buttons
+            document.getElementById('btn-refresh-layers').addEventListener('click', fetchLayerStatus);
+            document.getElementById('btn-promote-all').addEventListener('click', promoteAllLayers);
 
             // Search mode buttons
             document.querySelectorAll('.search-mode-btn').forEach(btn => {

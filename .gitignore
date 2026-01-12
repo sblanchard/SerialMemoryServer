@@ -21,3 +21,9 @@ appsettings.local.json
 
 # Debug logs
 serialmemory_debug.log
+DEVSerialMemoryServerpublish/
+.env
+ops/cloudflared/credentials.json
+
+.env.production
+container_infrastructure.dll

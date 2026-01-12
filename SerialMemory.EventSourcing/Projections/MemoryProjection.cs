@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -29,7 +30,8 @@ public sealed class MemoryProjection : IProjection
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Converters = { new JsonStringEnumConverter() }
         };
     }
 
@@ -60,6 +62,24 @@ public sealed class MemoryProjection : IProjection
             case MemoryEventType.MemoryMerged:
                 await ApplyMemoryMerged(conn, storedEvent, cancellationToken);
                 break;
+
+            // Classification events - acknowledged but don't modify projections
+            case MemoryEventType.LayerGenerated:
+            case MemoryEventType.LayerClassified:
+                _logger.LogDebug("Skipping classification event {EventType} for stream {StreamId}",
+                    storedEvent.EventType, storedEvent.StreamId);
+                return;
+
+            // Safety/export/unknown events - skip silently
+            case MemoryEventType.ContradictionDetected:
+            case MemoryEventType.HallucinationFlagged:
+            case MemoryEventType.IntegrityCheckFailed:
+            case MemoryEventType.ExportCompleted:
+            case MemoryEventType.Unknown:
+            default:
+                _logger.LogDebug("Skipping event type {EventType} for stream {StreamId} (no projection handler)",
+                    storedEvent.EventType, storedEvent.StreamId);
+                return;
         }
 
         _logger.LogDebug("Applied {EventType} to projection for stream {StreamId}",
@@ -69,6 +89,14 @@ public sealed class MemoryProjection : IProjection
     private async Task ApplyMemoryCreated(NpgsqlConnection conn, StoredEvent storedEvent, CancellationToken ct)
     {
         var @event = JsonSerializer.Deserialize<MemoryCreatedEvent>(storedEvent.EventData, _jsonOptions)!;
+
+        // Skip events with empty content (legacy/malformed events)
+        if (string.IsNullOrEmpty(@event.Content))
+        {
+            _logger.LogDebug("Skipping MemoryCreated event {EventId} with empty content for stream {StreamId}",
+                storedEvent.EventId, storedEvent.StreamId);
+            return;
+        }
 
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO memory_projections
@@ -105,6 +133,14 @@ public sealed class MemoryProjection : IProjection
     private async Task ApplyMemoryUpdated(NpgsqlConnection conn, StoredEvent storedEvent, CancellationToken ct)
     {
         var @event = JsonSerializer.Deserialize<MemoryUpdatedEvent>(storedEvent.EventData, _jsonOptions)!;
+
+        // Skip events with empty content (legacy/malformed events)
+        if (string.IsNullOrEmpty(@event.NewContent))
+        {
+            _logger.LogDebug("Skipping MemoryUpdated event {EventId} with empty content for stream {StreamId}",
+                storedEvent.EventId, storedEvent.StreamId);
+            return;
+        }
 
         if (@event.NewEmbedding != null && @event.NewEmbedding.Length > 0)
         {

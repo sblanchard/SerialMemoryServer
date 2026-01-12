@@ -4,6 +4,66 @@
     ViewData["Title"] = "Engineering Intelligence Layer";
 }
 
+@if (User.Identity?.IsAuthenticated != true)
+{
+<!-- Developer Hero Section -->
+<section class="bg-midnight py-20 border-b border-slate">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-soft-white mb-4">
+            AI memory infrastructure for engineers.
+        </h2>
+        <p class="text-graphite text-lg mb-10 max-w-2xl mx-auto">
+            Persistent, queryable memory for AI agents. Vector, graph, and reasoning built in.
+        </p>
+
+        <!-- Docker Command -->
+        <div class="max-w-xl mx-auto mb-10">
+            <div class="rounded-lg overflow-hidden border border-slate">
+                <div class="flex items-center gap-2 px-4 py-2 border-b" style="background: #0B0F1A; border-color: #374151;">
+                    <div class="w-2.5 h-2.5 rounded-full" style="background: #EF4444;"></div>
+                    <div class="w-2.5 h-2.5 rounded-full" style="background: #FACC15;"></div>
+                    <div class="w-2.5 h-2.5 rounded-full" style="background: #22C55E;"></div>
+                    <span class="ml-2 text-graphite text-xs font-mono">terminal</span>
+                </div>
+                <div class="px-6 py-4" style="background: #0B0F1A;">
+                    <code class="text-cyan font-mono text-sm md:text-base">docker run -it serialcoder/serialmemory-mcp</code>
+                </div>
+            </div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="flex flex-col sm:flex-row justify-center gap-4 mb-12">
+            <a href="/signup" class="btn-primary px-8 py-3 rounded-xl font-semibold text-lg">
+                Get API Key
+            </a>
+            <a href="/docs" class="btn-outline px-8 py-3 rounded-xl font-semibold text-lg">
+                View Docs
+            </a>
+        </div>
+
+        <!-- Bullets -->
+        <div class="flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm text-graphite">
+            <span class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Vector + graph memory engine
+            </span>
+            <span class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Tenant-isolated by default
+            </span>
+            <span class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Deterministic reasoning ready
+            </span>
+            <span class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                MCP / CLI / Docker-native
+            </span>
+        </div>
+    </div>
+</section>
+}
+
 <!-- Hero Section -->
 <section class="gradient-bg py-28">
     <div class="max-w-6xl mx-auto px-6 text-center">
@@ -38,6 +98,7 @@
                 Secure, multi-tenant by design
             </span>
         </div>
+
     </div>
 </section>
 

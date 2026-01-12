@@ -1,8 +1,13 @@
+@inject AppConfig AppConfig
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    @if (ViewData["Description"] != null)
+    {
+        <meta name="description" content="@ViewData["Description"]">
+    }
     <title>@ViewData["Title"] - SerialMemory</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -37,6 +42,7 @@
         .btn-outline:hover { background-color: var(--cyan); color: var(--midnight); }
         .glow { box-shadow: 0 0 30px rgba(34, 211, 238, 0.2); }
         .nav-link { color: var(--graphite); transition: color 0.2s ease; }
+        .nav-link:visited { color: var(--graphite); }
         .nav-link:hover { color: var(--soft-white); }
     </style>
     @await RenderSectionAsync("Styles", required: false)
@@ -51,16 +57,57 @@
                     </a>
                     @if (User.Identity?.IsAuthenticated == true)
                     {
-                        <div class="ml-10 flex items-baseline space-x-4">
-                            <a href="/dashboard" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Dashboard</a>
-                            <a href="/dashboard/memories" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Memories</a>
-                            <a href="/dashboard/graph" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Graph</a>
-                            <a href="/dashboard/api-keys" class="nav-link px-3 py-2 rounded-md text-sm font-medium">API Keys</a>
-                            <a href="/dashboard/usage" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Usage</a>
-                            <a href="/dashboard/billing" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Billing</a>
-                            <a href="/dashboard/security" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Security</a>
-                            <a href="/dashboard/reasoning" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Reasoning</a>
-                            <a href="/dashboard/visualize" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Visualize</a>
+                        <div class="ml-10 flex items-baseline space-x-2">
+                            <a href="/dashboard" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Dashboard</a>
+                            <a href="/dashboard/memories" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Memories</a>
+                            <a href="/dashboard/graph" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Graph</a>
+                            <a href="/dashboard/conflicts" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Conflicts</a>
+                            <a href="/dashboard/traces" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Traces</a>
+                            <a href="/dashboard/mutations" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Mutations</a>
+                            <a href="/dashboard/mind" class="nav-link px-2 py-2 rounded-md text-sm font-medium">Mind</a>
+                            <div class="relative group" id="more-menu">
+                                <button class="nav-link px-2 py-2 rounded-md text-sm font-medium flex items-center" onclick="toggleMoreMenu(event)">
+                                    More
+                                    <svg class="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                    </svg>
+                                </button>
+                                @{
+                                    var isRootAdmin = User.HasClaim("is_root_admin", "true");
+                                }
+                                <div id="more-dropdown" class="absolute left-0 top-full w-48 bg-navy border border-slate rounded-md shadow-lg hidden z-50">
+                                    @* Power Mode & Performance: only for root admin OR self-hosted mode *@
+                                    @if (isRootAdmin || AppConfig.IsSelfHosted)
+                                    {
+                                        <a href="/dashboard/power" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Power Mode</a>
+                                        <a href="/dashboard/performance" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Performance</a>
+                                    }
+                                    <a href="/dashboard/privacy" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Privacy</a>
+                                    <a href="/dashboard/timeline" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Timeline</a>
+                                    <a href="/dashboard/shadow" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Shadow</a>
+                                    <a href="/dashboard/reasoning" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Reasoning</a>
+                                    <a href="/dashboard/visualize" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Visualize</a>
+                                    <a href="/dashboard/api-keys" class="block px-4 py-2 text-sm nav-link hover:bg-slate">API Keys</a>
+                                    @if (!AppConfig.IsSelfHosted)
+                                    {
+                                        <a href="/dashboard/usage" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Usage</a>
+                                        <a href="/dashboard/billing" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Billing</a>
+                                    }
+                                    @* Control Room & Security: only for root admin *@
+                                    @if (isRootAdmin)
+                                    {
+                                        <div class="border-t border-slate my-1"></div>
+                                        <a href="/dashboard/security" class="block px-4 py-2 text-sm nav-link hover:bg-slate">Security</a>
+                                        <a href="/dashboard/control-room" class="block px-4 py-2 text-sm text-red-400 hover:bg-slate">Control Room</a>
+                                    }
+                                    @* Host Admin: only for root admin OR self-hosted mode *@
+                                    @if (isRootAdmin || AppConfig.IsSelfHosted)
+                                    {
+                                        <div class="border-t border-slate my-1"></div>
+                                        <a href="/dashboard/selfhost" class="block px-4 py-2 text-sm text-cyan hover:bg-slate">Host Admin</a>
+                                    }
+                                </div>
+                            </div>
                         </div>
                     }
                 </div>
@@ -72,6 +119,8 @@
                     }
                     else
                     {
+                        <a href="/developers" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Developers</a>
+                        <a href="/docs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Docs</a>
                         <a href="/login" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Login</a>
                         <a href="/signup" class="ml-4 btn-primary px-4 py-2 rounded-md text-sm font-medium">Get Started</a>
                     }
@@ -79,6 +128,20 @@
             </div>
         </div>
     </nav>
+
+    @if (AppConfig.IsSelfHosted)
+    {
+        <div class="bg-gradient-to-r from-cyan-600 to-blue-600 text-white px-4 py-2">
+            <div class="max-w-7xl mx-auto flex items-center justify-center text-sm">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                </svg>
+                <span class="font-medium">Self-Hosted Mode</span>
+                <span class="mx-2">-</span>
+                <span>You control the data, you control the risks. All features unlocked.</span>
+            </div>
+        </div>
+    }
 
     <main>
         @RenderBody()
@@ -90,6 +153,22 @@
         </div>
     </footer>
 
+    <script>
+        function toggleMoreMenu(event) {
+            event.stopPropagation();
+            const dropdown = document.getElementById('more-dropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('more-menu');
+            const dropdown = document.getElementById('more-dropdown');
+            if (menu && dropdown && !menu.contains(event.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    </script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

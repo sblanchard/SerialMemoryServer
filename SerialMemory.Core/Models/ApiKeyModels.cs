@@ -182,6 +182,7 @@ public static class ApiKeyGenerator
 {
     private const string Alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private const int KeyLength = 32;
+    private const int LongKeyLength = 48; // For sk_live_ format
 
     /// <summary>
     /// Generates a new API key with the format: sm_{env}_{random}
@@ -193,6 +194,34 @@ public static class ApiKeyGenerator
     {
         var randomPart = GenerateSecureRandom(KeyLength);
         var prefix = $"sm_{environment}_";
+        var key = prefix + randomPart;
+        var hash = ComputeHash(key);
+
+        return (key, hash, prefix);
+    }
+
+    /// <summary>
+    /// Generates a new API key with sk_live_ prefix (Stripe-style format).
+    /// Key format: sk_live_{48 random chars}
+    /// </summary>
+    /// <returns>Tuple of (plaintext key, SHA-256 hash, prefix)</returns>
+    public static (string Key, string Hash, string Prefix) GenerateSkLive()
+    {
+        var randomPart = GenerateSecureRandom(LongKeyLength);
+        const string prefix = "sk_live_";
+        var key = prefix + randomPart;
+        var hash = ComputeHash(key);
+
+        return (key, hash, prefix);
+    }
+
+    /// <summary>
+    /// Generates a test API key with sk_test_ prefix.
+    /// </summary>
+    public static (string Key, string Hash, string Prefix) GenerateSkTest()
+    {
+        var randomPart = GenerateSecureRandom(LongKeyLength);
+        const string prefix = "sk_test_";
         var key = prefix + randomPart;
         var hash = ComputeHash(key);
 

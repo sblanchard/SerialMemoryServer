@@ -7,12 +7,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
-using SerialMemory.Core.Auth;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
-using TenantContext = SerialMemory.Core.Services.TenantContext;
 using SerialMemory.ML;
 using SerialMemory.Mcp.Tools;
 using SerialMemory.EventSourcing.Store;
@@ -36,7 +34,11 @@ var postgresUser = configuration["POSTGRES_USER"] ?? "postgres";
 var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
-// Embedding service configuration - Ollama (local only)
+// Embedding service configuration - OpenAI or Ollama
+var openAiApiKey = configuration["OPENAI_API_KEY"] ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var openAiEmbedModel = configuration["OPENAI_EMBED_MODEL"] ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL") ?? "text-embedding-3-small";
+
+// Ollama fallback
 var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
 var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
 var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
@@ -88,7 +90,7 @@ DebugFileLogger.Log("MCP", "--- End Environment Variables ---");
 
 #region Service Initialization
 
-logger.LogInformation("Initializing Serial Memory MCP Server (C# CORE-like)");
+logger.LogInformation("Initializing SerialMemory MCP Server");
 logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);
 
 // Authenticate with API key to get tenant ID
@@ -131,9 +133,25 @@ IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, t
 DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
 
-// Create embedding service - local Ollama
-IEmbeddingService embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+// Create embedding service - OpenAI preferred, Ollama fallback
+IEmbeddingService embeddingService;
+if (!string.IsNullOrEmpty(openAiApiKey))
+{
+    var openAiClient = new OpenAiClient(
+        apiKey: openAiApiKey,
+        chatModel: "gpt-5-nano-2025-08-07",  // Not used for embeddings
+        embedModel: openAiEmbedModel,
+        embeddingDimension: 1536);
+    embeddingService = openAiClient;
+    logger.LogInformation("Using OpenAI embedding service: {Model} (dim=1536)", openAiEmbedModel);
+    DebugFileLogger.Log("MCP", $"Using OpenAI for embeddings: {openAiEmbedModel}");
+}
+else
+{
+    embeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+    logger.LogInformation("Using local Ollama embedding service: {Model} at {Url} (dim={Dim})", ollamaModel, ollamaUrl, ollamaEmbeddingDim);
+    DebugFileLogger.Log("MCP", $"Using Ollama for embeddings: {ollamaModel} (dim={ollamaEmbeddingDim})");
+}
 
 // Create entity extraction service (Ollama > HTTP > Pattern-based)
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
@@ -190,8 +208,7 @@ await using var stdout = Console.OpenStandardOutput();
 using var reader = new StreamReader(stdin);
 await using var writer = new StreamWriter(stdout) { AutoFlush = true };
 
-string? line;
-while ((line = await reader.ReadLineAsync()) != null)
+while (await reader.ReadLineAsync() is { } line)
 {
     if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -248,7 +265,7 @@ object HandleInitialize()
         protocolVersion = "2024-11-05",
         serverInfo = new
         {
-            name = "serial-memory-server",
+            name = "serialmemory-server",
             version = "2.0.0"
         },
         capabilities = new
@@ -818,16 +835,16 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
 
 async Task<object> HandleMemoryAboutUser(JsonNode? arguments)
 {
-    var userId = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
+    var user = arguments?["user_id"]?.GetValue<string>() ?? "default_user";
 
-    var persona = await kgService.GetUserPersonaAsync(userId);
+    var persona = await kgService.GetUserPersonaAsync(user);
 
     if (persona.Count == 0)
     {
-        return CreateTextResponse($"No persona information found for user: {userId}");
+        return CreateTextResponse($"No persona information found for user: {user}");
     }
 
-    var text = $"User Persona for {userId}:\n\n";
+    var text = $"User Persona for {user}:\n\n";
     foreach (var (attrType, attributes) in persona)
     {
         text += $"**{char.ToUpper(attrType[0]) + attrType[1..]}:**\n";
@@ -850,7 +867,7 @@ async Task<object> HandleInitialiseSession(JsonNode? arguments)
     var clientType = arguments?["client_type"]?.GetValue<string>();
 
     Dictionary<string, object>? metadata = null;
-    if (arguments?["metadata"] is JsonNode metadataNode)
+    if (arguments?["metadata"] is { } metadataNode)
     {
         metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(metadataNode.ToJsonString());
     }
@@ -862,15 +879,12 @@ async Task<object> HandleInitialiseSession(JsonNode? arguments)
 
 async Task<object> HandleEndSession()
 {
-    if (currentSessionId.HasValue)
-    {
-        await kgService.EndConversationSessionAsync(currentSessionId.Value);
-        var oldSession = currentSessionId;
-        currentSessionId = null;
-        return CreateTextResponse($"Conversation session ended: {oldSession}");
-    }
+    if (!currentSessionId.HasValue) return CreateTextResponse("No active conversation session to end.");
+    await kgService.EndConversationSessionAsync(currentSessionId.Value);
+    var oldSession = currentSessionId;
+    currentSessionId = null;
+    return CreateTextResponse($"Conversation session ended: {oldSession}");
 
-    return CreateTextResponse("No active conversation session to end.");
 }
 
 async Task<object> HandleMultiHopSearch(JsonNode? arguments)
@@ -976,9 +990,9 @@ async Task<object> HandleSetUserPersona(JsonNode? arguments)
         throw new ArgumentException($"attribute_type must be one of: {string.Join(", ", validTypes)}");
 
     var confidence = Math.Clamp(arguments?["confidence"]?.GetValue<float>() ?? 1.0f, 0f, 1f);
-    var userId = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
+    var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
 
-    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, userId);
+    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, user);
 
     return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
 }
@@ -1047,9 +1061,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             // Create relationships
             foreach (var rel in relationships)
             {
-                Guid sourceId, targetId;
-
-                if (!entityIdMap.TryGetValue(rel.SourceEntity, out sourceId))
+                if (!entityIdMap.TryGetValue(rel.SourceEntity, out var sourceId))
                 {
                     sourceId = await store.CreateEntityAsync(new Entity
                     {
@@ -1064,7 +1076,7 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     totalEntities++;
                 }
 
-                if (!entityIdMap.TryGetValue(rel.TargetEntity, out targetId))
+                if (!entityIdMap.TryGetValue(rel.TargetEntity, out var targetId))
                 {
                     targetId = await store.CreateEntityAsync(new Entity
                     {
@@ -1159,30 +1171,39 @@ async Task<object> HandleGetGraphStatistics()
 
 object HandleGetModelInfo()
 {
+    var isOpenAi = !string.IsNullOrEmpty(openAiApiKey);
+
     var text = $"## Current Embedding Model\n\n" +
-               $"**Service:** Ollama\n" +
-               $"**Model:** {ollamaModel}\n" +
-               $"**URL:** {ollamaUrl}\n" +
+               $"**Service:** {(isOpenAi ? "OpenAI" : "Ollama")}\n" +
+               $"**Model:** {(isOpenAi ? openAiEmbedModel : ollamaModel)}\n" +
+               (isOpenAi ? "" : $"**URL:** {ollamaUrl}\n") +
                $"**Embedding Dimension:** {embeddingService.EmbeddingDimension}\n\n" +
-               $"## Supported Ollama Models\n\n" +
-               $"| Model | Dimensions | Notes |\n" +
-               $"|-------|------------|-------|\n" +
-               $"| nomic-embed-text | 768 | Default, good quality |\n" +
-               $"| mxbai-embed-large | 1024 | Higher quality, slower |\n" +
-               $"| all-minilm | 384 | Fast, smaller vectors |\n\n" +
+               (isOpenAi
+                   ? $"## OpenAI Embedding Models\n\n" +
+                     $"| Model | Dimensions | Notes |\n" +
+                     $"|-------|------------|-------|\n" +
+                     $"| text-embedding-3-small | 1536 | Default, fast, good quality |\n" +
+                     $"| text-embedding-3-large | 3072 | Higher quality, slower |\n" +
+                     $"| text-embedding-ada-002 | 1536 | Legacy model |\n\n"
+                   : $"## Supported Ollama Models\n\n" +
+                     $"| Model | Dimensions | Notes |\n" +
+                     $"|-------|------------|-------|\n" +
+                     $"| nomic-embed-text | 768 | Default, good quality |\n" +
+                     $"| mxbai-embed-large | 1024 | Higher quality, slower |\n" +
+                     $"| all-minilm | 384 | Fast, smaller vectors |\n\n") +
                $"## How to Switch Models\n\n" +
-               $"1. Pull the new model: `ollama pull <model-name>`\n" +
-               $"2. Update environment variables:\n" +
-               $"   ```\n" +
-               $"   OLLAMA_MODEL=<model-name>\n" +
-               $"   OLLAMA_EMBEDDING_DIM=<dimension>\n" +
-               $"   ```\n" +
-               $"3. If dimension changed, migrate database:\n" +
-               $"   ```sql\n" +
-               $"   -- Set EMBEDDING_DIM in ops/migrate_embedding_dimension.sql\n" +
-               $"   psql -f ops/migrate_embedding_dimension.sql\n" +
-               $"   ```\n" +
-               $"4. Restart MCP server and run `reembed_memories` with `force_all: true`";
+               (isOpenAi
+                   ? $"Set environment variable: `OPENAI_EMBED_MODEL=<model-name>`\n" +
+                     $"Then restart MCP server.\n\n" +
+                     $"To switch to Ollama, unset OPENAI_API_KEY."
+                   : $"1. Pull the new model: `ollama pull <model-name>`\n" +
+                     $"2. Update environment variables:\n" +
+                     $"   ```\n" +
+                     $"   OLLAMA_MODEL=<model-name>\n" +
+                     $"   OLLAMA_EMBEDDING_DIM=<dimension>\n" +
+                     $"   ```\n" +
+                     $"3. If dimension changed, migrate database\n" +
+                     $"4. Restart MCP server and run `reembed_memories` with `force_all: true`");
 
     return CreateTextResponse(text);
 }

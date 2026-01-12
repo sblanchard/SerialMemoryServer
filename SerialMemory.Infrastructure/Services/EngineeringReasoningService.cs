@@ -8,21 +8,14 @@ namespace SerialMemory.Infrastructure.Services;
 /// Rule-based engineering reasoning service that infers risks, conflicts,
 /// and insights from the knowledge graph.
 /// </summary>
-public sealed partial class EngineeringReasoningService : IEngineeringReasoningService
+public sealed partial class EngineeringReasoningService(IKnowledgeGraphStore store) : IEngineeringReasoningService
 {
-    private readonly IKnowledgeGraphStore _store;
-
-    public EngineeringReasoningService(IKnowledgeGraphStore store)
-    {
-        _store = store;
-    }
-
     public async Task<EngineeringAnalysisResult> AnalyzeAsync(
         string? projectFilter = null,
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
 
         // Optionally filter by project
         if (!string.IsNullOrEmpty(projectFilter))
@@ -75,7 +68,7 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
         Guid memoryId,
         CancellationToken cancellationToken = default)
     {
-        var memoryEntities = await _store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
+        var memoryEntities = await store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
         if (memoryEntities.Count == 0)
         {
             return new EngineeringAnalysisResult
@@ -88,7 +81,7 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
 
         // Get all relationships for these entities
         var entityIds = memoryEntities.Select(e => e.Id).ToHashSet();
-        var allRelationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var allRelationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var relationships = allRelationships
             .Where(r => entityIds.Contains(r.SourceEntityId) || entityIds.Contains(r.TargetEntityId))
             .ToList();
@@ -101,7 +94,7 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
             connectedEntityIds.Add(rel.TargetEntityId);
         }
 
-        var allEntities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
+        var allEntities = await store.GetAllEntitiesAsync(10000, cancellationToken);
         var entities = allEntities.Where(e => connectedEntityIds.Contains(e.Id)).ToList();
         var entityMap = entities.ToDictionary(e => e.Id, e => e);
 
@@ -123,8 +116,8 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
     public async Task<List<EngineeringInsight>> DetectPowerIntegrityIssuesAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var entityMap = entities.ToDictionary(e => e.Id, e => e);
         return await DetectPowerIntegrityIssuesAsync(entities, relationships, entityMap, cancellationToken);
     }
@@ -132,8 +125,8 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
     public async Task<List<EngineeringInsight>> DetectSignalIntegrityIssuesAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var entityMap = entities.ToDictionary(e => e.Id, e => e);
         return await DetectSignalIntegrityIssuesAsync(entities, relationships, entityMap, cancellationToken);
     }
@@ -141,8 +134,8 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
     public async Task<List<EngineeringInsight>> DetectDependencyCorruptionAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var entityMap = entities.ToDictionary(e => e.Id, e => e);
         return await DetectDependencyCorruptionAsync(entities, relationships, entityMap, cancellationToken);
     }
@@ -150,8 +143,8 @@ public sealed partial class EngineeringReasoningService : IEngineeringReasoningS
     public async Task<List<EngineeringInsight>> DetectThermalRiskAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var entityMap = entities.ToDictionary(e => e.Id, e => e);
         return await DetectThermalRiskAsync(entities, relationships, entityMap, cancellationToken);
     }

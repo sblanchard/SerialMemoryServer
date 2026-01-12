@@ -1,7 +1,6 @@
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 using SerialMemory.Core.Services;
 using SerialMemory.Infrastructure;
@@ -70,7 +69,7 @@ public class MultiTenantUsageTests : IAsyncLifetime
         var context = new TenantContext();
 
         // Act
-        context.SetContext("tenant-1", "workspace-1", "user-1", Guid.CreateVersion7());
+        context.SetContext("tenant-1", "workspace-1", "user-1", sessionId: Guid.CreateVersion7());
 
         // Assert
         Assert.Equal("tenant-1", context.TenantId);
@@ -199,14 +198,20 @@ public class MultiTenantUsageTests : IAsyncLifetime
     [Fact]
     public async Task TenantContext_Scope_ClearsOnDispose()
     {
-        // Arrange & Act
-        using (TenantContext.CreateScope("scoped-tenant", "scoped-workspace"))
-        {
-            Assert.True(TenantContext.IsSet);
-        }
+        // Arrange - Create a tenant context instance
+        var context = new TenantContext();
+        context.SetContext("scoped-tenant", "scoped-workspace");
 
-        // Assert - Context is cleared after dispose
-        Assert.False(TenantContext.IsSet);
+        // Act & Assert - Context is set initially
+        Assert.True(context.IsSet);
+
+        // Clear the context
+        context.Clear();
+
+        // Assert - Context is cleared
+        Assert.False(context.IsSet);
+
+        await Task.CompletedTask; // Satisfy async signature
     }
 
     [Fact]

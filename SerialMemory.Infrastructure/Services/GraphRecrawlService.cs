@@ -10,28 +10,18 @@ namespace SerialMemory.Infrastructure.Services;
 /// Service for re-crawling memories to extract entities/relationships with new graph schema.
 /// Supports batched processing, retry logic, and resumable jobs.
 /// </summary>
-public sealed class GraphRecrawlService
+public sealed class GraphRecrawlService(
+    string connectionString,
+    IEntityExtractionService entityExtractor,
+    IKnowledgeGraphStore graphStore,
+    ILogger<GraphRecrawlService> logger)
+    : IGraphRecrawlService
 {
-    private readonly string _connectionString;
-    private readonly IEntityExtractionService _entityExtractor;
-    private readonly IKnowledgeGraphStore _graphStore;
-    private readonly ILogger<GraphRecrawlService> _logger;
+    private readonly IKnowledgeGraphStore _graphStore = graphStore;
 
     public const int CurrentGraphVersion = 2;
     public const int DefaultBatchSize = 100;
     public const int MaxRetries = 3;
-
-    public GraphRecrawlService(
-        string connectionString,
-        IEntityExtractionService entityExtractor,
-        IKnowledgeGraphStore graphStore,
-        ILogger<GraphRecrawlService> logger)
-    {
-        _connectionString = connectionString;
-        _entityExtractor = entityExtractor;
-        _graphStore = graphStore;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Creates a new recrawl job for a tenant.
@@ -41,14 +31,14 @@ public sealed class GraphRecrawlService
         int batchSize = DefaultBatchSize,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
 
         var jobId = await conn.QuerySingleAsync<Guid>(
             "SELECT create_recrawl_job(@TenantId, @TargetVersion, @BatchSize)",
             new { TenantId = tenantId, TargetVersion = CurrentGraphVersion, BatchSize = batchSize });
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Created recrawl job {JobId} for tenant {TenantId}, target version {Version}",
             jobId, tenantId, CurrentGraphVersion);
 
@@ -62,7 +52,7 @@ public sealed class GraphRecrawlService
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
 
         // Get job details
@@ -79,20 +69,18 @@ public sealed class GraphRecrawlService
 
         if (job.Status is "completed" or "cancelled")
         {
-            _logger.LogWarning("Job {JobId} already {Status}", jobId, job.Status);
-            return new RecrawlJobResult
-            {
-                JobId = jobId,
-                Status = job.Status,
-                TotalProcessed = job.ProcessedCount,
-                SuccessCount = job.SuccessCount,
-                FailureCount = job.FailureCount
-            };
+            logger.LogWarning("Job {JobId} already {Status}", jobId, job.Status);
+            return new RecrawlJobResult(
+                jobId,
+                job.Status,
+                job.ProcessedCount,
+                job.SuccessCount,
+                job.FailureCount);
         }
 
         // Start the job
         await conn.ExecuteAsync("SELECT start_recrawl_job(@JobId)", new { JobId = jobId });
-        _logger.LogInformation("Started recrawl job {JobId}", jobId);
+        logger.LogInformation("Started recrawl job {JobId}", jobId);
 
         var totalProcessed = 0;
         var successCount = 0;
@@ -116,11 +104,11 @@ public sealed class GraphRecrawlService
 
                 if (memories.Count == 0)
                 {
-                    _logger.LogInformation("No more memories to process for job {JobId}", jobId);
+                    logger.LogInformation("No more memories to process for job {JobId}", jobId);
                     break;
                 }
 
-                _logger.LogInformation(
+                logger.LogInformation(
                     "Processing batch of {Count} memories for job {JobId}",
                     memories.Count, jobId);
 
@@ -144,19 +132,17 @@ public sealed class GraphRecrawlService
         {
             // Complete the job
             await conn.ExecuteAsync("SELECT complete_recrawl_job(@JobId)", new { JobId = jobId });
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Completed recrawl job {JobId}: {Success} succeeded, {Failed} failed",
                 jobId, successCount, failureCount);
         }
 
-        return new RecrawlJobResult
-        {
-            JobId = jobId,
-            Status = failureCount > 0 && successCount == 0 ? "failed" : "completed",
-            TotalProcessed = totalProcessed,
-            SuccessCount = successCount,
-            FailureCount = failureCount
-        };
+        return new RecrawlJobResult(
+            jobId,
+            failureCount > 0 && successCount == 0 ? "failed" : "completed",
+            totalProcessed,
+            successCount,
+            failureCount);
     }
 
     /// <summary>
@@ -178,7 +164,7 @@ public sealed class GraphRecrawlService
         try
         {
             // Extract entities and relationships using software-aware extractor
-            var (entities, relationships) = await _entityExtractor.ExtractAllAsync(
+            var (entities, relationships) = await entityExtractor.ExtractAllAsync(
                 memory.Content, cancellationToken);
 
             // Store entities with new version (don't delete old ones)
@@ -242,7 +228,7 @@ public sealed class GraphRecrawlService
                     TargetVersion = targetVersion
                 });
 
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Processed memory {MemoryId}: {Entities} entities, {Relationships} relationships",
                 memory.MemoryId, entityCount, relationshipCount);
 
@@ -250,7 +236,7 @@ public sealed class GraphRecrawlService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.MemoryId);
+            logger.LogWarning(ex, "Failed to process memory {MemoryId}", memory.MemoryId);
 
             // Mark as failed
             await conn.ExecuteAsync(
@@ -388,7 +374,7 @@ public sealed class GraphRecrawlService
         Guid tenantId,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
 
         var stats = await conn.QuerySingleAsync<RecrawlStatistics>(
@@ -406,7 +392,7 @@ public sealed class GraphRecrawlService
         int maxRetries = 1,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
 
         // Get failed memories that can be retried
@@ -435,7 +421,7 @@ public sealed class GraphRecrawlService
             retried++;
         }
 
-        _logger.LogInformation("Queued {Count} failed memories for retry", retried);
+        logger.LogInformation("Queued {Count} failed memories for retry", retried);
         return retried;
     }
 
@@ -472,27 +458,3 @@ public sealed class GraphRecrawlService
     #endregion
 }
 
-/// <summary>
-/// Result of a recrawl job execution.
-/// </summary>
-public sealed class RecrawlJobResult
-{
-    public Guid JobId { get; set; }
-    public string Status { get; set; } = "";
-    public int TotalProcessed { get; set; }
-    public int SuccessCount { get; set; }
-    public int FailureCount { get; set; }
-}
-
-/// <summary>
-/// Statistics about recrawl progress.
-/// </summary>
-public sealed class RecrawlStatistics
-{
-    public long TotalMemories { get; set; }
-    public long Version1Count { get; set; }
-    public long Version2Count { get; set; }
-    public long NeedsRecrawl { get; set; }
-    public int ActiveJobs { get; set; }
-    public long FailedExtractions { get; set; }
-}

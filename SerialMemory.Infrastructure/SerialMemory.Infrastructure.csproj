@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
@@ -8,19 +8,22 @@
     <ItemGroup>
         <ProjectReference Include="..\SerialMemory.Core\SerialMemory.Core.csproj" />
         <ProjectReference Include="..\SerialMemory.Contracts\SerialMemory.Contracts.csproj" />
+        <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Dapper" Version="2.1.35" />
+        <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
+        <PackageReference Include="Azure.Core" Version="1.50.0" />
+        <PackageReference Include="Dapper" Version="2.1.66" />
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
-        <PackageReference Include="MassTransit" Version="8.5.5" />
-        <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.5" />
-        <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.2.1" />
+        <PackageReference Include="MassTransit" Version="8.5.6" />
+        <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.6" />
+        <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
         <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.2.1" />
-        <PackageReference Include="Npgsql" Version="9.0.0" />
-        <PackageReference Include="Pgvector" Version="0.3.0" />
-        <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
-        <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
+        <PackageReference Include="Npgsql" Version="10.0.0" />
+        <PackageReference Include="Pgvector" Version="0.3.2" />
+        <PackageReference Include="RabbitMQ.Client" Version="7.2.0" />
+        <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
         <PackageReference Include="Stripe.net" Version="47.3.0" />
     </ItemGroup>
 </Project>

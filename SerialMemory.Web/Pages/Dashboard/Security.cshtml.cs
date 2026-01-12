@@ -1,19 +1,26 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class SecurityModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
+    private readonly AppConfig _appConfig;
 
-    public SecurityModel(IHttpClientFactory httpClientFactory)
+    public SecurityModel(ApiClientService apiClient, AppConfig appConfig)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
+        _appConfig = appConfig;
     }
+
+    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
+
+    // SignalR access token (from InternalTokenMiddleware)
+    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
 
     // Tenant Isolation
     public Guid TenantId { get; set; }
@@ -47,17 +54,9 @@ public sealed class SecurityModel : PageModel
     {
         await LoadSecurityDataAsync();
 
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            LastVerificationResult = "Unauthorized - no token available";
-            return Page();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient("Api");
 
             var response = await client.PostAsJsonAsync("/api/proof/verify", new { action });
 
@@ -84,7 +83,7 @@ public sealed class SecurityModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient("Api");
 
             var isolationTask = client.GetAsync("/api/proof/isolation");
             var integrityTask = client.GetAsync("/api/proof/integrity");
@@ -168,9 +167,19 @@ public sealed class SecurityModel : PageModel
         TamperDetected = false;
         IntegrityStatus = "OK";
 
-        Region = "US-East";
-        RetentionPolicy = "90 days";
-        ComplianceProof = "Compliant";
+        // Self-hosted shows local/self-managed, SaaS shows cloud regions
+        if (_appConfig.IsSelfHosted)
+        {
+            Region = "Local (Self-Hosted)";
+            RetentionPolicy = "Self-Managed";
+            ComplianceProof = "Self-Managed";
+        }
+        else
+        {
+            Region = "US-East";
+            RetentionPolicy = "90 days";
+            ComplianceProof = "Compliant";
+        }
         ResidencyStatus = "OK";
     }
 
@@ -179,11 +188,6 @@ public sealed class SecurityModel : PageModel
         if (isOk) return "OK";
         if (isWarning) return "Warning";
         return "Critical";
-    }
-
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
     }
 
     // Response DTOs

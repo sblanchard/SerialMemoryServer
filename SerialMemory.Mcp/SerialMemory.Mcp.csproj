@@ -10,7 +10,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SerialMemory.Core\SerialMemory.Core.csproj" />
     <ProjectReference Include="..\SerialMemory.Infrastructure\SerialMemory.Infrastructure.csproj" />
     <ProjectReference Include="..\SerialMemory.ML\SerialMemory.ML.csproj" />
     <ProjectReference Include="..\SerialMemory.EventSourcing\SerialMemory.EventSourcing.csproj" />
@@ -18,16 +17,16 @@
 
   <ItemGroup>
     <!-- MCP Server Dependencies -->
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
 
     <!-- Database -->
-    <PackageReference Include="Npgsql" Version="9.0.0" />
-    <PackageReference Include="Pgvector" Version="0.3.0" />
+    <PackageReference Include="Npgsql" Version="10.0.0" />
+    <PackageReference Include="Pgvector" Version="0.3.2" />
 
     <!-- Legacy Redis support (optional) -->
-    <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
+    <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
   </ItemGroup>
 
 </Project>
