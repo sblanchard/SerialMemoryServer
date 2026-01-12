@@ -1,0 +1,291 @@
+@page "/dashboard/timeline"
+@model SerialMemory.Web.Pages.Dashboard.TimelineModel
+@{
+    ViewData["Title"] = "Timeline";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Memory Timeline</h1>
+        <p class="mt-2 text-graphite">Time travel through memory states and confidence drift.</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="mb-6 bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded-lg">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    <!-- Stats Overview -->
+    @if (Model.Stats != null)
+    {
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+            <div class="card">
+                <div class="text-sm font-medium text-graphite">Total Events</div>
+                <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.Stats.TotalEvents.ToString("N0")</div>
+            </div>
+            <div class="card">
+                <div class="text-sm font-medium text-graphite">Events Today</div>
+                <div class="mt-1 text-2xl font-semibold text-cyan">@Model.Stats.EventsToday.ToString("N0")</div>
+            </div>
+            <div class="card">
+                <div class="text-sm font-medium text-graphite">Unique Memories</div>
+                <div class="mt-1 text-2xl font-semibold text-soft-white">@Model.Stats.UniqueMemories.ToString("N0")</div>
+            </div>
+            <div class="card">
+                <div class="text-sm font-medium text-graphite">First Event</div>
+                <div class="mt-1 text-lg font-semibold text-soft-white">@(Model.Stats.EarliestEvent?.ToString("MMM dd") ?? "—")</div>
+            </div>
+            <div class="card">
+                <div class="text-sm font-medium text-graphite">Latest Event</div>
+                <div class="mt-1 text-lg font-semibold text-soft-white">@(Model.Stats.LatestEvent?.ToString("MMM dd HH:mm") ?? "—")</div>
+            </div>
+        </div>
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left Column: Search & Controls -->
+        <div class="lg:col-span-1 space-y-6">
+            <!-- Load Memory Timeline -->
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">View Memory Timeline</h3>
+                <form method="post" asp-page-handler="LoadTimeline">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-graphite mb-2">Memory ID</label>
+                        <input type="text" name="MemoryId" value="@Model.MemoryId" placeholder="Enter memory GUID"
+                               class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm font-mono focus:outline-none focus:border-electric">
+                    </div>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md text-sm font-medium w-full">
+                        Load Timeline
+                    </button>
+                </form>
+            </div>
+
+            @if (!string.IsNullOrEmpty(Model.MemoryId))
+            {
+                <!-- Time Travel Controls -->
+                <div class="card">
+                    <h3 class="text-lg font-semibold text-soft-white mb-4">Time Travel</h3>
+                    <form method="post" asp-page-handler="TimeTravel">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="MemoryId" value="@Model.MemoryId" />
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-graphite mb-2">By Date/Time</label>
+                            <input type="datetime-local" name="SnapshotDate"
+                                   class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm focus:outline-none focus:border-electric">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-graphite mb-2">Or By Sequence Number</label>
+                            <input type="number" name="SnapshotSequence" placeholder="e.g., 12345"
+                                   class="w-full bg-slate border border-slate rounded-md px-3 py-2 text-soft-white text-sm font-mono focus:outline-none focus:border-electric">
+                        </div>
+                        <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md text-sm font-medium w-full transition">
+                            Travel to Point
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Current State -->
+                @if (Model.CurrentSnapshot != null)
+                {
+                    <div class="card">
+                        <h3 class="text-lg font-semibold text-soft-white mb-4">Current State</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-graphite">Layer</span>
+                                <span class="text-soft-white">@Model.CurrentSnapshot.Layer</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-graphite">Confidence</span>
+                                <span class="text-cyan">@((Model.CurrentSnapshot.Confidence * 100).ToString("F1"))%</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-graphite">Status</span>
+                                <span class="@(Model.CurrentSnapshot.IsActive ? "text-green-400" : "text-red-400")">
+                                    @(Model.CurrentSnapshot.IsActive ? "Active" : "Inactive")
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-graphite">Sequence</span>
+                                <span class="text-soft-white font-mono">@Model.CurrentSnapshot.SequenceNumber</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <!-- Right Column: Timeline & Snapshots -->
+        <div class="lg:col-span-2 space-y-6">
+            @if (Model.HistoricalSnapshot != null)
+            {
+                <!-- Historical Snapshot Comparison -->
+                <div class="card border-l-4 border-purple-500">
+                    <div class="flex justify-between items-start mb-4">
+                        <h3 class="text-lg font-semibold text-soft-white">Historical Snapshot</h3>
+                        <span class="text-xs text-graphite">Seq #@Model.HistoricalSnapshot.SequenceNumber</span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <div class="text-xs text-graphite mb-1">Historical (@Model.HistoricalSnapshot.SnapshotAt.ToString("g"))</div>
+                            <div class="bg-slate/30 rounded-md p-3 text-sm text-soft-white">@Model.HistoricalSnapshot.Content</div>
+                        </div>
+                        @if (Model.CurrentSnapshot != null)
+                        {
+                            <div>
+                                <div class="text-xs text-graphite mb-1">Current</div>
+                                <div class="bg-slate/30 rounded-md p-3 text-sm text-soft-white">@Model.CurrentSnapshot.Content</div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="grid grid-cols-4 gap-4 text-center mb-4">
+                        <div>
+                            <div class="text-xs text-graphite">Layer</div>
+                            <div class="text-sm text-soft-white">@Model.HistoricalSnapshot.Layer</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Confidence</div>
+                            <div class="text-sm text-cyan">@((Model.HistoricalSnapshot.Confidence * 100).ToString("F1"))%</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Status</div>
+                            <div class="text-sm @(Model.HistoricalSnapshot.IsActive ? "text-green-400" : "text-red-400")">
+                                @(Model.HistoricalSnapshot.IsActive ? "Active" : "Inactive")
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-graphite">Hash</div>
+                            <div class="text-sm text-soft-white font-mono truncate">@(Model.HistoricalSnapshot.ContentHash?[..12] ?? "—")...</div>
+                        </div>
+                    </div>
+
+                    <form method="post" asp-page-handler="RestoreSnapshot" onsubmit="return confirm('Restore memory to this historical state?');">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="memoryId" value="@Model.HistoricalSnapshot.MemoryId" />
+                        <input type="hidden" name="sequence" value="@Model.HistoricalSnapshot.SequenceNumber" />
+                        <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                            Restore to This State
+                        </button>
+                    </form>
+                </div>
+            }
+
+            @if (Model.ConfidenceDrift.Count > 0)
+            {
+                <!-- Confidence Drift Chart -->
+                <div class="card">
+                    <h3 class="text-lg font-semibold text-soft-white mb-4">Confidence Drift Over Time</h3>
+                    <div class="h-40 flex items-end gap-1">
+                        @{
+                            var maxConf = Model.ConfidenceDrift.Max(p => p.Confidence);
+                            var minConf = Model.ConfidenceDrift.Min(p => p.Confidence);
+                            var range = Math.Max(maxConf - minConf, 0.1);
+                        }
+                        @foreach (var point in Model.ConfidenceDrift.TakeLast(50))
+                        {
+                            var height = ((point.Confidence - minConf) / range) * 100;
+                            var color = point.EventType switch
+                            {
+                                "MemoryDecayed" => "bg-yellow-900/300",
+                                "MemoryReinforced" => "bg-green-900/300",
+                                "MemoryCreated" => "bg-cyan",
+                                _ => "bg-electric"
+                            };
+                            <div class="flex-1 @color rounded-t hover:opacity-80 transition" style="height: @(Math.Max(5, height))%"
+                                 title="@point.Timestamp.ToString("g"): @((point.Confidence * 100).ToString("F1"))% (@point.EventType)"></div>
+                        }
+                    </div>
+                    <div class="flex justify-between text-xs text-graphite mt-2">
+                        <span>@Model.ConfidenceDrift.First().Timestamp.ToString("MMM dd")</span>
+                        <span>@Model.ConfidenceDrift.Last().Timestamp.ToString("MMM dd")</span>
+                    </div>
+                    <div class="flex gap-4 mt-4 text-xs">
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-cyan rounded"></div> Created</div>
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-green-900/300 rounded"></div> Reinforced</div>
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-yellow-900/300 rounded"></div> Decayed</div>
+                        <div class="flex items-center gap-1"><div class="w-3 h-3 bg-electric rounded"></div> Other</div>
+                    </div>
+                </div>
+            }
+
+            <!-- Event Timeline -->
+            <div class="card">
+                <h3 class="text-lg font-semibold text-soft-white mb-4">
+                    @(string.IsNullOrEmpty(Model.MemoryId) ? "Global Event Timeline" : "Memory Event Timeline")
+                </h3>
+                <div class="space-y-3 max-h-[500px] overflow-y-auto">
+                    @foreach (var entry in Model.TimelineEntries)
+                    {
+                        <div class="border-l-2 @GetEventColor(entry.EventType) pl-4 py-2">
+                            <div class="flex justify-between items-start">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-medium text-soft-white">@entry.EventType</span>
+                                    @if (entry.ConfidenceBefore.HasValue && entry.ConfidenceAfter.HasValue)
+                                    {
+                                        var diff = entry.ConfidenceAfter.Value - entry.ConfidenceBefore.Value;
+                                        <span class="text-xs @(diff >= 0 ? "text-green-400" : "text-red-400")">
+                                            @(diff >= 0 ? "+" : "")@((diff * 100).ToString("F1"))%
+                                        </span>
+                                    }
+                                </div>
+                                <span class="text-xs text-graphite font-mono">seq #@entry.SequenceNumber</span>
+                            </div>
+                            <div class="text-xs text-graphite mt-1">
+                                @entry.Timestamp.ToString("MMM dd HH:mm:ss")
+                                @if (!string.IsNullOrEmpty(entry.ActorId))
+                                {
+                                    <span>by @entry.ActorId</span>
+                                }
+                            </div>
+                            @if (string.IsNullOrEmpty(Model.MemoryId))
+                            {
+                                <a href="/dashboard/timeline?id=@entry.MemoryId" class="text-xs text-electric hover:underline font-mono mt-1 block">
+                                    @entry.MemoryId.ToString()[..8]...
+                                </a>
+                            }
+                            @if (!string.IsNullOrEmpty(entry.Summary))
+                            {
+                                <div class="text-sm text-soft-white mt-1">@entry.Summary</div>
+                            }
+                        </div>
+                    }
+                    @if (Model.TimelineEntries.Count == 0)
+                    {
+                        <div class="text-center text-graphite py-8">
+                            @(string.IsNullOrEmpty(Model.MemoryId) ? "No events in timeline" : "No events for this memory")
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@functions {
+    string GetEventColor(string eventType)
+    {
+        return eventType switch
+        {
+            "MemoryCreated" => "border-green-500",
+            "MemoryUpdated" => "border-blue-500",
+            "MemoryDecayed" => "border-yellow-500",
+            "MemoryReinforced" => "border-cyan-500",
+            "MemoryMerged" => "border-purple-500",
+            "MemoryInvalidated" => "border-red-500",
+            "MemorySplit" => "border-orange-500",
+            "MemoryArchived" => "border-gray-500",
+            _ => "border-slate"
+        };
+    }
+}

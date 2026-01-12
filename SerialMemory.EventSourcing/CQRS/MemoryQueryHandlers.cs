@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Retrieval;
 

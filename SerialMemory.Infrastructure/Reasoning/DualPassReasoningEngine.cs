@@ -21,6 +21,16 @@ public sealed class DualPassReasoningEngine(
 {
     private readonly IHybridRetrievalEngine _retrievalEngine = retrievalEngine;
 
+    /// <summary>
+    /// Opens a connection with internal admin role for reasoning operations.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
     // Semantic similarity thresholds for reasoning
     private const float HighConfidenceThreshold = 0.85f;
     private const float MediumConfidenceThreshold = 0.70f;
@@ -696,7 +706,7 @@ public sealed class DualPassReasoningEngine(
         int pass2Duration,
         CancellationToken cancellationToken)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         var inputHash = ComputeHash(JsonSerializer.Serialize(input));
         var outputHash = ComputeHash(JsonSerializer.Serialize(finalOutput));
@@ -735,7 +745,7 @@ public sealed class DualPassReasoningEngine(
         Guid reasoningId,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var connection = await OpenInternalConnectionAsync(cancellationToken);
 
         const string sql = """
 

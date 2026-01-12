@@ -56,6 +56,18 @@ public interface IPowerUserService
         float? minSeverity = null,
         CancellationToken ct = default);
 
+    /// <summary>Get list of conflicts.</summary>
+    Task<List<MemoryConflict>> GetConflictsAsync(
+        int limit = 100,
+        CancellationToken ct = default);
+
+    /// <summary>Resolve a conflict with given resolution strategy.</summary>
+    Task ResolveConflictAsync(
+        Guid conflictId,
+        string resolution,
+        Guid? winnerId = null,
+        CancellationToken ct = default);
+
     /// <summary>Get conflicts for specific memory.</summary>
     Task<List<MemoryConflict>> GetMemoryConflictsAsync(
         Guid memoryId,
@@ -82,6 +94,11 @@ public interface IPowerUserService
 
     /// <summary>Get raw event trace for memory.</summary>
     Task<RawEventTrace> GetRawTraceAsync(
+        Guid memoryId,
+        CancellationToken ct = default);
+
+    /// <summary>Get comprehensive trace detail including memory content, events, and lineage.</summary>
+    Task<FullTraceDetail> GetFullTraceAsync(
         Guid memoryId,
         CancellationToken ct = default);
 
@@ -210,6 +227,9 @@ public sealed class MemoryConflict
     public bool IsResolved { get; init; }
     public Guid? ResolvedBy { get; init; }
     public string? Resolution { get; init; }
+
+    /// <summary>Status string for API compatibility.</summary>
+    public string Status => IsResolved ? "resolved" : "unresolved";
 }
 
 public sealed class ConflictCluster
@@ -238,6 +258,75 @@ public sealed class ConflictResolution
     public bool Success { get; init; }
     public string? Error { get; init; }
     public DateTimeOffset ResolvedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+// ==========================================
+// FULL TRACE DETAIL MODEL
+// ==========================================
+
+/// <summary>
+/// Comprehensive trace detail for the dashboard.
+/// Includes memory metadata, events, timeline, and lineage.
+/// </summary>
+public sealed class FullTraceDetail
+{
+    public Guid MemoryId { get; init; }
+    public string Content { get; init; } = "";
+    public string Layer { get; init; } = "";
+    public double Confidence { get; init; }
+    public bool IsActive { get; init; } = true;
+    public string? ContentHash { get; init; }
+    public string? Source { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset? UpdatedAt { get; init; }
+
+    /// <summary>Events from memory_events table.</summary>
+    public List<TraceEventDetail> Events { get; init; } = [];
+
+    /// <summary>Parent memory IDs (causal parents).</summary>
+    public List<Guid> CausalParents { get; init; } = [];
+
+    /// <summary>Child memory IDs that reference this memory as parent.</summary>
+    public List<Guid> Descendants { get; init; } = [];
+
+    /// <summary>Timeline snapshots from memory_timeline.</summary>
+    public List<TimelineSnapshot> Timeline { get; init; } = [];
+
+    /// <summary>Conflicts involving this memory.</summary>
+    public List<ConflictSummary> Conflicts { get; init; } = [];
+
+    /// <summary>Raw JSON representation of the memory.</summary>
+    public string RawJson { get; init; } = "{}";
+}
+
+public sealed class TraceEventDetail
+{
+    public Guid EventId { get; init; }
+    public long SequenceNumber { get; init; }
+    public string EventType { get; init; } = "";
+    public DateTimeOffset Timestamp { get; init; }
+    public string? ActorId { get; init; }
+    public string? Reason { get; init; }
+    public string PayloadJson { get; init; } = "{}";
+}
+
+public sealed class TimelineSnapshot
+{
+    public Guid Id { get; init; }
+    public DateTimeOffset SnapshotAt { get; init; }
+    public string EventType { get; init; } = "";
+    public string Layer { get; init; } = "";
+    public decimal Confidence { get; init; }
+    public string? ContentPreview { get; init; }
+}
+
+public sealed class ConflictSummary
+{
+    public Guid ConflictId { get; init; }
+    public Guid OtherMemoryId { get; init; }
+    public float Severity { get; init; }
+    public string ConflictType { get; init; } = "";
+    public bool IsResolved { get; init; }
 }
 
 // ==========================================

@@ -29,6 +29,31 @@ public sealed class AuditLogService : IAuditLogService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Opens a connection with tenant context for RLS.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenTenantConnectionAsync(string tenantId, CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync(
+            """
+            SELECT set_config('app.tenant_id', @TenantId, false);
+            SELECT set_config('app.current_tenant_id', @TenantId, false);
+            """,
+            new { TenantId = tenantId });
+        return conn;
+    }
+
+    /// <summary>
+    /// Opens a connection with internal admin role for verification operations.
+    /// </summary>
+    private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
+    {
+        var conn = await _dataSource.OpenConnectionAsync(ct);
+        await conn.ExecuteAsync("SELECT set_config('app.role', 'internal_admin', false)");
+        return conn;
+    }
+
     public async Task<AuditLogEntry> AppendAsync(
         string tenantId,
         string workspaceId,
@@ -37,7 +62,7 @@ public sealed class AuditLogService : IAuditLogService
         Dictionary<string, object>? data = null,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var conn = await OpenTenantConnectionAsync(tenantId, cancellationToken);
 
         // Get current billing cycle ID
         var billingCycleId = await conn.QueryFirstOrDefaultAsync<Guid?>(
@@ -81,7 +106,7 @@ public sealed class AuditLogService : IAuditLogService
         Guid billingCycleId,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var conn = await OpenInternalConnectionAsync(cancellationToken);
 
         // Get billing cycle info
         var cycleInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(
@@ -154,7 +179,7 @@ public sealed class AuditLogService : IAuditLogService
         int? limit = null,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var conn = await OpenInternalConnectionAsync(cancellationToken);
 
         var entries = await conn.QueryAsync<AuditLogDto>(
             """
@@ -178,7 +203,7 @@ public sealed class AuditLogService : IAuditLogService
         DateTimeOffset toDate,
         CancellationToken cancellationToken = default)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var conn = await OpenTenantConnectionAsync(tenantId, cancellationToken);
 
         var entries = await conn.QueryAsync<AuditLogDto>(
             """

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using SerialMemory.Core.Telemetry;
 using Xunit;
@@ -30,16 +29,15 @@ public class TelemetryTests : IDisposable
         };
 
         // Capture counter measurements
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
+        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             var key = GetMetricKey(instrument.Name, tags);
-            if (!_counterValues.ContainsKey(key))
-                _counterValues[key] = 0;
+            _counterValues.TryAdd(key, 0);
             _counterValues[key] += measurement;
         });
 
         // Capture histogram measurements
-        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, state) =>
+        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
         {
             var key = GetMetricKey(instrument.Name, tags);
             if (!_histogramValues.ContainsKey(key))

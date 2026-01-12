@@ -1,18 +1,18 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
-public sealed class ReasoningModel : PageModel
+public sealed class ReasoningModel : DashboardPageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public ReasoningModel(IHttpClientFactory httpClientFactory)
+    public ReasoningModel(ApiClientService apiClient, AppConfig appConfig)
+        : base(appConfig)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -33,14 +33,19 @@ public sealed class ReasoningModel : PageModel
     public IReadOnlyList<ReasoningInsight> Insights { get; set; } = [];
     public IReadOnlyList<string> Projects { get; set; } = [];
     public IReadOnlyList<RecentMemory> RecentMemories { get; set; } = [];
+    public IReadOnlyList<ReasoningRun> ReasoningRuns { get; set; } = [];
     public bool IsLoading { get; set; }
     public string? ErrorMessage { get; set; }
     public bool IsSampleData { get; set; }
+
+    [BindProperty(SupportsGet = true)]
+    public Guid? SelectedRunId { get; set; }
 
     public async Task OnGetAsync()
     {
         await LoadProjectsAsync();
         await LoadRecentMemoriesAsync();
+        await LoadReasoningRunsAsync();
 
         if (!string.IsNullOrEmpty(Project) || MemoryId.HasValue)
         {
@@ -49,6 +54,34 @@ public sealed class ReasoningModel : PageModel
         else
         {
             LoadSampleInsights();
+        }
+    }
+
+    private async Task LoadReasoningRunsAsync()
+    {
+        try
+        {
+            // Use Dashboard API's reasoning executions endpoint
+            var client = _apiClient.CreateClient("DashboardApi");
+            var response = await client.GetAsync("/api/reasoning/executions?limit=20");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ReasoningExecutionsResponse>();
+                ReasoningRuns = result?.Executions.Select(e => new ReasoningRun
+                {
+                    Id = e.Id,
+                    Scope = e.InputType + (string.IsNullOrEmpty(e.InputReference) ? "" : $": {e.InputReference}"),
+                    StartedAt = e.StartedAt ?? e.CreatedAt,
+                    CompletedAt = e.CompletedAt,
+                    DurationMs = e.TotalDurationMs,
+                    StepCount = e.ModelsUsed,
+                    Status = e.Status
+                }).ToList() ?? [];
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Runs list not critical, just leave empty
         }
     }
 
@@ -70,7 +103,7 @@ public sealed class ReasoningModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient("Api");
 
             var response = await client.GetAsync("/api/memories/recent?limit=10");
             if (response.IsSuccessStatusCode)
@@ -99,7 +132,7 @@ public sealed class ReasoningModel : PageModel
         try
         {
             IsLoading = true;
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient("Api");
 
             // Get recent traces to find the latest one with findings
             var tracesResponse = await client.GetAsync("/api/reasoning/traces?limit=10");
@@ -287,11 +320,6 @@ public sealed class ReasoningModel : PageModel
         new RecentMemory { Id = Guid.NewGuid(), Content = "API rate limiting implementation", CreatedAt = DateTimeOffset.UtcNow.AddHours(-5) }
     ];
 
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
-    }
-
     public sealed class ReasoningInsight
     {
         public Guid Id { get; init; }
@@ -373,5 +401,47 @@ public sealed class ReasoningModel : PageModel
         public string? CodeSnippet { get; init; }
         public float Confidence { get; init; }
         public string? Recommendation { get; init; }
+    }
+
+    // Reasoning Runs DTOs
+    public sealed class ReasoningRun
+    {
+        public Guid Id { get; init; }
+        public string Scope { get; init; } = "";
+        public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
+        public int? DurationMs { get; init; }
+        public int StepCount { get; init; }
+        public string Status { get; init; } = "";
+    }
+
+    private sealed class ReasoningRunsResponse
+    {
+        public IReadOnlyList<ReasoningRun> Runs { get; init; } = [];
+    }
+
+    // New DTOs for Dashboard API reasoning endpoints
+    private sealed class ReasoningExecutionsResponse
+    {
+        public IReadOnlyList<ReasoningExecutionDto> Executions { get; init; } = [];
+        public int Count { get; init; }
+    }
+
+    private sealed class ReasoningExecutionDto
+    {
+        public Guid Id { get; init; }
+        public string InputType { get; init; } = "";
+        public string? InputReference { get; init; }
+        public string Status { get; init; } = "";
+        public DateTimeOffset? StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
+        public int ModelsUsed { get; init; }
+        public int SuccessfulModels { get; init; }
+        public int TotalDurationMs { get; init; }
+        public float OverallConfidence { get; init; }
+        public int InsightCount { get; init; }
+        public int DisagreementCount { get; init; }
+        public string? ErrorMessage { get; init; }
+        public DateTimeOffset CreatedAt { get; init; }
     }
 }

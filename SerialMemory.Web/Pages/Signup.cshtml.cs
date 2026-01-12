@@ -42,7 +42,8 @@ public sealed class SignupModel : PageModel
 
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            // Use Dashboard API - that's where /signup endpoint lives
+            var client = _httpClientFactory.CreateClient("DashboardApi");
 
             // API expects TenantName, not OrganizationName
             var signupRequest = new

@@ -7,6 +7,7 @@
 
 CREATE TABLE IF NOT EXISTS mind_confidence_observations (
     id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
     operation_type VARCHAR(100) NOT NULL,
     predicted_confidence REAL NOT NULL CHECK (predicted_confidence >= 0 AND predicted_confidence <= 1),
     actual_accuracy REAL CHECK (actual_accuracy >= 0 AND actual_accuracy <= 1),
@@ -23,8 +24,9 @@ CREATE TABLE IF NOT EXISTS mind_confidence_observations (
     CONSTRAINT valid_drift CHECK (drift IS NULL OR (drift >= -1 AND drift <= 1))
 );
 
-CREATE INDEX idx_confidence_obs_timestamp ON mind_confidence_observations(timestamp DESC);
-CREATE INDEX idx_confidence_obs_operation ON mind_confidence_observations(operation_type, timestamp DESC);
+CREATE INDEX idx_confidence_obs_tenant ON mind_confidence_observations(tenant_id);
+CREATE INDEX idx_confidence_obs_timestamp ON mind_confidence_observations(tenant_id, timestamp DESC);
+CREATE INDEX idx_confidence_obs_operation ON mind_confidence_observations(tenant_id, operation_type, timestamp DESC);
 CREATE INDEX idx_confidence_obs_memory ON mind_confidence_observations(memory_id) WHERE memory_id IS NOT NULL;
 
 -- ==========================================
@@ -33,6 +35,7 @@ CREATE INDEX idx_confidence_obs_memory ON mind_confidence_observations(memory_id
 
 CREATE TABLE IF NOT EXISTS mind_hallucination_events (
     id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
     memory_id UUID REFERENCES memories(id),
     type VARCHAR(50) NOT NULL,
     severity REAL NOT NULL CHECK (severity >= 0 AND severity <= 1),
@@ -54,10 +57,11 @@ CREATE TABLE IF NOT EXISTS mind_hallucination_events (
     ))
 );
 
-CREATE INDEX idx_hallucination_detected ON mind_hallucination_events(detected_at DESC);
+CREATE INDEX idx_hallucination_tenant ON mind_hallucination_events(tenant_id);
+CREATE INDEX idx_hallucination_detected ON mind_hallucination_events(tenant_id, detected_at DESC);
 CREATE INDEX idx_hallucination_memory ON mind_hallucination_events(memory_id) WHERE memory_id IS NOT NULL;
-CREATE INDEX idx_hallucination_unresolved ON mind_hallucination_events(severity DESC) WHERE NOT resolved;
-CREATE INDEX idx_hallucination_type ON mind_hallucination_events(type, detected_at DESC);
+CREATE INDEX idx_hallucination_unresolved ON mind_hallucination_events(tenant_id, severity DESC) WHERE NOT resolved;
+CREATE INDEX idx_hallucination_type ON mind_hallucination_events(tenant_id, type, detected_at DESC);
 
 -- ==========================================
 -- CONTRADICTION EVENTS
@@ -65,6 +69,7 @@ CREATE INDEX idx_hallucination_type ON mind_hallucination_events(type, detected_
 
 CREATE TABLE IF NOT EXISTS mind_contradiction_events (
     id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
     memory_a UUID NOT NULL REFERENCES memories(id),
     memory_b UUID NOT NULL REFERENCES memories(id),
     type VARCHAR(50) NOT NULL,
@@ -87,14 +92,16 @@ CREATE TABLE IF NOT EXISTS mind_contradiction_events (
     CONSTRAINT different_memories CHECK (memory_a != memory_b)
 );
 
-CREATE INDEX idx_contradiction_detected ON mind_contradiction_events(detected_at DESC);
+CREATE INDEX idx_contradiction_tenant ON mind_contradiction_events(tenant_id);
+CREATE INDEX idx_contradiction_detected ON mind_contradiction_events(tenant_id, detected_at DESC);
 CREATE INDEX idx_contradiction_memory_a ON mind_contradiction_events(memory_a);
 CREATE INDEX idx_contradiction_memory_b ON mind_contradiction_events(memory_b);
-CREATE INDEX idx_contradiction_unresolved ON mind_contradiction_events(severity DESC) WHERE status != 'Resolved';
-CREATE INDEX idx_contradiction_type ON mind_contradiction_events(type, detected_at DESC);
+CREATE INDEX idx_contradiction_unresolved ON mind_contradiction_events(tenant_id, severity DESC) WHERE status != 'Resolved';
+CREATE INDEX idx_contradiction_type ON mind_contradiction_events(tenant_id, type, detected_at DESC);
 
--- Unique constraint to prevent duplicate contradictions
+-- Unique constraint to prevent duplicate contradictions (per tenant)
 CREATE UNIQUE INDEX idx_contradiction_pair ON mind_contradiction_events(
+    tenant_id,
     LEAST(memory_a, memory_b),
     GREATEST(memory_a, memory_b)
 ) WHERE status != 'Resolved';
@@ -104,16 +111,19 @@ CREATE UNIQUE INDEX idx_contradiction_pair ON mind_contradiction_events(
 -- ==========================================
 
 CREATE TABLE IF NOT EXISTS mind_daily_scores (
-    date DATE PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
+    date DATE NOT NULL,
     overall_score REAL NOT NULL CHECK (overall_score >= 0 AND overall_score <= 1),
     confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
     hallucination_score REAL NOT NULL CHECK (hallucination_score >= 0 AND hallucination_score <= 1),
     contradiction_score REAL NOT NULL CHECK (contradiction_score >= 0 AND contradiction_score <= 1),
     observations INT NOT NULL DEFAULT 0,
-    computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, date)
 );
 
-CREATE INDEX idx_daily_scores_date ON mind_daily_scores(date DESC);
+CREATE INDEX idx_daily_scores_tenant ON mind_daily_scores(tenant_id);
+CREATE INDEX idx_daily_scores_date ON mind_daily_scores(tenant_id, date DESC);
 
 -- ==========================================
 -- FUNCTIONS FOR DAILY SCORE COMPUTATION

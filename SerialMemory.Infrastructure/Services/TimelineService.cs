@@ -9,22 +9,15 @@ namespace SerialMemory.Infrastructure.Services;
 /// <summary>
 /// PostgreSQL-backed timeline service using real event data.
 /// </summary>
-public sealed class TimelineService : ITimelineService
+public sealed class TimelineService(string connectionString, ILogger<TimelineService> logger) : ITimelineService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<TimelineService> _logger;
-
-    public TimelineService(string connectionString, ILogger<TimelineService> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
+    private readonly ILogger<TimelineService> _logger = logger;
 
     public async Task<MemoryTimeline> GetMemoryTimelineAsync(
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         // Get events from memory_events table
@@ -67,7 +60,7 @@ public sealed class TimelineService : ITimelineService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var fromDate = from ?? DateTimeOffset.UtcNow.AddDays(-7);
@@ -112,7 +105,7 @@ public sealed class TimelineService : ITimelineService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
@@ -207,7 +200,7 @@ public sealed class TimelineService : ITimelineService
         int maxDepth = 5,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         // Get the memory's causal parents from the created event
@@ -280,7 +273,7 @@ public sealed class TimelineService : ITimelineService
         DateTimeOffset pointInTime,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
@@ -531,9 +524,9 @@ public sealed class TimelineService : ITimelineService
         public long event_version { get; init; }
         public long global_sequence { get; init; }
         public string event_data { get; init; } = "";
-        public string metadata { get; init; } = "";
+        public string? metadata { get; init; }
         public DateTimeOffset created_at { get; init; }
         public string? created_by { get; init; }
-        public string content_hash { get; init; } = "";
+        public string? content_hash { get; init; }
     }
 }

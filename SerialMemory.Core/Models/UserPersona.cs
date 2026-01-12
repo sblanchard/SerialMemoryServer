@@ -6,7 +6,7 @@ namespace SerialMemory.Core.Models;
 public class UserPersona
 {
     public Guid Id { get; set; }
-    public string UserId { get; set; } 
+    public string UserId { get; set; } = string.Empty;
     public required string AttributeType { get; set; } // preference, skill, goal, background
     public required string AttributeKey { get; set; }
     public required string AttributeValue { get; set; }

@@ -11,25 +11,13 @@ namespace SerialMemory.Infrastructure.Services;
 /// <summary>
 /// Orchestrates multi-model reasoning with parallel execution, timeouts, and result merging.
 /// </summary>
-public sealed class MultiModelReasoningService : IMultiModelReasoningService
+public sealed class MultiModelReasoningService(
+    IKnowledgeGraphStore store,
+    IEngineeringReasoningService ruleBasedService,
+    IReasoningModelFactory modelFactory,
+    ILogger<MultiModelReasoningService> logger)
+    : IMultiModelReasoningService
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly IEngineeringReasoningService _ruleBasedService;
-    private readonly IReasoningModelFactory _modelFactory;
-    private readonly ILogger<MultiModelReasoningService> _logger;
-
-    public MultiModelReasoningService(
-        IKnowledgeGraphStore store,
-        IEngineeringReasoningService ruleBasedService,
-        IReasoningModelFactory modelFactory,
-        ILogger<MultiModelReasoningService> logger)
-    {
-        _store = store;
-        _ruleBasedService = ruleBasedService;
-        _modelFactory = modelFactory;
-        _logger = logger;
-    }
-
     public async Task<MultiModelReasoningResult> ReasonAsync(
         string? projectFilter = null,
         int maxDurationMs = 30000,
@@ -38,8 +26,8 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         var sw = Stopwatch.StartNew();
 
         // Fetch graph data
-        var entities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
-        var relationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var entities = await store.GetAllEntitiesAsync(10000, cancellationToken);
+        var relationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
 
         // Filter by project if specified
         if (!string.IsNullOrEmpty(projectFilter))
@@ -85,7 +73,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         var sw = Stopwatch.StartNew();
 
         // Get entities for memory
-        var memoryEntities = await _store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
+        var memoryEntities = await store.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
         if (memoryEntities.Count == 0)
         {
             return new MultiModelReasoningResult
@@ -97,7 +85,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
 
         // Expand to connected entities
         var entityIds = memoryEntities.Select(e => e.Id).ToHashSet();
-        var allRelationships = await _store.GetAllRelationshipsAsync(10000, cancellationToken);
+        var allRelationships = await store.GetAllRelationshipsAsync(10000, cancellationToken);
         var relevantRels = allRelationships
             .Where(r => entityIds.Contains(r.SourceEntityId) || entityIds.Contains(r.TargetEntityId))
             .ToList();
@@ -109,7 +97,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
             connectedIds.Add(rel.TargetEntityId);
         }
 
-        var allEntities = await _store.GetAllEntitiesAsync(10000, cancellationToken);
+        var allEntities = await store.GetAllEntitiesAsync(10000, cancellationToken);
         var entities = allEntities.Where(e => connectedIds.Contains(e.Id)).ToList();
         var relationships = relevantRels;
 
@@ -143,9 +131,9 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         var allModelResults = new List<ModelResult>();
 
         // Get all models from factory
-        var models = _modelFactory.CreateModels().ToList();
+        var models = modelFactory.CreateModels().ToList();
 
-        _logger.LogInformation("Starting multi-model reasoning with {ModelCount} models, max duration {MaxDuration}ms",
+        logger.LogInformation("Starting multi-model reasoning with {ModelCount} models, max duration {MaxDuration}ms",
             models.Count, maxDurationMs);
 
         // Create overall timeout
@@ -165,7 +153,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         try
         {
             var rulesSw = Stopwatch.StartNew();
-            var ruleBasedResult = await _ruleBasedService.AnalyzeAsync(null, cts.Token);
+            var ruleBasedResult = await ruleBasedService.AnalyzeAsync(null, cts.Token);
             rulesSw.Stop();
 
             ruleBasedTrace = ruleBasedTrace with { DurationMs = (int)rulesSw.ElapsedMilliseconds };
@@ -198,12 +186,12 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
         catch (OperationCanceledException)
         {
             ruleBasedTrace = ruleBasedTrace with { Success = false, Error = "Timeout" };
-            _logger.LogWarning("Rule-based analysis timed out");
+            logger.LogWarning("Rule-based analysis timed out");
         }
         catch (Exception ex)
         {
             ruleBasedTrace = ruleBasedTrace with { Success = false, Error = ex.Message };
-            _logger.LogError(ex, "Rule-based analysis failed");
+            logger.LogError(ex, "Rule-based analysis failed");
         }
 
         traces.Add(ruleBasedTrace);
@@ -246,7 +234,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
                     DurationMs = (int)modelSw.ElapsedMilliseconds,
                     Error = "Timeout"
                 };
-                _logger.LogWarning("Model {Model} timed out after {Duration}ms", model.Name, modelSw.ElapsedMilliseconds);
+                logger.LogWarning("Model {Model} timed out after {Duration}ms", model.Name, modelSw.ElapsedMilliseconds);
                 return (Trace: trace, Result: (ModelResult?)null);
             }
             catch (Exception ex)
@@ -257,7 +245,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
                     DurationMs = (int)modelSw.ElapsedMilliseconds,
                     Error = ex.Message
                 };
-                _logger.LogError(ex, "Model {Model} failed", model.Name);
+                logger.LogError(ex, "Model {Model} failed", model.Name);
                 return (Trace: trace, Result: (ModelResult?)null);
             }
         }).ToList();
@@ -282,7 +270,7 @@ public sealed class MultiModelReasoningService : IMultiModelReasoningService
 
         sw.Stop();
 
-        _logger.LogInformation("Multi-model reasoning completed in {Duration}ms. Models: {Total}, Successful: {Success}, Insights: {Insights}, Disagreements: {Disagreements}, Confidence: {Confidence:P0}",
+        logger.LogInformation("Multi-model reasoning completed in {Duration}ms. Models: {Total}, Successful: {Success}, Insights: {Insights}, Disagreements: {Disagreements}, Confidence: {Confidence:P0}",
             sw.ElapsedMilliseconds, traces.Count, traces.Count(t => t.Success), mergedInsights.Count, disagreements.Count, overallConfidence);
 
         return new MultiModelReasoningResult

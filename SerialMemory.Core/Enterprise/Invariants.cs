@@ -251,8 +251,8 @@ public static class Invariant
         if (embedding is null)
             throw new InvariantViolationException($"{paramName} cannot be null");
 
-        if (embedding.Length != 384 && embedding.Length != 768 && embedding.Length != 1024)
-            throw new InvariantViolationException($"{paramName} must be 384, 768, or 1024 dimensions, was {embedding.Length}");
+        if (embedding.Length != 384 && embedding.Length != 768 && embedding.Length != 1024 && embedding.Length != 1536)
+            throw new InvariantViolationException($"{paramName} must be 384, 768, 1024, or 1536 dimensions, was {embedding.Length}");
 
         for (int i = 0; i < embedding.Length; i++)
         {

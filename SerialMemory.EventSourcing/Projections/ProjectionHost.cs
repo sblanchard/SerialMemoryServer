@@ -84,7 +84,6 @@ public sealed class ProjectionHost(
                 try
                 {
                     await projection.ApplyAsync(@event, cancellationToken);
-                    lastSequence = @event.GlobalSequence;
                     processedCount++;
 
                     // Save checkpoint periodically
@@ -95,10 +94,14 @@ public sealed class ProjectionHost(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Error applying event {EventId} to projection {Name}",
-                        @event.EventId, projection.ProjectionName);
-                    throw;
+                    logger.LogWarning(ex,
+                        "Skipping corrupted event {EventId} (seq {Sequence}) for projection {Name}: {Message}",
+                        @event.EventId, @event.GlobalSequence, projection.ProjectionName, ex.Message);
+                    // Skip this event and continue - don't fail the entire projection
                 }
+
+                // Always advance sequence even if event processing failed (to skip past bad events)
+                lastSequence = @event.GlobalSequence;
             }
         }
 

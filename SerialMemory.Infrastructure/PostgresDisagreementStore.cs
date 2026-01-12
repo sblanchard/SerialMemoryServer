@@ -10,17 +10,9 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL implementation of disagreement storage.
 /// </summary>
-public sealed class PostgresDisagreementStore : IDisagreementStore
+public sealed class PostgresDisagreementStore(string connectionString, ILogger<PostgresDisagreementStore> logger)
+    : IDisagreementStore
 {
-    private readonly string _connectionString;
-    private readonly ILogger<PostgresDisagreementStore> _logger;
-
-    public PostgresDisagreementStore(string connectionString, ILogger<PostgresDisagreementStore> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
-
     public async Task<Guid> StoreReasoningRunAsync(
         MultiModelReasoningResult result,
         string? projectFilter = null,
@@ -28,7 +20,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         string tenantId = "self",
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -100,7 +92,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
 
             await tx.CommitAsync(ct);
 
-            _logger.LogInformation("Stored reasoning run {RunId} with {DisagreementCount} disagreements",
+            logger.LogInformation("Stored reasoning run {RunId} with {DisagreementCount} disagreements",
                 runId, result.Disagreements.Count);
 
             return runId;
@@ -108,7 +100,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         catch (Exception ex)
         {
             await tx.RollbackAsync(ct);
-            _logger.LogError(ex, "Failed to store reasoning run");
+            logger.LogError(ex, "Failed to store reasoning run");
             throw;
         }
     }
@@ -118,7 +110,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         int limit = 50,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
 
         var results = await conn.QueryAsync<ReasoningRunSummary>("""
             SELECT
@@ -148,7 +140,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         Guid runId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
 
         var results = await conn.QueryAsync<DisagreementRow>("""
             SELECT
@@ -190,7 +182,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         int days = 7,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
 
         var results = await conn.QueryAsync<DisagreementTrend>("""
             SELECT
@@ -214,7 +206,7 @@ public sealed class PostgresDisagreementStore : IDisagreementStore
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
 
         var results = await conn.QueryAsync<ConfidenceHistoryEntry>("""
             SELECT

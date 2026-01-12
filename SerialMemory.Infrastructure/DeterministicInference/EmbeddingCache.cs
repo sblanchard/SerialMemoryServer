@@ -155,40 +155,28 @@ public sealed class EmbeddingCache(
 /// <summary>
 /// Deterministic embedding service that caches all embeddings.
 /// </summary>
-public sealed class CachedEmbeddingService : IEmbeddingService
+public sealed class CachedEmbeddingService(
+    IEmbeddingService inner,
+    IEmbeddingCache cache,
+    ILogger<CachedEmbeddingService> logger,
+    string modelVersion = "onnx-minilm-v2")
+    : IEmbeddingService
 {
-    private readonly IEmbeddingService _inner;
-    private readonly IEmbeddingCache _cache;
-    private readonly ILogger<CachedEmbeddingService> _logger;
-    private readonly string _modelVersion;
-
-    public CachedEmbeddingService(
-        IEmbeddingService inner,
-        IEmbeddingCache cache,
-        ILogger<CachedEmbeddingService> logger,
-        string modelVersion = "onnx-minilm-v2")
-    {
-        _inner = inner;
-        _cache = cache;
-        _logger = logger;
-        _modelVersion = modelVersion;
-    }
-
-    public int EmbeddingDimension => _inner.EmbeddingDimension;
+    public int EmbeddingDimension => inner.EmbeddingDimension;
 
     public async Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
     {
         var contentHash = ComputeContentHash(text);
 
-        var cached = await _cache.GetAsync(contentHash, cancellationToken);
+        var cached = await cache.GetAsync(contentHash, cancellationToken);
         if (cached != null)
         {
             return cached;
         }
 
-        var embedding = await _inner.EmbedTextAsync(text, cancellationToken);
+        var embedding = await inner.EmbedTextAsync(text, cancellationToken);
 
-        await _cache.SetAsync(contentHash, embedding, _modelVersion, cancellationToken);
+        await cache.SetAsync(contentHash, embedding, modelVersion, cancellationToken);
 
         return embedding;
     }
@@ -205,7 +193,7 @@ public sealed class CachedEmbeddingService : IEmbeddingService
             cancellationToken.ThrowIfCancellationRequested();
 
             var contentHash = ComputeContentHash(texts[i]);
-            var cached = await _cache.GetAsync(contentHash, cancellationToken);
+            var cached = await cache.GetAsync(contentHash, cancellationToken);
 
             if (cached != null)
             {
@@ -221,7 +209,7 @@ public sealed class CachedEmbeddingService : IEmbeddingService
         // Batch process uncached texts
         if (uncachedTexts.Count > 0)
         {
-            var newEmbeddings = await _inner.EmbedBatchAsync(uncachedTexts, cancellationToken);
+            var newEmbeddings = await inner.EmbedBatchAsync(uncachedTexts, cancellationToken);
 
             for (int i = 0; i < uncachedIndices.Count; i++)
             {
@@ -229,10 +217,10 @@ public sealed class CachedEmbeddingService : IEmbeddingService
                 results[idx] = newEmbeddings[i];
 
                 var contentHash = ComputeContentHash(texts[idx]);
-                await _cache.SetAsync(contentHash, newEmbeddings[i], _modelVersion, cancellationToken);
+                await cache.SetAsync(contentHash, newEmbeddings[i], modelVersion, cancellationToken);
             }
 
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Embedded {Uncached} uncached texts, {Cached} from cache",
                 uncachedTexts.Count,
                 texts.Count - uncachedTexts.Count);

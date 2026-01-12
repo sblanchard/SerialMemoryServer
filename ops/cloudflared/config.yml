@@ -1,0 +1,53 @@
+# Cloudflare Tunnel Configuration for SerialMemory
+#
+# For Windows native cloudflared (not Docker):
+# 1. Create a tunnel: cloudflared tunnel create serialmemory
+# 2. Copy credentials to ~/.cloudflared/ or specify with credentials-file
+# 3. Update the tunnel ID below
+# 4. Add DNS: cloudflared tunnel route dns serialmemory serialmemory.dev
+# 5. Add DNS: cloudflared tunnel route dns serialmemory memory.serialmemory.dev
+# 6. Add DNS: cloudflared tunnel route dns serialmemory api.serialmemory.dev
+# 7. Run: cloudflared tunnel --config ops/cloudflared/config.yml run
+#
+# Docker services exposed on localhost:
+#   - API: localhost:5000
+#   - Dashboard API: localhost:5001
+#   - Web Admin: localhost:5002
+
+tunnel: 54f487a0-dcef-4bb4-af20-459d889c1cee
+credentials-file: C:\Users\serialcoder\.cloudflared\54f487a0-dcef-4bb4-af20-459d889c1cee.json
+
+ingress:
+  # SignalR WebSocket connections (for real-time updates)
+  - hostname: serialmemory.dev
+    path: /hubs/*
+    service: http://localhost:5000
+    originRequest:
+      noTLSVerify: true
+
+  # Health check (direct to API)
+  - hostname: serialmemory.dev
+    path: /health
+    service: http://localhost:5000
+
+  # Web admin dashboard - ALL requests including /api/* go through web-admin
+  # The web-admin proxies /api/* requests to the API with proper auth headers
+  - hostname: serialmemory.dev
+    service: http://localhost:5002
+    originRequest:
+      noTLSVerify: true
+
+  # MCP API for memory.* subdomain (Claude/Cursor connections)
+  - hostname: memory.serialmemory.dev
+    service: http://localhost:5000
+    originRequest:
+      noTLSVerify: true
+
+  # REST API subdomain (for Stripe webhooks and external integrations)
+  - hostname: api.serialmemory.dev
+    service: http://localhost:5000
+    originRequest:
+      noTLSVerify: true
+
+  # Catch-all 404
+  - service: http_status:404

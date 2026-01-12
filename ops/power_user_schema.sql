@@ -47,13 +47,23 @@ CREATE TABLE IF NOT EXISTS graph_events (
     session_id UUID
 );
 
-CREATE INDEX IF NOT EXISTS idx_graph_events_seq ON graph_events(sequence_number);
-CREATE INDEX IF NOT EXISTS idx_graph_events_type ON graph_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_graph_events_node ON graph_events(node_id);
-CREATE INDEX IF NOT EXISTS idx_graph_events_edge ON graph_events(edge_id);
-CREATE INDEX IF NOT EXISTS idx_graph_events_time ON graph_events(occurred_at DESC);
+-- Create indexes conditionally based on which columns exist
+DO $$
+BEGIN
+    -- Index on sequence_number only if it exists (power_user schema has it, graph_events_schema does not)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'graph_events' AND column_name = 'sequence_number') THEN
+        CREATE INDEX IF NOT EXISTS idx_graph_events_seq ON graph_events(sequence_number);
+    END IF;
+
+    -- These columns exist in both schemas
+    CREATE INDEX IF NOT EXISTS idx_graph_events_type ON graph_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_graph_events_node ON graph_events(node_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_events_edge ON graph_events(edge_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_events_time ON graph_events(occurred_at DESC);
+END $$;
 
 -- Memory events table (if not exists)
+-- Note: eventsourcing_schema.sql may have already created this with different columns
 CREATE TABLE IF NOT EXISTS memory_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sequence_number BIGSERIAL NOT NULL,
@@ -65,10 +75,33 @@ CREATE TABLE IF NOT EXISTS memory_events (
     correlation_id VARCHAR(100)
 );
 
-CREATE INDEX IF NOT EXISTS idx_memory_events_seq ON memory_events(sequence_number);
-CREATE INDEX IF NOT EXISTS idx_memory_events_type ON memory_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_memory_events_memory ON memory_events(memory_id);
-CREATE INDEX IF NOT EXISTS idx_memory_events_time ON memory_events(timestamp DESC);
+-- Create indexes only if the columns exist (handles schema differences)
+DO $$
+BEGIN
+    -- Index on sequence_number (power_user schema) or global_sequence (eventsourcing schema)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'sequence_number') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_seq ON memory_events(sequence_number);
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'global_sequence') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_seq ON memory_events(global_sequence);
+    END IF;
+
+    -- Index on event_type (always exists)
+    CREATE INDEX IF NOT EXISTS idx_memory_events_type ON memory_events(event_type);
+
+    -- Index on memory_id (power_user schema) or stream_id (eventsourcing schema)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'memory_id') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_memory ON memory_events(memory_id);
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'stream_id') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_stream ON memory_events(stream_id);
+    END IF;
+
+    -- Index on timestamp (power_user schema) or created_at (eventsourcing schema)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'timestamp') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_time ON memory_events(timestamp DESC);
+    ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'memory_events' AND column_name = 'created_at') THEN
+        CREATE INDEX IF NOT EXISTS idx_memory_events_time ON memory_events(created_at DESC);
+    END IF;
+END $$;
 
 -- Power user audit log (tracks all dangerous operations)
 CREATE TABLE IF NOT EXISTS power_user_audit (

@@ -8,25 +8,17 @@ namespace SerialMemory.Infrastructure.Services;
 /// Default factory for creating reasoning models.
 /// Creates rule-based models for different reasoning roles.
 /// </summary>
-public sealed class DefaultReasoningModelFactory : IReasoningModelFactory
+public sealed class DefaultReasoningModelFactory(
+    IKnowledgeGraphStore store,
+    ILoggerFactory loggerFactory)
+    : IReasoningModelFactory
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILoggerFactory _loggerFactory;
-
-    public DefaultReasoningModelFactory(
-        IKnowledgeGraphStore store,
-        ILoggerFactory loggerFactory)
-    {
-        _store = store;
-        _loggerFactory = loggerFactory;
-    }
-
     public IEnumerable<IReasoningModel> CreateModels()
     {
-        yield return new StructuralReasoningModel(_store, _loggerFactory.CreateLogger<StructuralReasoningModel>());
-        yield return new RiskReasoningModel(_store, _loggerFactory.CreateLogger<RiskReasoningModel>());
-        yield return new OptimizationReasoningModel(_store, _loggerFactory.CreateLogger<OptimizationReasoningModel>());
-        yield return new ContradictionReasoningModel(_store, _loggerFactory.CreateLogger<ContradictionReasoningModel>());
+        yield return new StructuralReasoningModel(store, loggerFactory.CreateLogger<StructuralReasoningModel>());
+        yield return new RiskReasoningModel(store, loggerFactory.CreateLogger<RiskReasoningModel>());
+        yield return new OptimizationReasoningModel(store, loggerFactory.CreateLogger<OptimizationReasoningModel>());
+        yield return new ContradictionReasoningModel(store, loggerFactory.CreateLogger<ContradictionReasoningModel>());
     }
 
     public IEnumerable<IReasoningModel> CreateModelsForRole(ReasoningRole role)
@@ -38,21 +30,15 @@ public sealed class DefaultReasoningModelFactory : IReasoningModelFactory
 /// <summary>
 /// Validates graph structural consistency (orphaned nodes, cycles, missing references).
 /// </summary>
-public sealed class StructuralReasoningModel : IReasoningModel
+public sealed class StructuralReasoningModel(IKnowledgeGraphStore store, ILogger<StructuralReasoningModel> logger)
+    : IReasoningModel
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<StructuralReasoningModel> _logger;
+    private readonly IKnowledgeGraphStore _store = store;
 
     public string Name => "StructuralValidator";
     public string Version => "1.0.0";
     public ReasoningRole Role => ReasoningRole.Structural;
     public TimeSpan Timeout => TimeSpan.FromSeconds(10);
-
-    public StructuralReasoningModel(IKnowledgeGraphStore store, ILogger<StructuralReasoningModel> logger)
-    {
-        _store = store;
-        _logger = logger;
-    }
 
     public async Task<ModelResult> ReasonAsync(ReasoningInput input, CancellationToken cancellationToken = default)
     {
@@ -141,7 +127,16 @@ public sealed class StructuralReasoningModel : IReasoningModel
                 .ToList();
 
             var highDegreeNodes = nodeDegrees.Where(n => n.Degree > 20).ToList();
-            if (highDegreeNodes.Count > 0)
+            if (highDegreeNodes.Count <= 0)
+                return new ModelResult
+                {
+                    ModelName = Name,
+                    Version = Version,
+                    Role = Role,
+                    Success = true,
+                    DurationMs = 0, // Will be set by orchestrator
+                    Insights = insights
+                };
             {
                 var highDegreeEntities = entities
                     .Where(e => highDegreeNodes.Select(h => h.Id).Contains(e.Id))
@@ -177,7 +172,7 @@ public sealed class StructuralReasoningModel : IReasoningModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Structural reasoning failed");
+            logger.LogError(ex, "Structural reasoning failed");
             return new ModelResult
             {
                 ModelName = Name,
@@ -194,21 +189,15 @@ public sealed class StructuralReasoningModel : IReasoningModel
 /// <summary>
 /// Detects risk patterns (single points of failure, critical dependencies).
 /// </summary>
-public sealed class RiskReasoningModel : IReasoningModel
+public sealed class RiskReasoningModel(IKnowledgeGraphStore store, ILogger<RiskReasoningModel> logger)
+    : IReasoningModel
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<RiskReasoningModel> _logger;
+    private readonly IKnowledgeGraphStore _store = store;
 
     public string Name => "RiskDetector";
     public string Version => "1.0.0";
     public ReasoningRole Role => ReasoningRole.Risk;
     public TimeSpan Timeout => TimeSpan.FromSeconds(15);
-
-    public RiskReasoningModel(IKnowledgeGraphStore store, ILogger<RiskReasoningModel> logger)
-    {
-        _store = store;
-        _logger = logger;
-    }
 
     public async Task<ModelResult> ReasonAsync(ReasoningInput input, CancellationToken cancellationToken = default)
     {
@@ -306,7 +295,7 @@ public sealed class RiskReasoningModel : IReasoningModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Risk reasoning failed");
+            logger.LogError(ex, "Risk reasoning failed");
             return new ModelResult
             {
                 ModelName = Name,
@@ -384,21 +373,15 @@ public sealed class RiskReasoningModel : IReasoningModel
 /// <summary>
 /// Finds optimization opportunities (redundant relationships, missing connections).
 /// </summary>
-public sealed class OptimizationReasoningModel : IReasoningModel
+public sealed class OptimizationReasoningModel(IKnowledgeGraphStore store, ILogger<OptimizationReasoningModel> logger)
+    : IReasoningModel
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<OptimizationReasoningModel> _logger;
+    private readonly IKnowledgeGraphStore _store = store;
 
     public string Name => "OptimizationFinder";
     public string Version => "1.0.0";
     public ReasoningRole Role => ReasoningRole.Optimization;
     public TimeSpan Timeout => TimeSpan.FromSeconds(10);
-
-    public OptimizationReasoningModel(IKnowledgeGraphStore store, ILogger<OptimizationReasoningModel> logger)
-    {
-        _store = store;
-        _logger = logger;
-    }
 
     public async Task<ModelResult> ReasonAsync(ReasoningInput input, CancellationToken cancellationToken = default)
     {
@@ -512,7 +495,7 @@ public sealed class OptimizationReasoningModel : IReasoningModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Optimization reasoning failed");
+            logger.LogError(ex, "Optimization reasoning failed");
             return new ModelResult
             {
                 ModelName = Name,
@@ -535,10 +518,10 @@ public sealed class OptimizationReasoningModel : IReasoningModel
 /// <summary>
 /// Detects logical contradictions in observations and relationships.
 /// </summary>
-public sealed class ContradictionReasoningModel : IReasoningModel
+public sealed class ContradictionReasoningModel(IKnowledgeGraphStore store, ILogger<ContradictionReasoningModel> logger)
+    : IReasoningModel
 {
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<ContradictionReasoningModel> _logger;
+    private readonly IKnowledgeGraphStore _store = store;
 
     private static readonly (string Positive, string Negative)[] ContradictoryPairs =
     [
@@ -558,12 +541,6 @@ public sealed class ContradictionReasoningModel : IReasoningModel
     public string Version => "1.0.0";
     public ReasoningRole Role => ReasoningRole.Contradiction;
     public TimeSpan Timeout => TimeSpan.FromSeconds(10);
-
-    public ContradictionReasoningModel(IKnowledgeGraphStore store, ILogger<ContradictionReasoningModel> logger)
-    {
-        _store = store;
-        _logger = logger;
-    }
 
     public async Task<ModelResult> ReasonAsync(ReasoningInput input, CancellationToken cancellationToken = default)
     {
@@ -685,7 +662,7 @@ public sealed class ContradictionReasoningModel : IReasoningModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Contradiction reasoning failed");
+            logger.LogError(ex, "Contradiction reasoning failed");
             return new ModelResult
             {
                 ModelName = Name,

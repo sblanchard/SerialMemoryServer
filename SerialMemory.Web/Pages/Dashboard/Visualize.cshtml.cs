@@ -1,19 +1,26 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class VisualizeModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
+    private readonly AppConfig _appConfig;
 
-    public VisualizeModel(IHttpClientFactory httpClientFactory)
+    public VisualizeModel(ApiClientService apiClient, AppConfig appConfig)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
+        _appConfig = appConfig;
     }
+
+    public string ApiBaseUrl => _appConfig.ApiBaseUrl;
+
+    // SignalR access token (from InternalTokenMiddleware)
+    public string? SignalRToken => HttpContext.Items["InternalToken"] as string;
 
     [BindProperty(SupportsGet = true)]
     public string? Project { get; set; }
@@ -42,14 +49,33 @@ public sealed class VisualizeModel : PageModel
 
     private async Task LoadProjectsAsync()
     {
-        Projects = ["SerialMemory", "FlexPilot", "FlexHPSDR", "RebateX"];
+        try
+        {
+            // Fetch real projects from the API
+            var client = _apiClient.CreateClient("Api");
+            var response = await client.GetAsync("/api/graph/projects");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ProjectsResponse>();
+                Projects = result?.Projects ?? [];
+            }
+            else
+            {
+                Projects = [];
+            }
+        }
+        catch
+        {
+            Projects = [];
+        }
     }
 
     private async Task LoadGraphDataAsync()
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            // Use main API client for graph endpoints
+            var client = _apiClient.CreateClient("Api");
 
             var request = new
             {
@@ -64,6 +90,7 @@ public sealed class VisualizeModel : PageModel
             if (response.IsSuccessStatusCode)
             {
                 GraphDataJson = await response.Content.ReadAsStringAsync();
+                IsSampleData = false;
             }
             else
             {
@@ -108,77 +135,38 @@ public sealed class VisualizeModel : PageModel
                         };
 
                         GraphDataJson = System.Text.Json.JsonSerializer.Serialize(graphData);
+                        IsSampleData = false;
                         return;
                     }
                 }
 
-                LoadSampleGraphData();
+                // No data available - show empty graph, not fake sample data
+                LoadEmptyGraphData();
             }
         }
         catch (HttpRequestException)
         {
-            LoadSampleGraphData();
+            // API unavailable - show empty graph, not fake sample data
+            LoadEmptyGraphData();
         }
     }
 
-    private void LoadSampleGraphData()
+    private void LoadEmptyGraphData()
     {
-        IsSampleData = true;
-        // Sample graph data in force-graph-3d format
+        IsSampleData = false; // Not sample data, just empty
         GraphDataJson = System.Text.Json.JsonSerializer.Serialize(new
         {
-            nodes = new[]
-            {
-                new { id = "user-service", name = "UserService", type = "service", risk = 0.2, group = 1 },
-                new { id = "auth-module", name = "AuthModule", type = "module", risk = 0.8, group = 1 },
-                new { id = "database", name = "PostgreSQL", type = "database", risk = 0.1, group = 2 },
-                new { id = "redis", name = "Redis Cache", type = "cache", risk = 0.15, group = 2 },
-                new { id = "api-gateway", name = "API Gateway", type = "gateway", risk = 0.4, group = 3 },
-                new { id = "payment-service", name = "PaymentService", type = "service", risk = 0.9, group = 1 },
-                new { id = "notification", name = "NotificationService", type = "service", risk = 0.3, group = 1 },
-                new { id = "queue", name = "RabbitMQ", type = "queue", risk = 0.2, group = 2 },
-                new { id = "config", name = "ConfigService", type = "config", risk = 0.5, group = 3 },
-                new { id = "logging", name = "LoggingService", type = "service", risk = 0.1, group = 3 },
-                new { id = "metrics", name = "MetricsCollector", type = "monitoring", risk = 0.1, group = 3 },
-                new { id = "user-entity", name = "User", type = "entity", risk = 0.0, group = 4 },
-                new { id = "order-entity", name = "Order", type = "entity", risk = 0.0, group = 4 },
-                new { id = "product-entity", name = "Product", type = "entity", risk = 0.0, group = 4 }
-            },
-            links = new[]
-            {
-                new { source = "api-gateway", target = "user-service", type = "calls", critical = false },
-                new { source = "api-gateway", target = "payment-service", type = "calls", critical = true },
-                new { source = "user-service", target = "auth-module", type = "uses", critical = true },
-                new { source = "user-service", target = "database", type = "reads", critical = false },
-                new { source = "user-service", target = "redis", type = "caches", critical = false },
-                new { source = "payment-service", target = "database", type = "writes", critical = true },
-                new { source = "payment-service", target = "notification", type = "triggers", critical = false },
-                new { source = "notification", target = "queue", type = "publishes", critical = false },
-                new { source = "auth-module", target = "redis", type = "stores", critical = true },
-                new { source = "config", target = "user-service", type = "configures", critical = false },
-                new { source = "config", target = "payment-service", type = "configures", critical = false },
-                new { source = "logging", target = "user-service", type = "monitors", critical = false },
-                new { source = "logging", target = "payment-service", type = "monitors", critical = false },
-                new { source = "metrics", target = "api-gateway", type = "collects", critical = false },
-                new { source = "user-service", target = "user-entity", type = "manages", critical = false },
-                new { source = "payment-service", target = "order-entity", type = "manages", critical = false },
-                new { source = "order-entity", target = "product-entity", type = "contains", critical = false }
-            },
-            overlays = new
-            {
-                risks = new[]
-                {
-                    new { nodeId = "auth-module", level = "high", message = "Missing rate limiting" },
-                    new { nodeId = "payment-service", level = "critical", message = "SQL injection vulnerability" }
-                },
-                criticalPaths = new[] { "api-gateway", "payment-service", "database" }
-            }
+            nodes = Array.Empty<object>(),
+            links = Array.Empty<object>(),
+            overlays = new { risks = Array.Empty<object>(), criticalPaths = Array.Empty<string>() },
+            empty = true,
+            message = "No graph data available. Add some memories to see your knowledge graph."
         });
     }
 
-    private string? GetAuthToken()
+    private sealed class ProjectsResponse
     {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
+        public IReadOnlyList<string> Projects { get; init; } = [];
     }
 
     private sealed class NodesApiResponse

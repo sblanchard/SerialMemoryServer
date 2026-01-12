@@ -9,23 +9,24 @@ namespace SerialMemory.Infrastructure;
 /// <summary>
 /// PostgreSQL implementation of graph event storage
 /// </summary>
-public class PostgresGraphEventStore : IGraphEventStore
+public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
 {
-    private readonly string _connectionString;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public PostgresGraphEventStore(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
+    /// <summary>
+    /// Returns the event type as a string matching the PostgreSQL enum values.
+    /// The enum uses PascalCase: 'NodeCreated', 'NodeUpdated', etc.
+    /// </summary>
+    private static string ToDbEventType(GraphEventType eventType) => eventType.ToString();
 
-    private NpgsqlConnection CreateConnection() => new(_connectionString);
+    private NpgsqlConnection CreateConnection() => new(connectionString);
 
     public async Task<Guid> LogEventAsync(GraphEvent graphEvent, CancellationToken ct = default)
     {
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
+        // Cast event_type text to graph_event_type enum
         var sql = """
             INSERT INTO graph_events (
                 event_id, event_type,
@@ -48,7 +49,7 @@ public class PostgresGraphEventStore : IGraphEventStore
         return await conn.ExecuteScalarAsync<Guid>(sql, new
         {
             graphEvent.EventId,
-            EventType = graphEvent.EventType.ToString(),
+            EventType = ToDbEventType(graphEvent.EventType),
             graphEvent.NodeId,
             graphEvent.NodeName,
             graphEvent.NodeType,
@@ -79,6 +80,7 @@ public class PostgresGraphEventStore : IGraphEventStore
         {
             foreach (var evt in events)
             {
+                // Cast event_type text to graph_event_type enum
                 var sql = """
                     INSERT INTO graph_events (
                         event_id, event_type,
@@ -100,7 +102,7 @@ public class PostgresGraphEventStore : IGraphEventStore
                 await conn.ExecuteAsync(sql, new
                 {
                     evt.EventId,
-                    EventType = evt.EventType.ToString(),
+                    EventType = ToDbEventType(evt.EventType),
                     evt.NodeId,
                     evt.NodeName,
                     evt.NodeType,
@@ -135,20 +137,19 @@ public class PostgresGraphEventStore : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
+        // Use actual database schema (event_id, occurred_at, event_type as text)
         var sql = """
             SELECT event_id, event_type,
-                   node_id, node_name, node_type,
-                   edge_id, edge_type, source_node_id, target_node_id,
-                   source_node_name, target_node_name,
-                   previous_state, new_state, confidence,
-                   triggered_by, memory_id, session_id, occurred_at, metadata
+                   node_id, node_type,
+                   edge_id, edge_type,
+                   occurred_at, metadata
             FROM graph_events
             ORDER BY occurred_at DESC
             LIMIT @Limit
             """;
 
-        var rows = await conn.QueryAsync<GraphEventRow>(sql, new { Limit = limit });
-        return rows.Select(MapFromRow).ToList();
+        var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { Limit = limit });
+        return rows.Select(MapFromSimpleRow).ToList();
     }
 
     public async Task<List<GraphEvent>> GetEventsByTypeAsync(GraphEventType eventType, int limit = 100, CancellationToken ct = default)
@@ -156,21 +157,22 @@ public class PostgresGraphEventStore : IGraphEventStore
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
+        // Use snake_case to match the database CHECK constraint
+        var dbEventType = ToDbEventType(eventType);
+
         var sql = """
             SELECT event_id, event_type,
-                   node_id, node_name, node_type,
-                   edge_id, edge_type, source_node_id, target_node_id,
-                   source_node_name, target_node_name,
-                   previous_state, new_state, confidence,
-                   triggered_by, memory_id, session_id, occurred_at, metadata
+                   node_id, node_type,
+                   edge_id, edge_type,
+                   occurred_at, metadata
             FROM graph_events
-            WHERE event_type = @EventType::graph_event_type
+            WHERE event_type = @EventType
             ORDER BY occurred_at DESC
             LIMIT @Limit
             """;
 
-        var rows = await conn.QueryAsync<GraphEventRow>(sql, new { EventType = eventType.ToString(), Limit = limit });
-        return rows.Select(MapFromRow).ToList();
+        var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { EventType = dbEventType, Limit = limit });
+        return rows.Select(MapFromSimpleRow).ToList();
     }
 
     public async Task<List<GraphEvent>> GetEventsForNodeAsync(Guid nodeId, CancellationToken ct = default)
@@ -180,20 +182,16 @@ public class PostgresGraphEventStore : IGraphEventStore
 
         var sql = """
             SELECT event_id, event_type,
-                   node_id, node_name, node_type,
-                   edge_id, edge_type, source_node_id, target_node_id,
-                   source_node_name, target_node_name,
-                   previous_state, new_state, confidence,
-                   triggered_by, memory_id, session_id, occurred_at, metadata
+                   node_id, node_type,
+                   edge_id, edge_type,
+                   occurred_at, metadata
             FROM graph_events
             WHERE node_id = @NodeId
-               OR source_node_id = @NodeId
-               OR target_node_id = @NodeId
             ORDER BY occurred_at DESC
             """;
 
-        var rows = await conn.QueryAsync<GraphEventRow>(sql, new { NodeId = nodeId });
-        return rows.Select(MapFromRow).ToList();
+        var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { NodeId = nodeId });
+        return rows.Select(MapFromSimpleRow).ToList();
     }
 
     public async Task<List<GraphEvent>> GetEventsForEdgeAsync(Guid edgeId, CancellationToken ct = default)
@@ -203,18 +201,16 @@ public class PostgresGraphEventStore : IGraphEventStore
 
         var sql = """
             SELECT event_id, event_type,
-                   node_id, node_name, node_type,
-                   edge_id, edge_type, source_node_id, target_node_id,
-                   source_node_name, target_node_name,
-                   previous_state, new_state, confidence,
-                   triggered_by, memory_id, session_id, occurred_at, metadata
+                   node_id, node_type,
+                   edge_id, edge_type,
+                   occurred_at, metadata
             FROM graph_events
             WHERE edge_id = @EdgeId
             ORDER BY occurred_at DESC
             """;
 
-        var rows = await conn.QueryAsync<GraphEventRow>(sql, new { EdgeId = edgeId });
-        return rows.Select(MapFromRow).ToList();
+        var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { EdgeId = edgeId });
+        return rows.Select(MapFromSimpleRow).ToList();
     }
 
     public async Task<List<GraphEvent>> GetEventsInTimeRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default)
@@ -224,18 +220,16 @@ public class PostgresGraphEventStore : IGraphEventStore
 
         var sql = """
             SELECT event_id, event_type,
-                   node_id, node_name, node_type,
-                   edge_id, edge_type, source_node_id, target_node_id,
-                   source_node_name, target_node_name,
-                   previous_state, new_state, confidence,
-                   triggered_by, memory_id, session_id, occurred_at, metadata
+                   node_id, node_type,
+                   edge_id, edge_type,
+                   occurred_at, metadata
             FROM graph_events
             WHERE occurred_at BETWEEN @From AND @To
             ORDER BY occurred_at DESC
             """;
 
-        var rows = await conn.QueryAsync<GraphEventRow>(sql, new { From = from, To = to });
-        return rows.Select(MapFromRow).ToList();
+        var rows = await conn.QueryAsync<GraphEventRowSimple>(sql, new { From = from, To = to });
+        return rows.Select(MapFromSimpleRow).ToList();
     }
 
     public async Task<GraphTopology> GetTopologyAsync(int nodeLimit = 100, int edgeLimit = 200, CancellationToken ct = default)
@@ -375,7 +369,7 @@ public class PostgresGraphEventStore : IGraphEventStore
         stats.MaxDegree = degreeStats.max_degree;
         stats.IsolatedNodes = degreeStats.isolated;
 
-        // Growth metrics from graph_events
+        // Growth metrics from graph_events (using PascalCase to match enum)
         stats.NodesLast24Hours = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '24 hours'");
         stats.EdgesLast24Hours = await conn.ExecuteScalarAsync<int>(
@@ -488,7 +482,7 @@ public class PostgresGraphEventStore : IGraphEventStore
             ToTime = to
         };
 
-        // Event counts by type
+        // Event counts by type (using actual column name and values)
         var countsSql = """
             SELECT event_type, COUNT(*)::int as count
             FROM graph_events
@@ -501,18 +495,19 @@ public class PostgresGraphEventStore : IGraphEventStore
         foreach (var (eventType, count) in counts)
         {
             metrics.TotalEvents += count;
+            // Handle both PascalCase (enum) and snake_case (legacy/text) formats
             switch (eventType)
             {
-                case "NodeCreated": metrics.NodesCreated = count; break;
-                case "NodeUpdated": metrics.NodesUpdated = count; break;
-                case "NodeDeleted": metrics.NodesDeleted = count; break;
-                case "EdgeCreated": metrics.EdgesCreated = count; break;
-                case "EdgeUpdated": metrics.EdgesUpdated = count; break;
-                case "EdgeDeleted": metrics.EdgesDeleted = count; break;
+                case "NodeCreated" or "node_created": metrics.NodesCreated = count; break;
+                case "NodeUpdated" or "node_updated": metrics.NodesUpdated = count; break;
+                case "NodeDeleted" or "node_deleted": metrics.NodesDeleted = count; break;
+                case "EdgeCreated" or "edge_created": metrics.EdgesCreated = count; break;
+                case "EdgeUpdated" or "edge_updated": metrics.EdgesUpdated = count; break;
+                case "EdgeDeleted" or "edge_deleted": metrics.EdgesDeleted = count; break;
             }
         }
 
-        // Time-based metrics
+        // Time-based metrics (using actual column name)
         metrics.EventsLastHour = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM graph_events WHERE occurred_at > NOW() - INTERVAL '1 hour'");
         metrics.EventsLast24Hours = await conn.ExecuteScalarAsync<int>(
@@ -534,7 +529,50 @@ public class PostgresGraphEventStore : IGraphEventStore
         return await GetEventsForEdgeAsync(edgeId, ct);
     }
 
-    // Helper row type for Dapper
+    // Simplified helper row type for actual database schema
+    private class GraphEventRowSimple
+    {
+        public Guid event_id { get; set; }
+        public string event_type { get; set; } = "";
+        public Guid? node_id { get; set; }
+        public string? node_type { get; set; }
+        public Guid? edge_id { get; set; }
+        public string? edge_type { get; set; }
+        public DateTimeOffset occurred_at { get; set; }
+        public string? metadata { get; set; }
+    }
+
+    private static GraphEvent MapFromSimpleRow(GraphEventRowSimple row)
+    {
+        // Map database event_type to enum (handle both PascalCase and snake_case)
+        var eventType = row.event_type switch
+        {
+            "NodeCreated" or "node_created" => GraphEventType.NodeCreated,
+            "NodeUpdated" or "node_updated" => GraphEventType.NodeUpdated,
+            "NodeDeleted" or "node_deleted" => GraphEventType.NodeDeleted,
+            "EdgeCreated" or "edge_created" => GraphEventType.EdgeCreated,
+            "EdgeUpdated" or "edge_updated" => GraphEventType.EdgeUpdated,
+            "EdgeDeleted" or "edge_deleted" => GraphEventType.EdgeDeleted,
+            "batch_import" => GraphEventType.NodeCreated, // Map to closest equivalent
+            "relationship_discovered" => GraphEventType.EdgeCreated, // Map to closest equivalent
+            _ => GraphEventType.NodeCreated
+        };
+
+        return new GraphEvent
+        {
+            EventId = row.event_id,
+            EventType = eventType,
+            NodeId = row.node_id,
+            NodeType = row.node_type,
+            EdgeId = row.edge_id,
+            EdgeType = row.edge_type,
+            OccurredAt = row.occurred_at,
+            TriggeredBy = "system",
+            Metadata = string.IsNullOrEmpty(row.metadata) ? null : JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata, JsonOptions)
+        };
+    }
+
+    // Helper row type for Dapper (full schema - not currently used)
     private class GraphEventRow
     {
         public Guid event_id { get; set; }

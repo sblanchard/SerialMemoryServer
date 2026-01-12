@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using Dapper;
@@ -204,32 +205,43 @@ public sealed class LocalEncryptionService(
         // Get the encryption key
         var dataKey = await GetDecryptedKeyAsync(keyId, cancellationToken);
 
+        // Rent buffers from pool for crypto operations
+        var ciphertextBuffer = ArrayPool<byte>.Shared.Rent(plaintext.Length);
+        var tagBuffer = ArrayPool<byte>.Shared.Rent(TagSizeBytes);
+        var combinedBuffer = ArrayPool<byte>.Shared.Rent(plaintext.Length + TagSizeBytes);
+
         try
         {
             // Generate IV
             var iv = RandomNumberGenerator.GetBytes(IvSizeBytes);
 
-            // Encrypt using AES-GCM
+            // Encrypt using AES-GCM with Span
             using var aesGcm = new AesGcm(dataKey, TagSizeBytes);
 
-            var ciphertext = new byte[plaintext.Length];
-            var tag = new byte[TagSizeBytes];
+            var ciphertextSpan = ciphertextBuffer.AsSpan(0, plaintext.Length);
+            var tagSpan = tagBuffer.AsSpan(0, TagSizeBytes);
 
-            aesGcm.Encrypt(iv, plaintext, ciphertext, tag);
+            aesGcm.Encrypt(iv.AsSpan(), plaintext.AsSpan(), ciphertextSpan, tagSpan);
 
-            // Combine ciphertext and tag
-            var combined = new byte[ciphertext.Length + tag.Length];
-            Buffer.BlockCopy(ciphertext, 0, combined, 0, ciphertext.Length);
-            Buffer.BlockCopy(tag, 0, combined, ciphertext.Length, tag.Length);
+            // Combine ciphertext and tag using Span
+            var combinedSpan = combinedBuffer.AsSpan(0, plaintext.Length + TagSizeBytes);
+            ciphertextSpan.CopyTo(combinedSpan);
+            tagSpan.CopyTo(combinedSpan[plaintext.Length..]);
 
             // Compute content hash
-            var contentHash = Convert.ToHexString(SHA256.HashData(plaintext)).ToLowerInvariant();
+            var contentHash = Convert.ToHexString(SHA256.HashData(plaintext.AsSpan())).ToLowerInvariant();
+
+            // Create final array (must copy since we're returning pooled buffer)
+            var combined = combinedSpan.ToArray();
 
             return new EncryptedData(combined, iv, keyId, DefaultAlgorithm, contentHash);
         }
         finally
         {
-            Array.Clear(dataKey, 0, dataKey.Length);
+            CryptographicOperations.ZeroMemory(dataKey);
+            ArrayPool<byte>.Shared.Return(ciphertextBuffer, clearArray: true);
+            ArrayPool<byte>.Shared.Return(tagBuffer, clearArray: true);
+            ArrayPool<byte>.Shared.Return(combinedBuffer, clearArray: true);
         }
     }
 
@@ -240,33 +252,36 @@ public sealed class LocalEncryptionService(
         // Get the encryption key
         var dataKey = await GetDecryptedKeyAsync(encryptedData.KeyId, cancellationToken);
 
+        var ciphertextLength = encryptedData.Ciphertext.Length - TagSizeBytes;
+        var plaintextBuffer = ArrayPool<byte>.Shared.Rent(ciphertextLength);
+
         try
         {
-            // Split ciphertext and tag
-            var ciphertext = new byte[encryptedData.Ciphertext.Length - TagSizeBytes];
-            var tag = new byte[TagSizeBytes];
+            // Split ciphertext and tag using Span (no allocation)
+            var combinedSpan = encryptedData.Ciphertext.AsSpan();
+            var ciphertextSpan = combinedSpan[..ciphertextLength];
+            var tagSpan = combinedSpan[ciphertextLength..];
 
-            Buffer.BlockCopy(encryptedData.Ciphertext, 0, ciphertext, 0, ciphertext.Length);
-            Buffer.BlockCopy(encryptedData.Ciphertext, ciphertext.Length, tag, 0, TagSizeBytes);
-
-            // Decrypt using AES-GCM
+            // Decrypt using AES-GCM with Span
             using var aesGcm = new AesGcm(dataKey, TagSizeBytes);
 
-            var plaintext = new byte[ciphertext.Length];
-            aesGcm.Decrypt(encryptedData.Iv, ciphertext, tag, plaintext);
+            var plaintextSpan = plaintextBuffer.AsSpan(0, ciphertextLength);
+            aesGcm.Decrypt(encryptedData.Iv.AsSpan(), ciphertextSpan, tagSpan, plaintextSpan);
 
             // Verify content hash
-            var contentHash = Convert.ToHexString(SHA256.HashData(plaintext)).ToLowerInvariant();
+            var contentHash = Convert.ToHexString(SHA256.HashData(plaintextSpan)).ToLowerInvariant();
             if (contentHash != encryptedData.ContentHash)
             {
                 throw new CryptographicException("Content hash verification failed");
             }
 
-            return plaintext;
+            // Return copy (must copy since we're returning pooled buffer)
+            return plaintextSpan.ToArray();
         }
         finally
         {
-            Array.Clear(dataKey, 0, dataKey.Length);
+            CryptographicOperations.ZeroMemory(dataKey);
+            ArrayPool<byte>.Shared.Return(plaintextBuffer, clearArray: true);
         }
     }
 
@@ -355,35 +370,37 @@ public sealed class LocalEncryptionService(
 
         using var aesGcm = new AesGcm(_masterKey, TagSizeBytes);
 
-        var ciphertext = new byte[dataKey.Length];
-        var tag = new byte[TagSizeBytes];
-
-        aesGcm.Encrypt(iv, dataKey, ciphertext, tag);
-
         // Format: IV (12) + Ciphertext (32) + Tag (16) = 60 bytes
-        var result = new byte[IvSizeBytes + ciphertext.Length + TagSizeBytes];
-        Buffer.BlockCopy(iv, 0, result, 0, IvSizeBytes);
-        Buffer.BlockCopy(ciphertext, 0, result, IvSizeBytes, ciphertext.Length);
-        Buffer.BlockCopy(tag, 0, result, IvSizeBytes + ciphertext.Length, TagSizeBytes);
+        var resultLength = IvSizeBytes + dataKey.Length + TagSizeBytes;
+        var result = new byte[resultLength];
+        var resultSpan = result.AsSpan();
+
+        // Copy IV to start
+        iv.AsSpan().CopyTo(resultSpan);
+
+        // Encrypt directly into result buffer
+        var ciphertextSpan = resultSpan.Slice(IvSizeBytes, dataKey.Length);
+        var tagSpan = resultSpan.Slice(IvSizeBytes + dataKey.Length, TagSizeBytes);
+
+        aesGcm.Encrypt(iv.AsSpan(), dataKey.AsSpan(), ciphertextSpan, tagSpan);
 
         return result;
     }
 
     private byte[] DecryptKeyWithMaster(byte[] encryptedKey)
     {
-        // Extract IV, ciphertext, and tag
-        var iv = new byte[IvSizeBytes];
-        var ciphertext = new byte[encryptedKey.Length - IvSizeBytes - TagSizeBytes];
-        var tag = new byte[TagSizeBytes];
+        // Extract IV, ciphertext, and tag using Span (no allocation for slicing)
+        var encryptedSpan = encryptedKey.AsSpan();
+        var ciphertextLength = encryptedKey.Length - IvSizeBytes - TagSizeBytes;
 
-        Buffer.BlockCopy(encryptedKey, 0, iv, 0, IvSizeBytes);
-        Buffer.BlockCopy(encryptedKey, IvSizeBytes, ciphertext, 0, ciphertext.Length);
-        Buffer.BlockCopy(encryptedKey, IvSizeBytes + ciphertext.Length, tag, 0, TagSizeBytes);
+        var ivSpan = encryptedSpan[..IvSizeBytes];
+        var ciphertextSpan = encryptedSpan.Slice(IvSizeBytes, ciphertextLength);
+        var tagSpan = encryptedSpan.Slice(IvSizeBytes + ciphertextLength, TagSizeBytes);
 
         using var aesGcm = new AesGcm(_masterKey, TagSizeBytes);
 
-        var dataKey = new byte[ciphertext.Length];
-        aesGcm.Decrypt(iv, ciphertext, tag, dataKey);
+        var dataKey = new byte[ciphertextLength];
+        aesGcm.Decrypt(ivSpan, ciphertextSpan, tagSpan, dataKey.AsSpan());
 
         return dataKey;
     }
@@ -433,32 +450,19 @@ public sealed class LocalEncryptionService(
 /// <summary>
 /// Secure memory manager that integrates encryption with the memory store.
 /// </summary>
-public sealed class SecureMemoryManager
+public sealed class SecureMemoryManager(
+    ILocalEncryption encryption,
+    IKnowledgeGraphStore store,
+    ILogger<SecureMemoryManager> logger,
+    string defaultKeyName = "memory-encryption-key")
 {
-    private readonly ILocalEncryption _encryption;
-    private readonly IKnowledgeGraphStore _store;
-    private readonly ILogger<SecureMemoryManager> _logger;
-    private readonly string _defaultKeyName;
-
-    public SecureMemoryManager(
-        ILocalEncryption encryption,
-        IKnowledgeGraphStore store,
-        ILogger<SecureMemoryManager> logger,
-        string defaultKeyName = "memory-encryption-key")
-    {
-        _encryption = encryption;
-        _store = store;
-        _logger = logger;
-        _defaultKeyName = defaultKeyName;
-    }
-
     public async Task<Guid> IngestSecureMemoryAsync(
         string content,
         string? source = null,
         CancellationToken cancellationToken = default)
     {
         // Ensure encryption key exists
-        var key = await _encryption.GetActiveKeyAsync(_defaultKeyName, cancellationToken) ?? await _encryption.CreateKeyAsync(_defaultKeyName, cancellationToken);
+        var key = await encryption.GetActiveKeyAsync(defaultKeyName, cancellationToken) ?? await encryption.CreateKeyAsync(defaultKeyName, cancellationToken);
 
         // Create the memory first
         var memory = new Core.Models.Memory
@@ -470,12 +474,12 @@ public sealed class SecureMemoryManager
             UpdatedAt = DateTime.UtcNow
         };
 
-        var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
+        var memoryId = await store.CreateMemoryAsync(memory, cancellationToken);
 
         // Store encrypted version
-        await _encryption.StoreEncryptedMemoryAsync(memoryId, content, key.KeyId, cancellationToken);
+        await encryption.StoreEncryptedMemoryAsync(memoryId, content, key.KeyId, cancellationToken);
 
-        _logger.LogDebug("Ingested secure memory {MemoryId} with encryption key {KeyId}", memoryId, key.KeyId);
+        logger.LogDebug("Ingested secure memory {MemoryId} with encryption key {KeyId}", memoryId, key.KeyId);
 
         return memoryId;
     }
@@ -487,12 +491,12 @@ public sealed class SecureMemoryManager
         // Try encrypted store first
         try
         {
-            return await _encryption.RetrieveDecryptedMemoryAsync(memoryId, cancellationToken);
+            return await encryption.RetrieveDecryptedMemoryAsync(memoryId, cancellationToken);
         }
         catch (InvalidOperationException)
         {
             // Fall back to unencrypted store
-            var memory = await _store.GetMemoryByIdAsync(memoryId, cancellationToken);
+            var memory = await store.GetMemoryByIdAsync(memoryId, cancellationToken);
             return memory == null ? throw new InvalidOperationException($"Memory {memoryId} not found") : memory.Content;
         }
     }

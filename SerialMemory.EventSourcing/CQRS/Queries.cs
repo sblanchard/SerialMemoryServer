@@ -1,3 +1,4 @@
+using SerialMemory.Core.Interfaces;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Retrieval;
 

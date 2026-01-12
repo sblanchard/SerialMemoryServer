@@ -12,17 +12,9 @@ namespace SerialMemory.Infrastructure;
 /// Power-user service for direct memory manipulation.
 /// NO GUARD RAILS. NO SAFE MODE.
 /// </summary>
-public sealed class PostgresPowerUserService : IPowerUserService
+public sealed class PostgresPowerUserService(string connectionString, ILogger<PostgresPowerUserService> logger)
+    : IPowerUserService
 {
-    private readonly string _connectionString;
-    private readonly ILogger<PostgresPowerUserService> _logger;
-
-    public PostgresPowerUserService(string connectionString, ILogger<PostgresPowerUserService> logger)
-    {
-        _connectionString = connectionString;
-        _logger = logger;
-    }
-
     // ==========================================
     // RAW MEMORY EDITING
     // ==========================================
@@ -33,7 +25,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool skipHashUpdate = false,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var previousHash = await conn.ExecuteScalarAsync<string?>(
@@ -49,7 +41,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Content = newContent, Hash = newHash });
 
-        _logger.LogWarning("[POWER-USER] Direct content edit on {MemoryId}, skipHash={Skip}", memoryId, skipHashUpdate);
+        logger.LogWarning("[POWER-USER] Direct content edit on {MemoryId}, skipHash={Skip}", memoryId, skipHashUpdate);
 
         return new RawEditResult
         {
@@ -66,7 +58,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         MemoryMetadataUpdate update,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var changes = new Dictionary<string, object>();
@@ -126,7 +118,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
         var rows = await conn.ExecuteAsync(sql, parameters);
 
-        _logger.LogWarning("[POWER-USER] Metadata edit on {MemoryId}: {Changes}", memoryId, string.Join(", ", changes.Keys));
+        logger.LogWarning("[POWER-USER] Metadata edit on {MemoryId}: {Changes}", memoryId, string.Join(", ", changes.Keys));
 
         return new RawEditResult
         {
@@ -141,7 +133,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float confidence,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var previousConfidence = await conn.ExecuteScalarAsync<float?>(
@@ -155,7 +147,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Confidence = confidence });
 
-        _logger.LogWarning("[POWER-USER] Force confidence on {MemoryId}: {Prev} -> {New}",
+        logger.LogWarning("[POWER-USER] Force confidence on {MemoryId}: {Prev} -> {New}",
             memoryId, previousConfidence, confidence);
 
         return new RawEditResult
@@ -175,7 +167,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float[] embedding,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var vectorString = $"[{string.Join(",", embedding)}]";
@@ -187,7 +179,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             WHERE id = @Id
             """, new { Id = memoryId, Embedding = vectorString });
 
-        _logger.LogWarning("[POWER-USER] Embedding replacement on {MemoryId}, dim={Dim}", memoryId, embedding.Length);
+        logger.LogWarning("[POWER-USER] Embedding replacement on {MemoryId}, dim={Dim}", memoryId, embedding.Length);
 
         return new RawEditResult
         {
@@ -206,7 +198,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool cascade = false,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -232,7 +224,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] HARD DELETE on {MemoryId}, cascade={Cascade}, deleted={Rows}",
+            logger.LogWarning("[POWER-USER] HARD DELETE on {MemoryId}, cascade={Cascade}, deleted={Rows}",
                 memoryId, cascade, JsonSerializer.Serialize(deletedRows));
 
             return new RawEditResult
@@ -301,7 +293,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float? minSeverity = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflicts = await conn.QueryAsync<ConflictRow>("""
@@ -375,6 +367,75 @@ public sealed class PostgresPowerUserService : IPowerUserService
         };
     }
 
+    public async Task<List<MemoryConflict>> GetConflictsAsync(
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        var conflicts = await conn.QueryAsync<ConflictRow>("""
+            SELECT
+                c.id AS conflict_id,
+                c.memory_a_id,
+                c.memory_b_id,
+                ma.content AS content_a,
+                mb.content AS content_b,
+                c.severity,
+                c.conflict_type,
+                c.reason,
+                c.semantic_similarity,
+                c.detected_at,
+                c.is_resolved,
+                c.resolved_by,
+                c.resolution
+            FROM memory_conflicts c
+            LEFT JOIN memories ma ON c.memory_a_id = ma.id
+            LEFT JOIN memories mb ON c.memory_b_id = mb.id
+            ORDER BY c.severity DESC, c.detected_at DESC
+            LIMIT @Limit
+            """, new { Limit = limit });
+
+        return conflicts.Select(c => new MemoryConflict
+        {
+            ConflictId = c.conflict_id,
+            MemoryA = c.memory_a_id,
+            MemoryB = c.memory_b_id,
+            ContentA = c.content_a,
+            ContentB = c.content_b,
+            Severity = c.severity,
+            ConflictType = c.conflict_type ?? "contradiction",
+            Reason = c.reason,
+            SemanticSimilarity = c.semantic_similarity,
+            DetectedAt = c.detected_at,
+            IsResolved = c.is_resolved,
+            ResolvedBy = c.resolved_by,
+            Resolution = c.resolution
+        }).ToList();
+    }
+
+    public async Task ResolveConflictAsync(
+        Guid conflictId,
+        string resolution,
+        Guid? winnerId = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        await conn.ExecuteAsync("""
+            UPDATE memory_conflicts
+            SET is_resolved = TRUE,
+                resolved_by = @WinnerId,
+                resolution = @Resolution,
+                resolved_at = NOW()
+            WHERE id = @Id
+            """, new { Id = conflictId, WinnerId = winnerId, Resolution = resolution });
+
+        logger.LogWarning("[POWER-USER] Resolved conflict {ConflictId}: resolution={Resolution}, winner={Winner}",
+            conflictId, resolution, winnerId);
+    }
+
     private async Task<List<ConflictCluster>> GetConflictClustersAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         // Find memories that appear in multiple conflicts
@@ -406,7 +467,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflicts = await conn.QueryAsync<ConflictRow>("""
@@ -455,7 +516,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         ConflictResolutionAction action,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -507,7 +568,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] Force resolved conflict {ConflictId}: winner={Winner}, action={Action}",
+            logger.LogWarning("[POWER-USER] Force resolved conflict {ConflictId}: winner={Winner}, action={Action}",
                 conflictId, winnerId, action);
 
             return new ConflictResolution
@@ -532,7 +593,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         string? reason = null,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var conflictId = Guid.CreateVersion7();
@@ -545,7 +606,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
                 reason = COALESCE(@Reason, memory_conflicts.reason)
             """, new { Id = conflictId, A = memoryA, B = memoryB, Severity = severity, Reason = reason });
 
-        _logger.LogWarning("[POWER-USER] Manual contradiction flag: {A} <-> {B}, severity={Severity}",
+        logger.LogWarning("[POWER-USER] Manual contradiction flag: {A} <-> {B}, severity={Severity}",
             memoryA, memoryB, severity);
 
         return new MemoryConflict
@@ -567,22 +628,23 @@ public sealed class PostgresPowerUserService : IPowerUserService
         Guid memoryId,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Use correct column names for memory_events table
         var events = await conn.QueryAsync<EventRow>("""
             SELECT
-                id AS event_id,
-                sequence_number,
-                event_type,
-                memory_id,
-                timestamp,
-                payload::text AS raw_payload,
-                actor_id,
-                correlation_id
+                event_id,
+                global_sequence AS sequence_number,
+                event_type::text AS event_type,
+                stream_id AS memory_id,
+                created_at AS timestamp,
+                event_data::text AS raw_payload,
+                created_by AS actor_id,
+                metadata->>'correlation_id' AS correlation_id
             FROM memory_events
-            WHERE memory_id = @Id
-            ORDER BY sequence_number
+            WHERE stream_id = @Id
+            ORDER BY global_sequence
             """, new { Id = memoryId });
 
         var eventList = events.Select(e => new RawEvent
@@ -613,27 +675,180 @@ public sealed class PostgresPowerUserService : IPowerUserService
         };
     }
 
+    public async Task<FullTraceDetail> GetFullTraceAsync(
+        Guid memoryId,
+        CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        // 1. Get memory details
+        var memory = await conn.QueryFirstOrDefaultAsync<MemoryRow>("""
+            SELECT id, content, layer, source, content_hash,
+                   parent_memory_ids, created_at, updated_at, metadata
+            FROM memories
+            WHERE id = @Id
+            """, new { Id = memoryId });
+
+        if (memory == null)
+        {
+            return new FullTraceDetail
+            {
+                MemoryId = memoryId,
+                Content = "[Memory not found]",
+                RawJson = "{\"error\": \"Memory not found\"}"
+            };
+        }
+
+        // 2. Get events from memory_events
+        var events = await conn.QueryAsync<EventRow>("""
+            SELECT
+                event_id,
+                global_sequence AS sequence_number,
+                event_type::text AS event_type,
+                stream_id AS memory_id,
+                created_at AS timestamp,
+                event_data::text AS raw_payload,
+                created_by AS actor_id,
+                metadata->>'reason' AS correlation_id
+            FROM memory_events
+            WHERE stream_id = @Id
+            ORDER BY global_sequence
+            """, new { Id = memoryId });
+
+        var eventList = events.Select(e => new TraceEventDetail
+        {
+            EventId = e.event_id,
+            SequenceNumber = e.sequence_number,
+            EventType = e.event_type ?? "",
+            Timestamp = e.timestamp,
+            ActorId = e.actor_id,
+            Reason = e.correlation_id,
+            PayloadJson = e.raw_payload ?? "{}"
+        }).ToList();
+
+        // 3. Get descendants (memories that have this memory as parent)
+        var descendants = await conn.QueryAsync<Guid>("""
+            SELECT id FROM memories
+            WHERE @Id = ANY(parent_memory_ids)
+            """, new { Id = memoryId });
+
+        // 4. Get timeline snapshots
+        var timeline = await conn.QueryAsync<TimelineRow>("""
+            SELECT id, snapshot_at, event_type, layer, confidence_score, content
+            FROM memory_timeline
+            WHERE memory_id = @Id
+            ORDER BY snapshot_at DESC
+            LIMIT 20
+            """, new { Id = memoryId });
+
+        var timelineList = timeline.Select(t => new TimelineSnapshot
+        {
+            Id = t.id,
+            SnapshotAt = t.snapshot_at,
+            EventType = t.event_type ?? "",
+            Layer = t.layer ?? "",
+            Confidence = t.confidence_score,
+            ContentPreview = t.content?.Length > 200 ? t.content[..200] + "..." : t.content
+        }).ToList();
+
+        // 5. Get conflicts involving this memory
+        var conflicts = await conn.QueryAsync<ConflictRow>("""
+            SELECT id AS conflict_id, memory_a_id, memory_b_id, severity, conflict_type, is_resolved
+            FROM memory_conflicts
+            WHERE memory_a_id = @Id OR memory_b_id = @Id
+            ORDER BY severity DESC
+            LIMIT 10
+            """, new { Id = memoryId });
+
+        var conflictList = conflicts.Select(c => new ConflictSummary
+        {
+            ConflictId = c.conflict_id,
+            OtherMemoryId = c.memory_a_id == memoryId ? c.memory_b_id : c.memory_a_id,
+            Severity = c.severity,
+            ConflictType = c.conflict_type ?? "unknown",
+            IsResolved = c.is_resolved
+        }).ToList();
+
+        // Build raw JSON
+        var rawJson = JsonSerializer.Serialize(new
+        {
+            id = memoryId,
+            content = memory.content,
+            layer = memory.layer,
+            source = memory.source,
+            content_hash = memory.content_hash,
+            parent_memory_ids = memory.parent_memory_ids,
+            created_at = memory.created_at,
+            updated_at = memory.updated_at,
+            metadata = memory.metadata
+        }, new JsonSerializerOptions { WriteIndented = true });
+
+        return new FullTraceDetail
+        {
+            MemoryId = memoryId,
+            Content = memory.content ?? "",
+            Layer = memory.layer ?? "L0_RAW",
+            Confidence = 1.0, // Default if not available
+            IsActive = true,
+            ContentHash = memory.content_hash,
+            Source = memory.source,
+            CreatedAt = memory.created_at,
+            UpdatedAt = memory.updated_at,
+            Events = eventList,
+            CausalParents = memory.parent_memory_ids?.ToList() ?? [],
+            Descendants = descendants.ToList(),
+            Timeline = timelineList,
+            Conflicts = conflictList,
+            RawJson = rawJson
+        };
+    }
+
+    private sealed class MemoryRow
+    {
+        public Guid id { get; init; }
+        public string? content { get; init; }
+        public string? layer { get; init; }
+        public string? source { get; init; }
+        public string? content_hash { get; init; }
+        public Guid[]? parent_memory_ids { get; init; }
+        public DateTimeOffset created_at { get; init; }
+        public DateTimeOffset? updated_at { get; init; }
+        public string? metadata { get; init; }
+    }
+
+    private sealed class TimelineRow
+    {
+        public Guid id { get; init; }
+        public DateTimeOffset snapshot_at { get; init; }
+        public string? event_type { get; init; }
+        public string? layer { get; init; }
+        public decimal confidence_score { get; init; }
+        public string? content { get; init; }
+    }
+
     public async Task<List<RawEvent>> GetRawEventsByTypeAsync(
         string eventType,
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Use correct column names for memory_events table
         var events = await conn.QueryAsync<EventRow>("""
             SELECT
-                id AS event_id,
-                sequence_number,
-                event_type,
-                memory_id,
-                timestamp,
-                payload::text AS raw_payload,
-                actor_id,
-                correlation_id
+                event_id,
+                global_sequence AS sequence_number,
+                event_type::text AS event_type,
+                stream_id AS memory_id,
+                created_at AS timestamp,
+                event_data::text AS raw_payload,
+                created_by AS actor_id,
+                metadata->>'correlation_id' AS correlation_id
             FROM memory_events
-            WHERE event_type = @Type
-            ORDER BY sequence_number DESC
+            WHERE event_type::text = @Type
+            ORDER BY global_sequence DESC
             LIMIT @Limit
             """, new { Type = eventType, Limit = limit });
 
@@ -656,22 +871,22 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 1000,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var events = await conn.QueryAsync<EventRow>("""
             SELECT
-                id AS event_id,
-                sequence_number,
-                event_type,
-                memory_id,
-                timestamp,
-                payload::text AS raw_payload,
-                actor_id,
-                correlation_id
+                event_id,
+                global_sequence AS sequence_number,
+                event_type::text AS event_type,
+                stream_id AS memory_id,
+                created_at AS timestamp,
+                event_data::text AS raw_payload,
+                created_by AS actor_id,
+                metadata->>'correlation_id' AS correlation_id
             FROM memory_events
-            WHERE sequence_number > @From
-            ORDER BY sequence_number
+            WHERE global_sequence > @From
+            ORDER BY global_sequence
             LIMIT @Limit
             """, new { From = fromSequence, Limit = limit });
 
@@ -696,10 +911,10 @@ public sealed class PostgresPowerUserService : IPowerUserService
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
-        _logger.LogWarning("[POWER-USER] RAW SQL EXECUTION: {Sql}", sql);
+        logger.LogWarning("[POWER-USER] RAW SQL EXECUTION: {Sql}", sql);
 
         try
         {
@@ -770,13 +985,13 @@ public sealed class PostgresPowerUserService : IPowerUserService
         int limit = 100,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var mutations = await conn.QueryAsync<MutationRow>("""
             SELECT
                 event_id AS mutation_id,
-                sequence_number,
+                0::bigint AS sequence_number,
                 event_type AS mutation_type,
                 node_id,
                 edge_id,
@@ -790,7 +1005,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
                 triggered_by
             FROM graph_events
             WHERE (@Since IS NULL OR occurred_at > @Since)
-            ORDER BY sequence_number DESC
+            ORDER BY occurred_at DESC
             LIMIT @Limit
             """, new { Since = since, Limit = limit });
 
@@ -832,7 +1047,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         float confidence = 1.0f,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var edgeId = Guid.CreateVersion7();
@@ -842,7 +1057,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
             VALUES (@Id, @Source, @Target, @Type, @Confidence, NOW())
             """, new { Id = edgeId, Source = sourceId, Target = targetId, Type = edgeType, Confidence = confidence });
 
-        _logger.LogWarning("[POWER-USER] Force edge creation: {Source} --[{Type}]--> {Target}", sourceId, edgeType, targetId);
+        logger.LogWarning("[POWER-USER] Force edge creation: {Source} --[{Type}]--> {Target}", sourceId, edgeType, targetId);
 
         return new GraphMutation
         {
@@ -860,7 +1075,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         bool cascadeEdges = true,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -882,7 +1097,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
 
             await tx.CommitAsync(ct);
 
-            _logger.LogWarning("[POWER-USER] Force node deletion: {NodeId}, cascade={Cascade}", nodeId, cascadeEdges);
+            logger.LogWarning("[POWER-USER] Force node deletion: {NodeId}, cascade={Cascade}", nodeId, cascadeEdges);
 
             return new GraphMutation
             {
@@ -904,7 +1119,7 @@ public sealed class PostgresPowerUserService : IPowerUserService
         long toSequence,
         CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
         var mutations = await conn.QueryAsync<MutationRow>("""

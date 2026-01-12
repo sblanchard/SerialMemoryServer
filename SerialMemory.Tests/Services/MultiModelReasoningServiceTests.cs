@@ -17,7 +17,6 @@ public class MultiModelReasoningServiceTests
     private readonly Mock<IKnowledgeGraphStore> _storeMock;
     private readonly Mock<IEngineeringReasoningService> _ruleBasedMock;
     private readonly Mock<IReasoningModelFactory> _factoryMock;
-    private readonly Mock<ILogger<MultiModelReasoningService>> _loggerMock;
     private readonly MultiModelReasoningService _service;
 
     public MultiModelReasoningServiceTests()
@@ -25,13 +24,13 @@ public class MultiModelReasoningServiceTests
         _storeMock = new Mock<IKnowledgeGraphStore>();
         _ruleBasedMock = new Mock<IEngineeringReasoningService>();
         _factoryMock = new Mock<IReasoningModelFactory>();
-        _loggerMock = new Mock<ILogger<MultiModelReasoningService>>();
+        var loggerMock = new Mock<ILogger<MultiModelReasoningService>>();
 
         _service = new MultiModelReasoningService(
             _storeMock.Object,
             _ruleBasedMock.Object,
             _factoryMock.Object,
-            _loggerMock.Object);
+            loggerMock.Object);
 
         // Default setup - empty data
         _storeMock.Setup(s => s.GetAllEntitiesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -128,7 +127,7 @@ public class MultiModelReasoningServiceTests
         var result = await _service.ReasonAsync();
 
         // Assert
-        result.TotalDurationMs.Should().BeGreaterOrEqualTo(100);
+        result.TotalDurationMs.Should().BeGreaterThanOrEqualTo(100);
     }
 
     #endregion

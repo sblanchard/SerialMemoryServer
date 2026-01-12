@@ -55,11 +55,12 @@ CREATE TABLE IF NOT EXISTS billing_cycles (
     is_current BOOLEAN NOT NULL DEFAULT TRUE,
     closed_at TIMESTAMPTZ,
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT billing_cycles_tenant_workspace_current UNIQUE (tenant_id, workspace_id, is_current)
-        WHERE is_current = TRUE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Partial unique index for current billing cycle per tenant/workspace
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_cycles_current_unique
+    ON billing_cycles(tenant_id, workspace_id) WHERE is_current = TRUE;
 
 -- Usage events (individual API call records)
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -111,8 +112,31 @@ CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_date ON usage_daily_rollups(r
 
 -- Billing cycle indexes
 CREATE INDEX IF NOT EXISTS idx_billing_cycles_tenant ON billing_cycles(tenant_id, workspace_id);
-CREATE INDEX IF NOT EXISTS idx_billing_cycles_current ON billing_cycles(tenant_id, workspace_id) WHERE is_current = TRUE;
 CREATE INDEX IF NOT EXISTS idx_billing_cycles_dates ON billing_cycles(cycle_start, cycle_end);
+
+-- Enable RLS on usage/billing tables
+ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_cycles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_daily_rollups ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policies for usage/billing tables
+DROP POLICY IF EXISTS tenant_isolation_usage_events ON usage_events;
+CREATE POLICY tenant_isolation_usage_events ON usage_events
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_billing_cycles ON billing_cycles;
+CREATE POLICY tenant_isolation_billing_cycles ON billing_cycles
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_usage_daily_rollups ON usage_daily_rollups;
+CREATE POLICY tenant_isolation_usage_daily_rollups ON usage_daily_rollups
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 -- Insert default plans
 INSERT INTO tenant_plans (plan_name, display_name, credits_per_cycle, cycle_days, max_memories, max_entities)

@@ -94,6 +94,10 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Set a system-level tenant context to bypass RLS (empty = show all for introspection)
+        // Use a null-safe UUID to prevent "invalid input syntax for type uuid" errors
+        await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
+
         var snapshot = new IntrospectionSnapshot
         {
             Timestamp = DateTimeOffset.UtcNow,
@@ -116,12 +120,25 @@ public sealed class IntrospectionBackgroundService : BackgroundService
 
         if (string.IsNullOrEmpty(connectionString)) return;
 
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(ct);
+        // Use separate connections for parallel queries (Npgsql doesn't support concurrent commands on one connection)
+        async Task<JobBacklogSnapshot> GetJobBacklogAsync()
+        {
+            await using var conn = new NpgsqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+            await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
+            return await BuildJobBacklogAsync(conn, ct);
+        }
 
-        // Emit granular snapshots in parallel
-        var jobTask = BuildJobBacklogAsync(conn, ct);
-        var traceTask = BuildActiveTracesAsync(conn, ct);
+        async Task<ActiveTracesSnapshot> GetActiveTracesAsync()
+        {
+            await using var conn = new NpgsqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+            await conn.ExecuteAsync("SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
+            return await BuildActiveTracesAsync(conn, ct);
+        }
+
+        var jobTask = GetJobBacklogAsync();
+        var traceTask = GetActiveTracesAsync();
 
         await Task.WhenAll(jobTask, traceTask);
 
@@ -296,7 +313,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
                 COUNT(*) FILTER (WHERE status IN ('fail', 'warning', 'error')) AS issues_detected,
                 0 AS issues_resolved
             FROM security_events
-            WHERE created_utc > NOW() - INTERVAL '24 hours';
+            WHERE created_at > NOW() - INTERVAL '24 hours';
 
             -- Active scans
             SELECT
@@ -325,12 +342,12 @@ public sealed class IntrospectionBackgroundService : BackgroundService
                 COALESCE(details->>'message', event_type) AS description,
                 target_id,
                 target_type,
-                created_utc AS detected_at,
+                created_at AS detected_at,
                 FALSE AS resolved
             FROM security_events
             WHERE status IN ('fail', 'warning', 'error')
-            AND created_utc > NOW() - INTERVAL '24 hours'
-            ORDER BY created_utc DESC
+            AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC
             LIMIT 10;
         ";
 
@@ -400,35 +417,35 @@ public sealed class IntrospectionBackgroundService : BackgroundService
         const string sql = @"
             -- Mutation counts
             SELECT
-                COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 minute') AS mutations_last_min,
-                COUNT(*) FILTER (WHERE created_utc > NOW() - INTERVAL '1 hour') AS mutations_last_hour,
-                MAX(id) AS last_id
+                COUNT(*) FILTER (WHERE occurred_at > NOW() - INTERVAL '1 minute') AS mutations_last_min,
+                COUNT(*) FILTER (WHERE occurred_at > NOW() - INTERVAL '1 hour') AS mutations_last_hour,
+                (SELECT event_id FROM graph_events ORDER BY occurred_at DESC LIMIT 1) AS last_id
             FROM graph_events
-            WHERE created_utc > NOW() - INTERVAL '1 hour';
+            WHERE occurred_at > NOW() - INTERVAL '1 hour';
 
             -- Recent mutations
             SELECT
-                id AS mutation_id,
+                event_id AS mutation_id,
                 event_type AS mutation_type,
                 node_id,
                 edge_id,
                 node_type,
                 edge_type,
-                created_utc AS timestamp,
+                occurred_at AS timestamp,
                 tenant_id
             FROM graph_events
-            ORDER BY created_utc DESC
+            ORDER BY occurred_at DESC
             LIMIT 20;
 
-            -- Stats from entities and relationships
+            -- Stats from entities and relationships (handle both PascalCase enum and snake_case legacy)
             SELECT
                 (SELECT COUNT(*) FROM entities) AS total_nodes,
                 (SELECT COUNT(*) FROM entity_relationships) AS total_edges,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'node_%' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_updated' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'node_deleted' AND created_utc > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type LIKE 'edge_%' AND created_utc > NOW() - INTERVAL '24 hours') AS edges_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'edge_deleted' AND created_utc > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
+                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeCreated', 'node_created') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeUpdated', 'node_updated') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeDeleted', 'node_deleted') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('EdgeCreated', 'edge_created') AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('EdgeDeleted', 'edge_deleted') AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
         ";
 
         await using var multi = await conn.QueryMultipleAsync(sql);

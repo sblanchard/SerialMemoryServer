@@ -47,7 +47,8 @@ public static class TelemetryExtensions
                 metrics.AddPrometheusExporter();
 
                 // .NET Runtime metrics (GC, threadpool, etc.)
-                metrics.AddRuntimeInstrumentation();
+                metrics.AddAspNetCoreInstrumentation();
+                metrics.AddHttpClientInstrumentation();
 
                 // Process metrics (CPU, memory, handles)
                 metrics.AddProcessInstrumentation();

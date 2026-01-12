@@ -26,6 +26,27 @@ public interface IAdminService
     /// </summary>
     Task<SystemHealthResult> GetSystemHealthAsync(
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Searches for tenants by name, slug, or email.
+    /// </summary>
+    Task<IReadOnlyList<TenantSearchResult>> SearchTenantsAsync(
+        string query,
+        int limit = 20,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Result of tenant search.
+/// </summary>
+public sealed record TenantSearchResult
+{
+    public required Guid TenantId { get; init; }
+    public required string Name { get; init; }
+    public required string Slug { get; init; }
+    public string? Email { get; init; }
+    public required string Status { get; init; }
+    public required DateTimeOffset CreatedAt { get; init; }
 }
 
 /// <summary>

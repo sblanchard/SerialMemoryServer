@@ -86,7 +86,7 @@ public sealed class StripePriceMapping
 /// </summary>
 public sealed class CreateCheckoutRequest
 {
-    public required string TenantId { get; init; }
+    public string? TenantId { get; init; }
     public required string PlanName { get; init; }
     public string? SuccessUrl { get; init; }
     public string? CancelUrl { get; init; }
@@ -165,6 +165,8 @@ public sealed class StripeConfig
     public required string WebhookSecret { get; init; }
     public string? FreePriceId { get; init; }
     public required string ProPriceId { get; init; }
+    public string? ProPlusPriceId { get; init; }
+    public string? TeamPriceId { get; init; }
     public required string EnterprisePriceId { get; init; }
     public string DefaultSuccessUrl { get; init; } = "/dashboard/billing?success=true";
     public string DefaultCancelUrl { get; init; } = "/dashboard/billing?canceled=true";

@@ -3,55 +3,78 @@ using SerialMemory.Core.Interfaces;
 namespace SerialMemory.Core.Services;
 
 /// <summary>
-/// AsyncLocal-based tenant context for ambient tenant information.
-/// Thread-safe and async-safe.
+/// Scoped tenant context for ambient tenant information.
+/// Uses instance state (not static AsyncLocal) for proper DI scoping.
 /// </summary>
 public sealed class TenantContext : IMutableTenantContext
 {
-    private static readonly AsyncLocal<TenantContextData?> _current = new();
+    private TenantContextData? _data;
 
-    public string TenantId => _current.Value?.TenantId
+    public string TenantId => _data?.TenantId
         ?? throw new InvalidOperationException("Tenant context not set. Call SetContext before accessing TenantId.");
 
-    public string WorkspaceId => _current.Value?.WorkspaceId
+    public string WorkspaceId => _data?.WorkspaceId
         ?? throw new InvalidOperationException("Tenant context not set. Call SetContext before accessing WorkspaceId.");
 
-    public string? UserId => _current.Value?.UserId;
+    public string? UserId => _data?.UserId;
 
-    public Guid? SessionId => _current.Value?.SessionId;
+    public string? UserEmail => _data?.UserEmail;
 
-    public void SetContext(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
+    public string? UserRole => _data?.UserRole;
+
+    public Guid? SessionId => _data?.SessionId;
+
+    public bool IsLabMode => _data?.IsLabMode ?? false;
+
+    public bool AllowPowerMode => _data?.AllowPowerMode ?? false;
+
+    public bool IsRootAdmin => _data?.IsRootAdmin ?? false;
+
+    public bool IsOwner => string.Equals(UserRole, "owner", StringComparison.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> Scopes => _data?.Scopes ?? Array.Empty<string>();
+
+    public void SetContext(
+        string tenantId,
+        string workspaceId,
+        string? userId = null,
+        string? userEmail = null,
+        string? userRole = null,
+        Guid? sessionId = null,
+        bool isLabMode = false,
+        bool allowPowerMode = false,
+        bool isRootAdmin = false,
+        IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
 
-        _current.Value = new TenantContextData(tenantId, workspaceId, userId, sessionId);
+        _data = new TenantContextData(
+            tenantId,
+            workspaceId,
+            userId,
+            userEmail,
+            userRole,
+            sessionId,
+            isLabMode,
+            allowPowerMode,
+            isRootAdmin,
+            scopes ?? Array.Empty<string>());
     }
 
     public void Clear()
     {
-        _current.Value = null;
-    }
-
-    /// <summary>
-    /// Creates a scope that automatically clears context on disposal.
-    /// </summary>
-    public static IDisposable CreateScope(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
-    {
-        var context = new TenantContext();
-        context.SetContext(tenantId, workspaceId, userId, sessionId);
-        return new TenantContextScope(context);
+        _data = null;
     }
 
     /// <summary>
     /// Tries to get the current tenant context without throwing.
     /// </summary>
-    public static bool TryGetCurrent(out ITenantContext? context)
+    public bool TryGetCurrent(out ITenantContext? context)
     {
-        var data = _current.Value;
-        if (data != null)
+        if (_data != null)
         {
-            context = new TenantContext();
+            context = this;
             return true;
         }
         context = null;
@@ -61,28 +84,19 @@ public sealed class TenantContext : IMutableTenantContext
     /// <summary>
     /// Gets whether a tenant context is currently set.
     /// </summary>
-    public static bool IsSet => _current.Value != null;
+    public bool IsSet => _data != null;
 
     private sealed record TenantContextData(
         string TenantId,
         string WorkspaceId,
         string? UserId,
-        Guid? SessionId);
-
-    private sealed class TenantContextScope : IDisposable
-    {
-        private readonly TenantContext _context;
-
-        public TenantContextScope(TenantContext context)
-        {
-            _context = context;
-        }
-
-        public void Dispose()
-        {
-            _context.Clear();
-        }
-    }
+        string? UserEmail,
+        string? UserRole,
+        Guid? SessionId,
+        bool IsLabMode,
+        bool AllowPowerMode,
+        bool IsRootAdmin,
+        IReadOnlyList<string> Scopes);
 }
 
 /// <summary>
@@ -90,7 +104,17 @@ public sealed class TenantContext : IMutableTenantContext
 /// </summary>
 public sealed class FixedTenantContext : ITenantContext
 {
-    public FixedTenantContext(string tenantId, string workspaceId, string? userId = null, Guid? sessionId = null)
+    public FixedTenantContext(
+        string tenantId,
+        string workspaceId,
+        string? userId = null,
+        string? userEmail = null,
+        string? userRole = null,
+        Guid? sessionId = null,
+        bool isLabMode = false,
+        bool allowPowerMode = false,
+        bool isRootAdmin = false,
+        IReadOnlyList<string>? scopes = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
@@ -98,16 +122,35 @@ public sealed class FixedTenantContext : ITenantContext
         TenantId = tenantId;
         WorkspaceId = workspaceId;
         UserId = userId;
+        UserEmail = userEmail;
+        UserRole = userRole;
         SessionId = sessionId;
+        IsLabMode = isLabMode;
+        AllowPowerMode = allowPowerMode;
+        IsRootAdmin = isRootAdmin;
+        Scopes = scopes ?? Array.Empty<string>();
     }
 
     public string TenantId { get; }
     public string WorkspaceId { get; }
     public string? UserId { get; }
+    public string? UserEmail { get; }
+    public string? UserRole { get; }
     public Guid? SessionId { get; }
+    public bool IsLabMode { get; }
+    public bool AllowPowerMode { get; }
+    public bool IsRootAdmin { get; }
+    public bool IsOwner => string.Equals(UserRole, "owner", StringComparison.OrdinalIgnoreCase);
+    public IReadOnlyList<string> Scopes { get; }
 
     /// <summary>
-    /// Creates a default self-hosted tenant context.
+    /// Creates a default self-hosted tenant context with full power mode access.
     /// </summary>
-    public static FixedTenantContext SelfHosted => new("self", "default");
+    public static FixedTenantContext SelfHosted => new(
+        "00000000-0000-0000-0000-000000000000",
+        "default",
+        userRole: "owner",
+        isLabMode: true,
+        allowPowerMode: true,
+        scopes: new[] { "serialmemory.core", "serialmemory.admin", "serialmemory.export", "serialmemory.delete", "serialmemory.power" });
 }

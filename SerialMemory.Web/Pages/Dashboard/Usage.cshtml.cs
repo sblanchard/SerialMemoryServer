@@ -1,28 +1,29 @@
-using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using SerialMemory.Web.Services;
 
 namespace SerialMemory.Web.Pages.Dashboard;
 
 [Authorize]
 public sealed class UsageModel : PageModel
 {
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ApiClientService _apiClient;
 
-    public UsageModel(IHttpClientFactory httpClientFactory)
+    public UsageModel(ApiClientService apiClient)
     {
-        _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
     }
 
     public decimal CreditsUsed { get; set; }
-    public decimal CreditsAllocated { get; set; } = 100;
+    public decimal CreditsAllocated { get; set; } = 1000; // Free plan default
     public decimal CreditsRemaining => CreditsAllocated - CreditsUsed;
     public int UsagePercent => CreditsAllocated > 0 ? (int)Math.Min(100, (CreditsUsed / CreditsAllocated) * 100) : 0;
     public int TotalOperations { get; set; }
     public DateTimeOffset? CycleEnd { get; set; }
     public int DaysRemaining => CycleEnd.HasValue ? Math.Max(0, (int)(CycleEnd.Value - DateTimeOffset.UtcNow).TotalDays) : 30;
-    public bool IsSampleData { get; set; }
+    // IsSampleData is always false - we never show fake data
+    public bool IsSampleData => false;
 
     public int CurrentRatePerMinute { get; set; }
     public int? RateLimitPerMinute { get; set; }
@@ -38,16 +39,9 @@ public sealed class UsageModel : PageModel
 
     public async Task<IActionResult> OnPostExportAsync()
     {
-        var token = GetAuthToken();
-        if (string.IsNullOrEmpty(token))
-        {
-            return Unauthorized();
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var client = _apiClient.CreateClient();
 
             var response = await client.GetAsync("/tenant/usage/export?format=csv");
 
@@ -62,7 +56,9 @@ public sealed class UsageModel : PageModel
             // API unavailable
         }
 
-        // Fallback: generate simple CSV
+        // Fallback: load data and generate CSV
+        await LoadUsageDataAsync();
+
         var csv = "Date,Operation,Count,Credits\n";
         foreach (var op in UsageByOperation)
         {
@@ -76,7 +72,7 @@ public sealed class UsageModel : PageModel
     {
         try
         {
-            var client = _httpClientFactory.CreateClient("Api");
+            var client = _apiClient.CreateClient("Api");
 
             // Get current usage from /api/usage/current
             var currentTask = client.GetAsync("/api/usage/current");
@@ -136,28 +132,14 @@ public sealed class UsageModel : PageModel
         }
         catch (HttpRequestException)
         {
-            // API unavailable - use sample data
-            IsSampleData = true;
-            CreditsUsed = 25m;
-            TotalOperations = 42;
+            // API unavailable - show zeros, not fake data
+            // CreditsUsed defaults to 0, CreditsAllocated defaults to 1000
+            // UsageByOperation and DailyUsage default to empty lists
             CycleEnd = DateTimeOffset.UtcNow.AddDays(30);
-            UsageByOperation = GenerateSampleOperationUsage();
-            DailyUsage = GenerateSampleDailyUsage();
         }
 
-        // If no real usage data, show sample data for demo purposes
-        if (UsageByOperation.Count == 0 && DailyUsage.Count == 0)
-        {
-            IsSampleData = true;
-            if (CreditsUsed == 0)
-            {
-                CreditsUsed = 25m;
-                TotalOperations = 42;
-                CycleEnd = DateTimeOffset.UtcNow.AddDays(30);
-            }
-            UsageByOperation = GenerateSampleOperationUsage();
-            DailyUsage = GenerateSampleDailyUsage();
-        }
+        // No sample data fallback - new users see zeros
+        // This is correct: a new tenant should see 0 usage
     }
 
     private List<DailyUsageRecord> GenerateRealDailyUsage(decimal totalCredits)
@@ -198,26 +180,7 @@ public sealed class UsageModel : PageModel
         };
     }
 
-    private string? GetAuthToken()
-    {
-        return User.FindFirst("token")?.Value ?? User.FindFirst("api_key")?.Value;
-    }
-
-    private List<OperationUsage> GenerateSampleOperationUsage()
-    {
-        // Show sample data when no usage recorded yet
-        var total = CreditsUsed > 0 ? CreditsUsed : 25m; // Default sample of 25 credits
-        return
-        [
-            new OperationUsage { OperationType = "Memory Ingest", Count = (int)(total * 0.4m), Credits = total * 0.4m },
-            new OperationUsage { OperationType = "Memory Search", Count = (int)(total * 1.6m), Credits = total * 0.4m },
-            new OperationUsage { OperationType = "Multi-Hop Search", Count = (int)(total * 0.05m), Credits = total * 0.1m },
-            new OperationUsage { OperationType = "Memory Update", Count = (int)(total * 0.1m), Credits = total * 0.05m },
-            new OperationUsage { OperationType = "Other", Count = (int)(total * 0.05m), Credits = total * 0.05m }
-        ];
-    }
-
-    private List<DailyUsageRecord> GenerateSampleDailyUsage()
+private List<DailyUsageRecord> GenerateSampleDailyUsage()
     {
         var result = new List<DailyUsageRecord>();
         var baseCredits = CreditsUsed > 0 ? CreditsUsed : 25m; // Default sample
