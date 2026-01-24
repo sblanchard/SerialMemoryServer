@@ -521,7 +521,7 @@ object HandleToolsList()
                     properties = new
                     {
                         project_or_subject = new { type = "string", description = "Optional project name or subject to filter memories (e.g., 'FlexPilot', 'waterfall rendering'). Uses semantic search to find relevant memories." },
-                        days_back = new { type = "integer", @default = 1, description = "Number of days to look back (default: 1 = yesterday)" },
+                        days_back = new { type = "integer", @default = 3, description = "Number of days to look back (default: 3)" },
                         limit = new { type = "integer", @default = 50, description = "Maximum memories to retrieve" },
                         include_entities = new { type = "boolean", @default = true, description = "Include linked entities and relationships" }
                     }
@@ -1377,7 +1377,7 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
 async Task<object> HandleInstantiateContext(JsonNode? arguments)
 {
     var projectOrSubject = arguments?["project_or_subject"]?.GetValue<string>()?.Trim();
-    var daysBack = Math.Clamp(arguments?["days_back"]?.GetValue<int>() ?? 1, 1, 30);
+    var daysBack = Math.Clamp(arguments?["days_back"]?.GetValue<int>() ?? 3, 1, 30);
     var limit = Math.Clamp(arguments?["limit"]?.GetValue<int>() ?? 50, 1, 200);
     var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
 
