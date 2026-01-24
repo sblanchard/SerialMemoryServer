@@ -359,6 +359,188 @@ public class KnowledgeGraphService(
         return result;
     }
 
+    /// <summary>
+    /// Get context from the previous day to instantiate a new session with continuity.
+    /// Filters by project/subject using semantic search if provided.
+    /// </summary>
+    public async Task<PreviousDayContext> GetPreviousDayContextAsync(
+        string? projectOrSubject = null,
+        int daysBack = 1,
+        int limit = 50,
+        bool includeEntities = true,
+        CancellationToken cancellationToken = default)
+    {
+        // Calculate the date range for the previous day(s)
+        var now = DateTime.UtcNow;
+        var toUtc = now.Date; // Start of today
+        var fromUtc = toUtc.AddDays(-daysBack); // Start of N days ago
+
+        List<Memory> memories;
+
+        if (!string.IsNullOrWhiteSpace(projectOrSubject))
+        {
+            // Use semantic search to find relevant memories, then filter by date
+            var queryEmbedding = await _embeddingService.EmbedTextAsync(projectOrSubject, cancellationToken);
+            var allSemanticResults = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit * 2, 0.5f, cancellationToken);
+
+            // Filter by date range
+            memories = allSemanticResults
+                .Where(m => m.CreatedAt >= fromUtc && m.CreatedAt < toUtc)
+                .Take(limit)
+                .ToList();
+        }
+        else
+        {
+            // No filter - get all memories from the date range
+            memories = await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
+        }
+
+        var result = new PreviousDayContext
+        {
+            FromDate = fromUtc,
+            ToDate = toUtc,
+            ProjectOrSubject = projectOrSubject,
+            MemoryCount = memories.Count,
+            Memories = [],
+            TopEntities = [],
+            TopRelationships = [],
+            SessionSummary = ""
+        };
+
+        if (memories.Count == 0)
+        {
+            result.SessionSummary = string.IsNullOrWhiteSpace(projectOrSubject)
+                ? "No memories found from the previous session."
+                : $"No memories found for '{projectOrSubject}' from the previous session.";
+            return result;
+        }
+
+        // Collect all entities and relationships for aggregation
+        var entityCounts = new Dictionary<string, (EntityInfo Entity, int Count)>();
+        var relationshipCounts = new Dictionary<string, (RelationshipInfo Relationship, int Count)>();
+
+        foreach (var memory in memories)
+        {
+            var memoryResult = new MemorySearchResult
+            {
+                Id = memory.Id,
+                Content = memory.Content,
+                CreatedAt = memory.CreatedAt,
+                Source = memory.Source,
+                Similarity = memory.Similarity,
+                Entities = []
+            };
+
+            if (includeEntities)
+            {
+                var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
+                memoryResult.Entities = entities.Select(e => new EntityInfo
+                {
+                    Id = e.Id,
+                    Name = e.Name,
+                    Type = e.EntityType
+                }).ToList();
+
+                // Aggregate entity counts
+                foreach (var entity in memoryResult.Entities)
+                {
+                    var key = $"{entity.Type}:{entity.Name}";
+                    if (entityCounts.TryGetValue(key, out var existing))
+                    {
+                        entityCounts[key] = (existing.Entity, existing.Count + 1);
+                    }
+                    else
+                    {
+                        entityCounts[key] = (entity, 1);
+                    }
+                }
+
+                // Get relationships for entities in this memory
+                foreach (var entity in entities.Take(5)) // Limit to avoid too many queries
+                {
+                    var relationships = await _store.GetRelationshipsForEntityAsync(entity.Id, cancellationToken);
+                    foreach (var rel in relationships.Take(3))
+                    {
+                        var relInfo = new RelationshipInfo
+                        {
+                            SourceId = rel.SourceEntityId,
+                            TargetId = rel.TargetEntityId,
+                            Source = rel.SourceEntity?.Name ?? entity.Name,
+                            Target = rel.TargetEntity?.Name ?? "Unknown",
+                            Type = rel.RelationshipType,
+                            Confidence = rel.Confidence
+                        };
+
+                        var key = $"{relInfo.Source}->{relInfo.Type}->{relInfo.Target}";
+                        if (relationshipCounts.TryGetValue(key, out var existingRel))
+                        {
+                            relationshipCounts[key] = (existingRel.Relationship, existingRel.Count + 1);
+                        }
+                        else
+                        {
+                            relationshipCounts[key] = (relInfo, 1);
+                        }
+                    }
+                }
+            }
+
+            result.Memories.Add(memoryResult);
+        }
+
+        // Get top entities and relationships by frequency
+        result.TopEntities = entityCounts.Values
+            .OrderByDescending(x => x.Count)
+            .Take(10)
+            .Select(x => x.Entity)
+            .ToList();
+
+        result.TopRelationships = relationshipCounts.Values
+            .OrderByDescending(x => x.Count)
+            .Take(10)
+            .Select(x => x.Relationship)
+            .ToList();
+
+        // Generate a summary
+        var entityTypes = result.TopEntities
+            .GroupBy(e => e.Type)
+            .Select(g => $"{g.Count()} {g.Key}")
+            .ToList();
+
+        var topics = result.TopEntities
+            .Where(e => e.Type is "PROJECT" or "CONCEPT" or "TECHNOLOGY" or "PRODUCT")
+            .Select(e => e.Name)
+            .Take(5)
+            .ToList();
+
+        var people = result.TopEntities
+            .Where(e => e.Type == "PERSON")
+            .Select(e => e.Name)
+            .Take(3)
+            .ToList();
+
+        var subjectClause = string.IsNullOrWhiteSpace(projectOrSubject)
+            ? ""
+            : $" related to '{projectOrSubject}'";
+        result.SessionSummary = $"Found {memories.Count} memories{subjectClause} from {fromUtc:yyyy-MM-dd} to {toUtc:yyyy-MM-dd}.";
+
+        if (topics.Count > 0)
+        {
+            result.SessionSummary += $" Main topics: {string.Join(", ", topics)}.";
+        }
+
+        if (people.Count > 0)
+        {
+            result.SessionSummary += $" People mentioned: {string.Join(", ", people)}.";
+        }
+
+        if (entityTypes.Count > 0)
+        {
+            result.SessionSummary += $" Entity breakdown: {string.Join(", ", entityTypes)}.";
+        }
+
+        return result;
+    }
+
     #endregion
 
     #region User Persona Operations
@@ -643,6 +825,18 @@ public class CoreImportResult
     public int RelationsImported { get; set; }
     public int ObservationsImported { get; set; }
     public List<string> Errors { get; set; } = [];
+}
+
+public class PreviousDayContext
+{
+    public DateTime FromDate { get; set; }
+    public DateTime ToDate { get; set; }
+    public string? ProjectOrSubject { get; set; }
+    public int MemoryCount { get; set; }
+    public required string SessionSummary { get; set; }
+    public List<MemorySearchResult> Memories { get; set; } = [];
+    public List<EntityInfo> TopEntities { get; set; } = [];
+    public List<RelationshipInfo> TopRelationships { get; set; } = [];
 }
 
 #endregion

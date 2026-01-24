@@ -509,6 +509,23 @@ object HandleToolsList()
                         batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" }
                     }
                 }
+            },
+            // instantiate_context
+            new
+            {
+                name = "instantiate_context",
+                description = "Retrieve and summarize memories from the previous day(s) to continue where you left off. Use at the start of a new session to get context from prior work. Optionally filter by project or subject for relevant context only.",
+                inputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        project_or_subject = new { type = "string", description = "Optional project name or subject to filter memories (e.g., 'FlexPilot', 'waterfall rendering'). Uses semantic search to find relevant memories." },
+                        days_back = new { type = "integer", @default = 1, description = "Number of days to look back (default: 1 = yesterday)" },
+                        limit = new { type = "integer", @default = 50, description = "Maximum memories to retrieve" },
+                        include_entities = new { type = "boolean", @default = true, description = "Include linked entities and relationships" }
+                    }
+                }
             }
     };
 
@@ -628,6 +645,7 @@ async Task<object> HandleToolsCall(JsonNode? @params)
             "get_graph_statistics" => await HandleGetGraphStatistics(),
             "get_model_info" => HandleGetModelInfo(),
             "reembed_memories" => await HandleReembedMemories(arguments),
+            "instantiate_context" => await HandleInstantiateContext(arguments),
 
             // Lifecycle tools
             "memory_update" => await lifecycleTools.HandleMemoryUpdate(arguments),
@@ -719,6 +737,7 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "set_user_persona" => UsageEventType.SetUserPersona,
         "initialise_conversation_session" => UsageEventType.InitialiseSession,
         "end_conversation_session" => UsageEventType.EndSession,
+        "instantiate_context" => UsageEventType.InstantiateContext,
 
         // Integration operations
         "get_integrations" => UsageEventType.GetIntegrations,
@@ -1353,6 +1372,88 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
     }
 
     return CreateTextResponse(text);
+}
+
+async Task<object> HandleInstantiateContext(JsonNode? arguments)
+{
+    var projectOrSubject = arguments?["project_or_subject"]?.GetValue<string>()?.Trim();
+    var daysBack = Math.Clamp(arguments?["days_back"]?.GetValue<int>() ?? 1, 1, 30);
+    var limit = Math.Clamp(arguments?["limit"]?.GetValue<int>() ?? 50, 1, 200);
+    var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
+
+    logger.LogInformation("Instantiating context: project={Project}, days_back={DaysBack}, limit={Limit}",
+        projectOrSubject ?? "(all)", daysBack, limit);
+
+    var context = await kgService.GetPreviousDayContextAsync(projectOrSubject, daysBack, limit, includeEntities);
+
+    var text = new System.Text.StringBuilder();
+    text.AppendLine("# Previous Session Context");
+    text.AppendLine();
+    text.AppendLine($"**Period:** {context.FromDate:yyyy-MM-dd} to {context.ToDate:yyyy-MM-dd}");
+
+    if (!string.IsNullOrWhiteSpace(projectOrSubject))
+    {
+        text.AppendLine($"**Filter:** {projectOrSubject}");
+    }
+
+    text.AppendLine($"**Memories Found:** {context.MemoryCount}");
+    text.AppendLine();
+    text.AppendLine("## Summary");
+    text.AppendLine(context.SessionSummary);
+    text.AppendLine();
+
+    if (context.TopEntities.Count > 0)
+    {
+        text.AppendLine("## Key Entities");
+        foreach (var entity in context.TopEntities)
+        {
+            text.AppendLine($"- **{entity.Name}** ({entity.Type})");
+        }
+        text.AppendLine();
+    }
+
+    if (context.TopRelationships.Count > 0)
+    {
+        text.AppendLine("## Key Relationships");
+        foreach (var rel in context.TopRelationships.Take(5))
+        {
+            text.AppendLine($"- {rel.Source} --{rel.Type}--> {rel.Target}");
+        }
+        text.AppendLine();
+    }
+
+    if (context.Memories.Count > 0)
+    {
+        text.AppendLine("## Recent Memories");
+        text.AppendLine();
+
+        foreach (var memory in context.Memories.Take(10))
+        {
+            text.AppendLine($"### Memory ({memory.CreatedAt:HH:mm})");
+
+            var contentPreview = memory.Content.Length > 300
+                ? memory.Content[..300] + "..."
+                : memory.Content;
+            text.AppendLine(contentPreview);
+
+            if (memory.Entities.Count > 0)
+            {
+                text.AppendLine($"*Entities: {string.Join(", ", memory.Entities.Select(e => e.Name))}*");
+            }
+
+            text.AppendLine();
+        }
+
+        if (context.Memories.Count > 10)
+        {
+            text.AppendLine($"*... and {context.Memories.Count - 10} more memories*");
+        }
+    }
+
+    logger.LogInformation("Context instantiated: {MemoryCount} memories, {EntityCount} entities",
+        context.MemoryCount, context.TopEntities.Count);
+
+    return CreateTextResponse(text.ToString());
 }
 
 object CreateTextResponse(string text)
