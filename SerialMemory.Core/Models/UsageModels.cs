@@ -39,6 +39,7 @@ public enum UsageEventType
     SetUserPersona,
     InitialiseSession,
     EndSession,
+    InstantiateContext,
 
     // Integration operations
     GetIntegrations,
@@ -113,6 +114,7 @@ public static class UsageCreditCosts
         [UsageEventType.SetUserPersona] = 0.1m,         // Simple write
         [UsageEventType.InitialiseSession] = 0.0m,      // Free - session start
         [UsageEventType.EndSession] = 0.0m,             // Free - session end
+        [UsageEventType.InstantiateContext] = 0.5m,     // Date range query + entity loading
 
         // Integration operations
         [UsageEventType.GetIntegrations] = 0.0m,        // Free - just info
@@ -173,6 +175,7 @@ public static class UsageCreditCosts
         UsageEventType.SetUserPersona => "set_user_persona",
         UsageEventType.InitialiseSession => "initialise_session",
         UsageEventType.EndSession => "end_session",
+        UsageEventType.InstantiateContext => "instantiate_context",
         UsageEventType.GetIntegrations => "get_integrations",
         UsageEventType.ImportFromCore => "import_from_core",
         UsageEventType.MemoryTrace => "memory_trace",
@@ -216,6 +219,7 @@ public static class UsageCreditCosts
         "set_user_persona" => UsageEventType.SetUserPersona,
         "initialise_session" => UsageEventType.InitialiseSession,
         "end_session" => UsageEventType.EndSession,
+        "instantiate_context" => UsageEventType.InstantiateContext,
         "get_integrations" => UsageEventType.GetIntegrations,
         "import_from_core" => UsageEventType.ImportFromCore,
         "memory_trace" => UsageEventType.MemoryTrace,
