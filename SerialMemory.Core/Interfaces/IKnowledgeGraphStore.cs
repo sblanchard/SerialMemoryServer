@@ -48,4 +48,7 @@ public interface IKnowledgeGraphStore
     // Batch operations for re-embedding
     Task<List<Memory>> GetMemoriesWithNullEmbeddingsAsync(int limit = 100, CancellationToken cancellationToken = default);
     Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default);
+
+    // Date range queries for context instantiation
+    Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default);
 }

@@ -902,5 +902,39 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         }).ToList();
     }
 
+    public async Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default)
+    {
+        // RLS policy will filter by tenant automatically
+        const string sql = """
+
+                                   SELECT id, content, created_at, updated_at, source,
+                                          conversation_session_id, metadata::text
+                                   FROM memories
+                                   WHERE created_at >= @FromUtc AND created_at < @ToUtc
+                                   ORDER BY created_at DESC
+                                   LIMIT @Limit
+                       """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { FromUtc = fromUtc, ToUtc = toUtc, Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(row => new Memory
+        {
+            Id = row.id,
+            Content = row.content,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at,
+            Source = row.source,
+            ConversationSessionId = row.conversation_session_id,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null
+        }).ToList();
+    }
+
     #endregion
 }
