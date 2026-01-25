@@ -333,6 +333,7 @@ public sealed class LayerPromotionService(
             SELECT
                 m.id as memory_id,
                 m.tenant_id,
+                m.created_at,
                 COUNT(DISTINCT me.entity_id) as entity_count,
                 (SELECT COUNT(*) FROM memories m2
                  JOIN memory_entities me2 ON m2.id = me2.memory_id
@@ -343,13 +344,14 @@ public sealed class LayerPromotionService(
             FROM memories m
             JOIN memory_entities me ON m.id = me.memory_id
             WHERE m.layer = 'L1_CONTEXT'
-            GROUP BY m.id, m.tenant_id
+              AND m.created_at <= NOW() - @MinAgeDays * INTERVAL '1 day'
+            GROUP BY m.id, m.tenant_id, m.created_at
         )
         SELECT
             memory_id,
             tenant_id,
             related_count::float as score,
-            'Has ' || related_count || ' related L1 memories with shared entities' as reason
+            'Has ' || related_count || ' related L1 memories with shared entities (aged ' || EXTRACT(DAY FROM NOW() - created_at)::int || ' days)' as reason
         FROM memory_clusters
         WHERE related_count >= @MinClusterSize
           AND NOT EXISTS (
@@ -365,10 +367,11 @@ public sealed class LayerPromotionService(
             id as memory_id,
             tenant_id,
             access_count::float * COALESCE((metadata->>'confidence')::float, 0.5) as score,
-            'Summary accessed ' || access_count || ' times with high confidence' as reason
+            'Summary accessed ' || access_count || ' times with high confidence (aged ' || EXTRACT(DAY FROM NOW() - created_at)::int || ' days)' as reason
         FROM memories
         WHERE layer = 'L2_SUMMARY'
           AND access_count >= @MinAccessCount
+          AND created_at <= NOW() - @MinAgeDays * INTERVAL '1 day'
           AND COALESCE((metadata->>'confidence')::float, 0.5) >= @MinConfidence
           AND NOT EXISTS (
               SELECT 1 FROM layer_transition_queue
@@ -383,18 +386,20 @@ public sealed class LayerPromotionService(
             SELECT
                 m.id as memory_id,
                 m.tenant_id,
+                m.created_at,
                 COUNT(DISTINCT h.pattern_type) as pattern_types,
                 COUNT(*) as supporting_count
             FROM memories m
             LEFT JOIN learned_heuristics h ON m.id = ANY(h.supporting_memory_ids)
             WHERE m.layer = 'L3_KNOWLEDGE'
-            GROUP BY m.id, m.tenant_id
+              AND m.created_at <= NOW() - @MinAgeDays * INTERVAL '1 day'
+            GROUP BY m.id, m.tenant_id, m.created_at
         )
         SELECT
             fp.memory_id,
             fp.tenant_id,
             fp.pattern_types::float + (fp.supporting_count::float / 10) as score,
-            'Knowledge with ' || fp.pattern_types || ' pattern types detected' as reason
+            'Knowledge with ' || fp.pattern_types || ' pattern types detected (aged ' || EXTRACT(DAY FROM NOW() - fp.created_at)::int || ' days)' as reason
         FROM fact_patterns fp
         JOIN memories m ON fp.memory_id = m.id
         WHERE fp.supporting_count >= @MinSupportingFacts
@@ -410,9 +415,9 @@ public sealed class LayerPromotionService(
     private object GetPromotionParameters(MemoryLayer fromLayer, int limit) => fromLayer switch
     {
         MemoryLayer.L0_RAW => new { MinAccessCount = _config.L0ToL1_MinAccessCount, MinAgeDays = _config.L0ToL1_MinAgeDays, Limit = limit },
-        MemoryLayer.L1_CONTEXT => new { MinClusterSize = _config.L1ToL2_MinClusterSize, SimilarityThreshold = _config.L1ToL2_SimilarityThreshold, Limit = limit },
-        MemoryLayer.L2_SUMMARY => new { MinAccessCount = _config.L2ToL3_MinAccessCount, MinConfidence = _config.L2ToL3_MinConfidence, Limit = limit },
-        MemoryLayer.L3_KNOWLEDGE => new { MinSupportingFacts = _config.L3ToL4_MinSupportingFacts, MinPatternConfidence = _config.L3ToL4_MinPatternConfidence, Limit = limit },
+        MemoryLayer.L1_CONTEXT => new { MinClusterSize = _config.L1ToL2_MinClusterSize, MinAgeDays = _config.L1ToL2_MinAgeDays, SimilarityThreshold = _config.L1ToL2_SimilarityThreshold, Limit = limit },
+        MemoryLayer.L2_SUMMARY => new { MinAccessCount = _config.L2ToL3_MinAccessCount, MinAgeDays = _config.L2ToL3_MinAgeDays, MinConfidence = _config.L2ToL3_MinConfidence, Limit = limit },
+        MemoryLayer.L3_KNOWLEDGE => new { MinSupportingFacts = _config.L3ToL4_MinSupportingFacts, MinAgeDays = _config.L3ToL4_MinAgeDays, MinPatternConfidence = _config.L3ToL4_MinPatternConfidence, Limit = limit },
         _ => new { Limit = limit }
     };
 
@@ -437,6 +442,11 @@ public sealed class LayerPromotionService(
 
     private async Task<PromotionEvaluation> EvaluateL1ToL2Async(NpgsqlConnection conn, MemoryRow memory, CancellationToken ct)
     {
+        var age = DateTime.UtcNow - memory.created_at;
+
+        if (age.TotalDays < _config.L1ToL2_MinAgeDays)
+            return new PromotionEvaluation(false, $"Age {age.TotalDays:F1} days < {_config.L1ToL2_MinAgeDays}", (float)(age.TotalDays / _config.L1ToL2_MinAgeDays));
+
         var relatedCount = await conn.ExecuteScalarAsync<int>("""
             SELECT COUNT(DISTINCT m2.id)
             FROM memories m2
@@ -450,19 +460,29 @@ public sealed class LayerPromotionService(
         if (relatedCount < _config.L1ToL2_MinClusterSize)
             return new PromotionEvaluation(false, $"Related memories {relatedCount} < {_config.L1ToL2_MinClusterSize}", relatedCount / (float)_config.L1ToL2_MinClusterSize);
 
-        return new PromotionEvaluation(true, $"Has {relatedCount} related memories for summarization", 1.0f);
+        return new PromotionEvaluation(true, $"Has {relatedCount} related memories for summarization (aged {age.TotalDays:F0} days)", 1.0f);
     }
 
     private Task<PromotionEvaluation> EvaluateL2ToL3Async(NpgsqlConnection conn, MemoryRow memory, CancellationToken ct)
     {
+        var age = DateTime.UtcNow - memory.created_at;
+
+        if (age.TotalDays < _config.L2ToL3_MinAgeDays)
+            return Task.FromResult(new PromotionEvaluation(false, $"Age {age.TotalDays:F1} days < {_config.L2ToL3_MinAgeDays}", (float)(age.TotalDays / _config.L2ToL3_MinAgeDays)));
+
         if (memory.access_count < _config.L2ToL3_MinAccessCount)
             return Task.FromResult(new PromotionEvaluation(false, $"Access count {memory.access_count} < {_config.L2ToL3_MinAccessCount}", memory.access_count / (float)_config.L2ToL3_MinAccessCount));
 
-        return Task.FromResult(new PromotionEvaluation(true, "Summary validated by access patterns", 1.0f));
+        return Task.FromResult(new PromotionEvaluation(true, $"Summary validated by access patterns (aged {age.TotalDays:F0} days)", 1.0f));
     }
 
     private async Task<PromotionEvaluation> EvaluateL3ToL4Async(NpgsqlConnection conn, MemoryRow memory, CancellationToken ct)
     {
+        var age = DateTime.UtcNow - memory.created_at;
+
+        if (age.TotalDays < _config.L3ToL4_MinAgeDays)
+            return new PromotionEvaluation(false, $"Age {age.TotalDays:F1} days < {_config.L3ToL4_MinAgeDays}", (float)(age.TotalDays / _config.L3ToL4_MinAgeDays));
+
         var supportingCount = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM memories WHERE layer = 'L3_KNOWLEDGE' AND tenant_id = @TenantId",
             new { TenantId = memory.tenant_id });
@@ -470,7 +490,7 @@ public sealed class LayerPromotionService(
         if (supportingCount < _config.L3ToL4_MinSupportingFacts)
             return new PromotionEvaluation(false, $"Supporting facts {supportingCount} < {_config.L3ToL4_MinSupportingFacts}", supportingCount / (float)_config.L3ToL4_MinSupportingFacts);
 
-        return new PromotionEvaluation(true, $"Has {supportingCount} facts supporting heuristic generation", 1.0f);
+        return new PromotionEvaluation(true, $"Has {supportingCount} facts supporting heuristic generation (aged {age.TotalDays:F0} days)", 1.0f);
     }
 
     private static MemoryLayer? GetNextLayer(MemoryLayer current) => current switch
@@ -564,20 +584,23 @@ public enum MemoryLayer
 /// </summary>
 public sealed class LayerPromotionConfig
 {
-    // L0 → L1 criteria
+    // L0 → L1 criteria (1 week minimum)
     public int L0ToL1_MinAccessCount { get; set; } = 2;
-    public int L0ToL1_MinAgeDays { get; set; } = 1;
+    public int L0ToL1_MinAgeDays { get; set; } = 7;
 
-    // L1 → L2 criteria
+    // L1 → L2 criteria (3 weeks minimum in L1)
     public int L1ToL2_MinClusterSize { get; set; } = 3;
+    public int L1ToL2_MinAgeDays { get; set; } = 21;
     public float L1ToL2_SimilarityThreshold { get; set; } = 0.8f;
 
-    // L2 → L3 criteria
+    // L2 → L3 criteria (3 weeks minimum in L2)
     public int L2ToL3_MinAccessCount { get; set; } = 5;
+    public int L2ToL3_MinAgeDays { get; set; } = 21;
     public float L2ToL3_MinConfidence { get; set; } = 0.7f;
 
-    // L3 → L4 criteria
+    // L3 → L4 criteria (3 weeks minimum in L3)
     public int L3ToL4_MinSupportingFacts { get; set; } = 5;
+    public int L3ToL4_MinAgeDays { get; set; } = 21;
     public float L3ToL4_MinPatternConfidence { get; set; } = 0.8f;
 
     public int BatchSize { get; set; } = 50;
