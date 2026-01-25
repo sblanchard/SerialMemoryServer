@@ -723,6 +723,22 @@ app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
     });
 });
 
+// GET /api/integrations - List available integrations
+app.MapGet("/api/integrations", () =>
+{
+    return Results.Ok(new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text = "No integrations configured yet."
+            }
+        }
+    });
+});
+
 // GET /api/memories/multi-hop - Multi-hop graph traversal search
 app.MapGet("/api/memories/multi-hop", async (
     string query,
@@ -774,6 +790,94 @@ app.MapGet("/api/memories/multi-hop", async (
             detail: ex.Message,
             statusCode: StatusCodes.Status500InternalServerError,
             title: "Multi-hop search failed");
+    }
+});
+
+// GET /api/context/instantiate - Get previous day context for session continuity
+app.MapGet("/api/context/instantiate", async (
+    string? project_or_subject,
+    int? days_back,
+    int? limit,
+    bool? include_entities,
+    KnowledgeGraphService kgService) =>
+{
+    var daysBackClamped = Math.Clamp(days_back ?? 3, 1, 30);
+    var limitClamped = Math.Clamp(limit ?? 50, 1, 200);
+    var includeEntitiesValue = include_entities ?? true;
+
+    try
+    {
+        var context = await kgService.GetPreviousDayContextAsync(
+            project_or_subject?.Trim(),
+            daysBackClamped,
+            limitClamped,
+            includeEntitiesValue);
+
+        // Format as markdown for MCP response
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("# Previous Session Context");
+        sb.AppendLine();
+        sb.AppendLine($"**Period:** {context.FromDate:yyyy-MM-dd} to {context.ToDate:yyyy-MM-dd}");
+        if (!string.IsNullOrEmpty(context.ProjectOrSubject))
+            sb.AppendLine($"**Filter:** {context.ProjectOrSubject}");
+        sb.AppendLine($"**Memories found:** {context.MemoryCount}");
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(context.SessionSummary))
+        {
+            sb.AppendLine("## Summary");
+            sb.AppendLine(context.SessionSummary);
+            sb.AppendLine();
+        }
+
+        if (context.TopEntities.Count > 0)
+        {
+            sb.AppendLine("## Key Entities");
+            foreach (var entity in context.TopEntities.Take(15))
+            {
+                sb.AppendLine($"- **{entity.Name}** ({entity.Type})");
+            }
+            sb.AppendLine();
+        }
+
+        if (context.TopRelationships.Count > 0)
+        {
+            sb.AppendLine("## Relationships");
+            foreach (var rel in context.TopRelationships.Take(10))
+            {
+                sb.AppendLine($"- {rel.Source} → {rel.Type} → {rel.Target}");
+            }
+            sb.AppendLine();
+        }
+
+        if (context.Memories.Count > 0)
+        {
+            sb.AppendLine("## Recent Memories");
+            foreach (var m in context.Memories.Take(10))
+            {
+                var preview = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content;
+                sb.AppendLine($"- [{m.CreatedAt:MMM dd HH:mm}] {preview}");
+            }
+        }
+
+        return Results.Ok(new
+        {
+            content = new[]
+            {
+                new
+                {
+                    type = "text",
+                    text = sb.ToString()
+                }
+            }
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError,
+            title: "Failed to instantiate context");
     }
 });
 
