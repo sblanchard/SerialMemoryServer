@@ -1396,7 +1396,7 @@ async Task<object> HandleInstantiateContext(JsonNode? arguments)
         text.AppendLine($"**Filter:** {projectOrSubject}");
     }
 
-    text.AppendLine($"**Memories Found:** {context.MemoryCount}");
+    text.AppendLine($"**Memories Found:** {context.MemoryCount} ({context.RecentMemoryCount} recent, {context.ContextMemoryCount} contextual)");
     text.AppendLine();
     text.AppendLine("## Summary");
     text.AppendLine(context.SessionSummary);
@@ -1424,24 +1424,56 @@ async Task<object> HandleInstantiateContext(JsonNode? arguments)
 
     if (context.Memories.Count > 0)
     {
-        text.AppendLine("## Recent Memories");
+        text.AppendLine("## Memories");
         text.AppendLine();
 
-        foreach (var memory in context.Memories.Take(10))
+        var recentMemories = context.Memories.Where(m => m.CreatedAt >= context.FromDate && m.CreatedAt <= context.ToDate).ToList();
+        var contextualMemories = context.Memories.Where(m => m.CreatedAt < context.FromDate).ToList();
+
+        if (recentMemories.Count > 0)
         {
-            text.AppendLine($"### Memory ({memory.CreatedAt:HH:mm})");
-
-            var contentPreview = memory.Content.Length > 300
-                ? memory.Content[..300] + "..."
-                : memory.Content;
-            text.AppendLine(contentPreview);
-
-            if (memory.Entities.Count > 0)
-            {
-                text.AppendLine($"*Entities: {string.Join(", ", memory.Entities.Select(e => e.Name))}*");
-            }
-
+            text.AppendLine("### Recent (In Date Range)");
             text.AppendLine();
+
+            foreach (var memory in recentMemories.Take(10))
+            {
+                text.AppendLine($"**{memory.CreatedAt:yyyy-MM-dd HH:mm}**");
+
+                var contentPreview = memory.Content.Length > 300
+                    ? memory.Content[..300] + "..."
+                    : memory.Content;
+                text.AppendLine(contentPreview);
+
+                if (memory.Entities.Count > 0)
+                {
+                    text.AppendLine($"*Entities: {string.Join(", ", memory.Entities.Select(e => e.Name))}*");
+                }
+
+                text.AppendLine();
+            }
+        }
+
+        if (contextualMemories.Count > 0)
+        {
+            text.AppendLine("### Contextual (Older Background)");
+            text.AppendLine();
+
+            foreach (var memory in contextualMemories.Take(5))
+            {
+                text.AppendLine($"**{memory.CreatedAt:yyyy-MM-dd}** *(older context)*");
+
+                var contentPreview = memory.Content.Length > 200
+                    ? memory.Content[..200] + "..."
+                    : memory.Content;
+                text.AppendLine(contentPreview);
+
+                if (memory.Entities.Count > 0)
+                {
+                    text.AppendLine($"*Entities: {string.Join(", ", memory.Entities.Select(e => e.Name))}*");
+                }
+
+                text.AppendLine();
+            }
         }
 
         if (context.Memories.Count > 10)
