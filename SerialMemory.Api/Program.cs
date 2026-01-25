@@ -820,7 +820,7 @@ app.MapGet("/api/context/instantiate", async (
         sb.AppendLine($"**Period:** {context.FromDate:yyyy-MM-dd} to {context.ToDate:yyyy-MM-dd}");
         if (!string.IsNullOrEmpty(context.ProjectOrSubject))
             sb.AppendLine($"**Filter:** {context.ProjectOrSubject}");
-        sb.AppendLine($"**Memories found:** {context.MemoryCount}");
+        sb.AppendLine($"**Memories found:** {context.MemoryCount} ({context.RecentMemoryCount} recent, {context.ContextMemoryCount} contextual)");
         sb.AppendLine();
 
         if (!string.IsNullOrWhiteSpace(context.SessionSummary))
@@ -852,11 +852,31 @@ app.MapGet("/api/context/instantiate", async (
 
         if (context.Memories.Count > 0)
         {
-            sb.AppendLine("## Recent Memories");
-            foreach (var m in context.Memories.Take(10))
+            sb.AppendLine("## Memories");
+            sb.AppendLine();
+
+            var recentMemories = context.Memories.Where(m => m.CreatedAt >= context.FromDate && m.CreatedAt <= context.ToDate).ToList();
+            var contextualMemories = context.Memories.Where(m => m.CreatedAt < context.FromDate).ToList();
+
+            if (recentMemories.Count > 0)
             {
-                var preview = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content;
-                sb.AppendLine($"- [{m.CreatedAt:MMM dd HH:mm}] {preview}");
+                sb.AppendLine("### Recent (In Date Range)");
+                foreach (var m in recentMemories.Take(10))
+                {
+                    var preview = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content;
+                    sb.AppendLine($"- [{m.CreatedAt:MMM dd HH:mm}] {preview}");
+                }
+                sb.AppendLine();
+            }
+
+            if (contextualMemories.Count > 0)
+            {
+                sb.AppendLine("### Contextual (Older Background)");
+                foreach (var m in contextualMemories.Take(5))
+                {
+                    var preview = m.Content.Length > 150 ? m.Content[..150] + "..." : m.Content;
+                    sb.AppendLine($"- [{m.CreatedAt:MMM dd}] {preview}");
+                }
             }
         }
 
