@@ -354,5 +354,8 @@ public class InstrumentedKnowledgeGraphStore(
     public Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default)
         => inner.GetAllMemoriesAsync(limit, offset, cancellationToken);
 
+    public Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default)
+        => inner.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
+
     #endregion
 }
