@@ -723,6 +723,22 @@ app.MapGet("/api/stats", async (IKnowledgeGraphStore store) =>
     });
 });
 
+// GET /api/integrations - List available integrations
+app.MapGet("/api/integrations", () =>
+{
+    return Results.Ok(new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text = "No integrations configured yet."
+            }
+        }
+    });
+});
+
 // GET /api/memories/multi-hop - Multi-hop graph traversal search
 app.MapGet("/api/memories/multi-hop", async (
     string query,
