@@ -372,22 +372,64 @@ public class KnowledgeGraphService(
     {
         // Calculate the date range for the previous day(s)
         var now = DateTime.UtcNow;
-        var toUtc = now.Date; // Start of today
-        var fromUtc = toUtc.AddDays(-daysBack); // Start of N days ago
+        var toUtc = now; // Include up to current time (not just start of today)
+        var fromUtc = now.Date.AddDays(-daysBack); // Start of N days ago
 
         List<Memory> memories;
 
         if (!string.IsNullOrWhiteSpace(projectOrSubject))
         {
-            // Use semantic search to find relevant memories, then filter by date
-            var queryEmbedding = await _embeddingService.EmbedTextAsync(projectOrSubject, cancellationToken);
-            var allSemanticResults = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit * 2, 0.5f, cancellationToken);
+            // Get ALL memories from date range first, then filter by semantic relevance
+            // This ensures we don't miss recent memories just because older ones rank higher semantically
+            var allMemoriesInRange = await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit: 1000, cancellationToken);
 
-            // Filter by date range
-            memories = allSemanticResults
-                .Where(m => m.CreatedAt >= fromUtc && m.CreatedAt < toUtc)
-                .Take(limit)
-                .ToList();
+            var queryEmbedding = await _embeddingService.EmbedTextAsync(projectOrSubject, cancellationToken);
+
+            if (allMemoriesInRange.Count == 0)
+            {
+                // No recent memories, but search older ones for context
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold: 0.5f, cancellationToken);
+                memories = olderMemories.Where(m => m.CreatedAt < fromUtc).ToList();
+            }
+            else
+            {
+                // Filter recent memories by semantic similarity to project/subject
+                var recentScoredMemories = new List<(Memory memory, float similarity, bool isRecent)>();
+
+                foreach (var memory in allMemoriesInRange)
+                {
+                    if (memory.Embedding != null && memory.Embedding.Length > 0)
+                    {
+                        var similarity = CosineSimilarity(queryEmbedding, memory.Embedding);
+                        if (similarity >= 0.3f) // Lower threshold since we're already filtered by date
+                        {
+                            recentScoredMemories.Add((memory, similarity, true));
+                        }
+                    }
+                }
+
+                // Take top recent memories
+                var topRecentMemories = recentScoredMemories
+                    .OrderByDescending(x => x.similarity)
+                    .Take(limit)
+                    .ToList();
+
+                // Also fetch similar OLDER memories for context (up to 30% of limit)
+                var contextLimit = Math.Max(3, limit / 3);
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, contextLimit * 2, threshold: 0.5f, cancellationToken);
+                var olderContextMemories = olderMemories
+                    .Where(m => m.CreatedAt < fromUtc) // Only older than date range
+                    .Take(contextLimit)
+                    .Select(m => (memory: m, similarity: 0f, isRecent: false))
+                    .ToList();
+
+                // Combine: recent memories first (by similarity), then older context memories (by date descending)
+                var combined = new List<(Memory memory, float similarity, bool isRecent)>();
+                combined.AddRange(topRecentMemories);
+                combined.AddRange(olderContextMemories);
+
+                memories = combined.Select(x => x.memory).ToList();
+            }
         }
         else
         {
@@ -395,12 +437,18 @@ public class KnowledgeGraphService(
             memories = await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
         }
 
+        // Count recent vs contextual memories
+        var recentCount = memories.Count(m => m.CreatedAt >= fromUtc && m.CreatedAt <= toUtc);
+        var contextCount = memories.Count - recentCount;
+
         var result = new PreviousDayContext
         {
             FromDate = fromUtc,
             ToDate = toUtc,
             ProjectOrSubject = projectOrSubject,
             MemoryCount = memories.Count,
+            RecentMemoryCount = recentCount,
+            ContextMemoryCount = contextCount,
             Memories = [],
             TopEntities = [],
             TopRelationships = [],
@@ -521,7 +569,15 @@ public class KnowledgeGraphService(
         var subjectClause = string.IsNullOrWhiteSpace(projectOrSubject)
             ? ""
             : $" related to '{projectOrSubject}'";
-        result.SessionSummary = $"Found {memories.Count} memories{subjectClause} from {fromUtc:yyyy-MM-dd} to {toUtc:yyyy-MM-dd}.";
+
+        if (contextCount > 0)
+        {
+            result.SessionSummary = $"Found {recentCount} recent memories{subjectClause} from {fromUtc:yyyy-MM-dd} to {toUtc:yyyy-MM-dd}, plus {contextCount} older contextual memories for background.";
+        }
+        else
+        {
+            result.SessionSummary = $"Found {memories.Count} memories{subjectClause} from {fromUtc:yyyy-MM-dd} to {toUtc:yyyy-MM-dd}.";
+        }
 
         if (topics.Count > 0)
         {
@@ -734,6 +790,35 @@ public class KnowledgeGraphService(
         return result;
     }
 
+    /// <summary>
+    /// Calculate cosine similarity between two embedding vectors.
+    /// Returns a value between -1 and 1, where 1 means identical, 0 means orthogonal, -1 means opposite.
+    /// </summary>
+    private static float CosineSimilarity(float[] a, float[] b)
+    {
+        if (a.Length != b.Length)
+            throw new ArgumentException("Vectors must have the same length");
+
+        float dotProduct = 0;
+        float magnitudeA = 0;
+        float magnitudeB = 0;
+
+        for (int i = 0; i < a.Length; i++)
+        {
+            dotProduct += a[i] * b[i];
+            magnitudeA += a[i] * a[i];
+            magnitudeB += b[i] * b[i];
+        }
+
+        magnitudeA = MathF.Sqrt(magnitudeA);
+        magnitudeB = MathF.Sqrt(magnitudeB);
+
+        if (magnitudeA == 0 || magnitudeB == 0)
+            return 0;
+
+        return dotProduct / (magnitudeA * magnitudeB);
+    }
+
     #endregion
 }
 
@@ -833,6 +918,8 @@ public class PreviousDayContext
     public DateTime ToDate { get; set; }
     public string? ProjectOrSubject { get; set; }
     public int MemoryCount { get; set; }
+    public int RecentMemoryCount { get; set; }
+    public int ContextMemoryCount { get; set; }
     public required string SessionSummary { get; set; }
     public List<MemorySearchResult> Memories { get; set; } = [];
     public List<EntityInfo> TopEntities { get; set; } = [];
