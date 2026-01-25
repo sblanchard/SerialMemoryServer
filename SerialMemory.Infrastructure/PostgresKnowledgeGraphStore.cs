@@ -910,7 +910,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                    SELECT id, content, created_at, updated_at, source,
                                           conversation_session_id, metadata::text
                                    FROM memories
-                                   WHERE created_at >= @FromUtc AND created_at < @ToUtc
+                                   WHERE created_at >= @FromUtc AND created_at <= @ToUtc
                                    ORDER BY created_at DESC
                                    LIMIT @Limit
                        """;
