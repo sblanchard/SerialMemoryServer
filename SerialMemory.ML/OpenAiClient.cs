@@ -117,6 +117,16 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
     #region Chat Completions
 
     /// <summary>
+    /// Check if a model is a reasoning model that doesn't support temperature customization.
+    /// Reasoning models (o1, o1-mini, o3-mini, etc.) only support temperature=1.0.
+    /// </summary>
+    private static bool IsReasoningModel(string model)
+    {
+        var lower = model.ToLowerInvariant();
+        return lower.StartsWith("o1") || lower.StartsWith("o3");
+    }
+
+    /// <summary>
     /// Simple chat completion.
     /// </summary>
     public async Task<string> ChatAsync(
@@ -149,10 +159,13 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
     {
         var chatClient = _client.GetChatClient(_chatModel);
 
-        var options = new ChatCompletionOptions
+        var options = new ChatCompletionOptions();
+
+        // Reasoning models (o1, o3) don't support temperature customization
+        if (!IsReasoningModel(_chatModel))
         {
-            Temperature = temperature
-        };
+            options.Temperature = temperature;
+        }
 
         if (maxTokens.HasValue)
         {
@@ -200,10 +213,13 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
     {
         var chatClient = _client.GetChatClient(_chatModel);
 
-        var options = new ChatCompletionOptions
+        var options = new ChatCompletionOptions();
+
+        // Reasoning models (o1, o3) don't support temperature customization
+        if (!IsReasoningModel(_chatModel))
         {
-            Temperature = temperature
-        };
+            options.Temperature = temperature;
+        }
 
         if (maxTokens.HasValue)
         {
