@@ -353,9 +353,9 @@ BEGIN
     -- Compute content hash
     v_content_hash := encode(sha256(p_content_json::text::bytea), 'hex');
 
-    -- Mark previous layer as not current
+    -- Mark previous layer as not current (superseded_by will be set after insert)
     UPDATE memory_layers
-    SET is_current = FALSE, superseded_by = gen_random_uuid()
+    SET is_current = FALSE
     WHERE memory_id = p_memory_id AND layer = p_layer AND is_current = TRUE;
 
     -- Insert new layer
@@ -367,7 +367,7 @@ BEGIN
 
     -- Update the superseded_by to point to new layer
     UPDATE memory_layers SET superseded_by = v_layer_id
-    WHERE memory_id = p_memory_id AND layer = p_layer AND id != v_layer_id AND superseded_by IS NOT NULL;
+    WHERE memory_id = p_memory_id AND layer = p_layer AND id != v_layer_id AND is_current = FALSE AND superseded_by IS NULL;
 
     -- Update memory current_layer
     UPDATE memories
