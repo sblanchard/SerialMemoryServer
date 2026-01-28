@@ -117,13 +117,28 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
     #region Chat Completions
 
     /// <summary>
-    /// Check if a model is a reasoning model that doesn't support temperature customization.
-    /// Reasoning models (o1, o1-mini, o3-mini, etc.) only support temperature=1.0.
+    /// Check if a model doesn't support temperature customization.
+    /// Reasoning models (o1, o3) and newer mini models (gpt-4.1-mini, gpt-5-mini, etc.)
+    /// only support temperature=1.0.
     /// </summary>
-    private static bool IsReasoningModel(string model)
+    private bool IsTemperatureUnsupported(string model)
     {
         var lower = model.ToLowerInvariant();
-        return lower.StartsWith("o1") || lower.StartsWith("o3");
+
+        // Check for:
+        // - o1/o3 reasoning models: o1, o1-mini, o1-preview, o3, o3-mini
+        // - Newer mini models: gpt-4.1-mini, gpt-5-mini, gpt-5-nano, etc.
+        var isUnsupported = lower.Contains("o1")
+            || lower.Contains("o3")
+            || lower.Contains("gpt-4.1")
+            || lower.Contains("gpt-5");
+
+        if (isUnsupported)
+        {
+            _logger?.LogDebug("Model {Model} does not support temperature customization, using default", model);
+        }
+
+        return isUnsupported;
     }
 
     /// <summary>
@@ -162,7 +177,7 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
         var options = new ChatCompletionOptions();
 
         // Reasoning models (o1, o3) don't support temperature customization
-        if (!IsReasoningModel(_chatModel))
+        if (!IsTemperatureUnsupported(_chatModel))
         {
             options.Temperature = temperature;
         }
@@ -216,7 +231,7 @@ public sealed class OpenAiClient : IEmbeddingService, ILlmService, IDisposable
         var options = new ChatCompletionOptions();
 
         // Reasoning models (o1, o3) don't support temperature customization
-        if (!IsReasoningModel(_chatModel))
+        if (!IsTemperatureUnsupported(_chatModel))
         {
             options.Temperature = temperature;
         }
