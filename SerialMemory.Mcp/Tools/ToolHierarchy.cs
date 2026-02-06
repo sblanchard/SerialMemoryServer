@@ -7,16 +7,27 @@ namespace SerialMemory.Mcp.Tools;
 /// </summary>
 public static class ToolHierarchy
 {
-    public static readonly Dictionary<string, CategoryInfo> Categories = new()
-    {
-        ["lifecycle"] = new("Memory Lifecycle", "Update, delete, merge, split, decay, reinforce, expire, supersede memories"),
-        ["observability"] = new("Observability", "Trace event history, lineage, explain state, find conflicts"),
-        ["safety"] = new("Safety & Integrity", "Detect contradictions, hallucinations, verify hashes, scan loops"),
-        ["export"] = new("Export", "Export workspace, memories, graph, user profile, markdown vault"),
-        ["reasoning"] = new("Engineering Reasoning", "Analyze graphs, visualize, multi-model reasoning"),
-        ["session"] = new("Session Management", "Create/end sessions, instantiate context"),
-        ["admin"] = new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed")
-    };
+    /// <summary>
+    /// Ordered category list for consistent display.
+    /// </summary>
+    private static readonly (string Key, CategoryInfo Info)[] OrderedCategories =
+    [
+        ("lifecycle", new("Memory Lifecycle", "Update, delete, merge, split, decay, reinforce, expire, supersede memories")),
+        ("observability", new("Observability", "Trace event history, lineage, explain state, find conflicts")),
+        ("safety", new("Safety & Integrity", "Detect contradictions, hallucinations, verify hashes, scan loops")),
+        ("export", new("Export", "Export workspace, memories, graph, user profile, markdown vault")),
+        ("reasoning", new("Engineering Reasoning", "Analyze graphs, visualize, multi-model reasoning")),
+        ("session", new("Session Management", "Create/end sessions, instantiate context")),
+        ("admin", new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed"))
+    ];
+
+    public static readonly Dictionary<string, CategoryInfo> Categories =
+        OrderedCategories.ToDictionary(x => x.Key, x => x.Info);
+
+    /// <summary>
+    /// Iterates categories in stable insertion order.
+    /// </summary>
+    public static IEnumerable<(string Key, CategoryInfo Info)> CategoriesOrdered => OrderedCategories;
 
     /// <summary>
     /// Maps category.tool_name -> actual MCP tool name for dispatch.
@@ -74,153 +85,34 @@ public static class ToolHierarchy
 
     /// <summary>
     /// Returns tool definitions for a given category.
+    /// Session and admin tools are extracted from coreTools by name to avoid schema duplication.
     /// </summary>
-    public static object[] GetToolsForCategory(string category) => category.ToLowerInvariant() switch
+    public static object[] GetToolsForCategory(string category, object[]? coreTools = null) =>
+        category.ToLowerInvariant() switch
+        {
+            "lifecycle" => ToolDefinitions.GetLifecycleTools(),
+            "observability" => ToolDefinitions.GetObservabilityTools(),
+            "safety" => ToolDefinitions.GetSafetyTools(),
+            "export" => ToolDefinitions.GetExportTools(),
+            "reasoning" => ToolDefinitions.GetReasoningTools(),
+            "session" => FilterCoreToolsByName(coreTools,
+                "initialise_conversation_session", "end_conversation_session", "instantiate_context"),
+            "admin" => FilterCoreToolsByName(coreTools,
+                "set_user_persona", "get_integrations", "import_from_core",
+                "crawl_relationships", "get_graph_statistics", "get_model_info", "reembed_memories"),
+            _ => []
+        };
+
+    /// <summary>
+    /// Filters core tools array by name to extract session/admin subsets.
+    /// Falls back to empty array if coreTools is null.
+    /// </summary>
+    private static object[] FilterCoreToolsByName(object[]? coreTools, params string[] names)
     {
-        "lifecycle" => ToolDefinitions.GetLifecycleTools(),
-        "observability" => ToolDefinitions.GetObservabilityTools(),
-        "safety" => ToolDefinitions.GetSafetyTools(),
-        "export" => ToolDefinitions.GetExportTools(),
-        "reasoning" => ToolDefinitions.GetReasoningTools(),
-        "session" => GetSessionTools(),
-        "admin" => GetAdminTools(),
-        _ => []
-    };
-
-    /// <summary>
-    /// Session management tools (defined inline since they're in Program.cs core tools).
-    /// Returns just name + description for browsing, not full schemas.
-    /// </summary>
-    private static object[] GetSessionTools() =>
-    [
-        new
-        {
-            name = "initialise_conversation_session",
-            description = "Create a new conversation session to track context across interactions.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    session_name = new { type = "string", description = "Optional session name/title" },
-                    client_type = new { type = "string", description = "Client type (e.g., 'claude-desktop', 'cursor')" },
-                    metadata = new { type = "object", description = "Additional session metadata" }
-                }
-            }
-        },
-        new
-        {
-            name = "end_conversation_session",
-            description = "End the current conversation session.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new { }
-            }
-        },
-        new
-        {
-            name = "instantiate_context",
-            description = "Retrieve and summarize memories from the previous day(s) to continue where you left off.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    project_or_subject = new { type = "string", description = "Optional project name or subject to filter" },
-                    days_back = new { type = "integer", @default = 3, description = "Number of days to look back" },
-                    limit = new { type = "integer", @default = 50, description = "Maximum memories to retrieve" },
-                    include_entities = new { type = "boolean", @default = true, description = "Include linked entities" }
-                }
-            }
-        }
-    ];
-
-    /// <summary>
-    /// Admin tools (defined inline since they're spread across Program.cs core tools).
-    /// </summary>
-    private static object[] GetAdminTools() =>
-    [
-        new
-        {
-            name = "set_user_persona",
-            description = "Set or update a user persona attribute (preference, skill, goal, background).",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    attribute_type = new { type = "string", description = "Type: preference, skill, goal, background" },
-                    attribute_key = new { type = "string", description = "Attribute name" },
-                    attribute_value = new { type = "string", description = "Attribute value" },
-                    confidence = new { type = "number", @default = 1.0, description = "Confidence score (0.0-1.0)" },
-                    user_id = new { type = "string", @default = "default_user", description = "User identifier" }
-                },
-                required = new[] { "attribute_type", "attribute_key", "attribute_value" }
-            }
-        },
-        new
-        {
-            name = "get_integrations",
-            description = "List available integrations.",
-            inputSchema = new { type = "object", properties = new { } }
-        },
-        new
-        {
-            name = "import_from_core",
-            description = "Import entities, relations, and observations from CORE MCP export format.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    data = new { type = "object", description = "CORE export data with 'entities' and 'relations' arrays" },
-                    source = new { type = "string", @default = "core-import", description = "Source identifier" }
-                },
-                required = new[] { "data" }
-            }
-        },
-        new
-        {
-            name = "crawl_relationships",
-            description = "Crawl existing memories to extract entities and relationships.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" },
-                    force_reprocess = new { type = "boolean", @default = false, description = "Reprocess memories that already have entities" }
-                }
-            }
-        },
-        new
-        {
-            name = "get_graph_statistics",
-            description = "Get statistics about the knowledge graph.",
-            inputSchema = new { type = "object", properties = new { } }
-        },
-        new
-        {
-            name = "get_model_info",
-            description = "Get information about the current embedding model.",
-            inputSchema = new { type = "object", properties = new { } }
-        },
-        new
-        {
-            name = "reembed_memories",
-            description = "Re-generate embeddings for memories after switching models.",
-            inputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    force_all = new { type = "boolean", @default = false, description = "Re-embed ALL memories" },
-                    batch_size = new { type = "integer", @default = 100, description = "Number of memories to process" }
-                }
-            }
-        }
-    ];
+        if (coreTools == null) return [];
+        var nameSet = new HashSet<string>(names);
+        return coreTools.Where(t => nameSet.Contains(((dynamic)t).name)).ToArray();
+    }
 
     /// <summary>
     /// The meta-tools that are always listed: get_tools_in_category + execute_tool

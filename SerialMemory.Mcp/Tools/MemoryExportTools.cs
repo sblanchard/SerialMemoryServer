@@ -598,7 +598,7 @@ public sealed class MemoryExportTools
             parameters.Add("MinConfidence", minConfidence);
         }
 
-        memorySql += " ORDER BY created_at DESC";
+        memorySql += " ORDER BY created_at DESC LIMIT 50000";
 
         var memories = (await conn.QueryAsync<dynamic>(memorySql, parameters)).ToList();
 
@@ -724,7 +724,7 @@ public sealed class MemoryExportTools
         {
             Guid memoryId = m.memory_id;
             DateTimeOffset createdAt = m.created_at;
-            var shortId = memoryId.ToString()[..8];
+            var shortId = memoryId.ToString()[..12];
 
             var subFolder = groupBy switch
             {
@@ -741,7 +741,7 @@ public sealed class MemoryExportTools
             sb.AppendLine($"id: {memoryId}");
             sb.AppendLine("type: memory");
             sb.AppendLine($"layer: {m.layer ?? "unknown"}");
-            sb.AppendLine($"confidence: {(float)(decimal)m.confidence_score:F3}");
+            sb.AppendLine($"confidence: {SafeFloat(m.confidence_score):F3}");
             sb.AppendLine($"created: {createdAt:O}");
             if (m.source != null) sb.AppendLine($"source: {m.source}");
 
@@ -783,7 +783,7 @@ public sealed class MemoryExportTools
                             "source" => SanitizeFileName((string)(parentMem.source ?? "unknown")),
                             _ => parentCreated.ToString("yyyy-MM")
                         };
-                        sb.AppendLine($"- [[memories/{parentSubFolder}/{parentId.ToString()[..8]}]]");
+                        sb.AppendLine($"- [[memories/{parentSubFolder}/{parentId.ToString()[..12]}]]");
                     }
                     else
                     {
@@ -829,7 +829,7 @@ public sealed class MemoryExportTools
                     {
                         Guid srcId = r.source_entity_id;
                         string relType = r.relationship_type;
-                        float conf = (float)(decimal)(r.confidence ?? 1.0m);
+                        float conf = SafeFloat(r.confidence, 1.0f);
 
                         if (srcId == entityId)
                         {
@@ -851,7 +851,7 @@ public sealed class MemoryExportTools
                     sb.AppendLine("## Memories");
                     foreach (var (memId, createdAt, preview) in mems.OrderByDescending(x => x.CreatedAt).Take(20))
                     {
-                        var memShort = memId.ToString()[..8];
+                        var memShort = memId.ToString()[..12];
                         var subFolder = groupBy switch
                         {
                             "layer" => memories.FirstOrDefault(mm => (Guid)mm.memory_id == memId)?.layer ?? "unknown",
@@ -935,7 +935,7 @@ public sealed class MemoryExportTools
             sb.AppendLine("## Recent Memories");
             foreach (var m in memories.Take(10))
             {
-                var shortId = ((Guid)m.memory_id).ToString()[..8];
+                var shortId = ((Guid)m.memory_id).ToString()[..12];
                 var createdAt = (DateTimeOffset)m.created_at;
                 var subFolder = groupBy switch
                 {
@@ -966,11 +966,39 @@ public sealed class MemoryExportTools
             $"Open `{outputPath}` in Obsidian to browse with graph view and wikilinks.");
     }
 
-    private static string SanitizeFileName(string name) =>
-        string.Join("_", name.Split(Path.GetInvalidFileNameChars()))
+    private static string SanitizeFileName(string name)
+    {
+        var sanitized = string.Join("_", name.Split(Path.GetInvalidFileNameChars()))
             .Replace(" ", "-")
             .ToLowerInvariant()
             .Trim('-', '_');
+
+        // Guard against empty result or excessively long names
+        if (string.IsNullOrEmpty(sanitized))
+            sanitized = "unnamed";
+        if (sanitized.Length > 200)
+            sanitized = sanitized[..200];
+
+        return sanitized;
+    }
+
+    /// <summary>
+    /// Safely converts a dynamic value (float, decimal, double, or null) to float.
+    /// Npgsql may return different numeric types depending on column definition.
+    /// </summary>
+    private static float SafeFloat(dynamic? value, float defaultValue = 0f)
+    {
+        if (value == null) return defaultValue;
+        return value switch
+        {
+            float f => f,
+            double d => (float)d,
+            decimal m => (float)m,
+            int i => i,
+            long l => l,
+            _ => Convert.ToSingle(value)
+        };
+    }
 
     private async Task<object?> GetUserInteractions(NpgsqlConnection conn, string userId)
     {
