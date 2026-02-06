@@ -437,6 +437,77 @@ public sealed class MemoryLifecycleTools(
             $"Event Sequence: {string.Join(", ", sequences)}");
     }
 
+    /// <summary>
+    /// memory_supersede - Atomically replace a memory with new content.
+    /// </summary>
+    public async Task<object> HandleMemorySupersede(JsonNode? arguments)
+    {
+        var oldMemoryIdStr = arguments?["old_memory_id"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrEmpty(oldMemoryIdStr) || !Guid.TryParse(oldMemoryIdStr, out var oldMemoryId))
+            throw new ArgumentException("Valid old_memory_id is required");
+
+        var newContent = arguments?["new_content"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrEmpty(newContent))
+            throw new ArgumentException("new_content is required");
+        if (newContent.Length > 100000)
+            throw new ArgumentException("Content exceeds maximum length of 100000 characters");
+
+        var reason = arguments?["reason"]?.GetValue<string>()?.Trim() ?? "Superseded with updated content";
+        var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
+
+        // Load old aggregate
+        var oldEvents = await eventStore.ReadStreamAsync(oldMemoryId);
+        if (oldEvents.Count == 0)
+            return CreateErrorResponse($"Memory {oldMemoryId} not found");
+
+        var oldAggregate = MemoryAggregate.FromEvents(oldEvents);
+
+        if (!oldAggregate.IsActive)
+            return CreateErrorResponse($"Memory {oldMemoryId} is already inactive and cannot be superseded");
+
+        // Generate embedding for new content
+        var newEmbedding = await embeddingService.EmbedTextAsync(newContent);
+
+        // Create new memory inheriting properties from old
+        var newAggregate = MemoryAggregate.Create(
+            content: newContent,
+            embedding: newEmbedding,
+            layer: oldAggregate.Layer,
+            confidenceScore: oldAggregate.ConfidenceScore,
+            halfLifeDays: oldAggregate.HalfLifeDays,
+            causalParents: [oldMemoryId],
+            source: oldAggregate.Source,
+            userId: oldAggregate.UserId,
+            createdBy: actorId);
+
+        // Persist new memory
+        var newSequences = await eventStore.AppendEventsAsync(
+            newAggregate.Id,
+            newAggregate.UncommittedEvents.ToList(),
+            0);
+
+        // Invalidate old memory with superseded_by link
+        oldAggregate.Invalidate(reason, supersededById: newAggregate.Id, null, actorId);
+
+        var oldSequences = await eventStore.AppendEventsAsync(
+            oldAggregate.Id,
+            oldAggregate.UncommittedEvents.ToList(),
+            oldAggregate.Version - 1);
+
+        logger.LogInformation("Superseded memory {OldId} with {NewId}", oldMemoryId, newAggregate.Id);
+
+        return CreateTextResponse(
+            $"Memory superseded successfully!\n\n" +
+            $"**Old Memory ID:** {oldMemoryId} (now inactive)\n" +
+            $"**New Memory ID:** {newAggregate.Id}\n" +
+            $"**Reason:** {reason}\n" +
+            $"**Layer:** {newAggregate.Layer}\n" +
+            $"**Confidence:** {newAggregate.ConfidenceScore:F3}\n" +
+            $"**Causal Parent:** {oldMemoryId}\n\n" +
+            $"Old memory event sequence: {string.Join(", ", oldSequences)}\n" +
+            $"New memory event sequence: {string.Join(", ", newSequences)}");
+    }
+
     private static object CreateTextResponse(string text) =>
         new
         {

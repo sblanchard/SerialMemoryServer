@@ -124,6 +124,24 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return id;
     }
 
+    public async Task UpdateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            UPDATE memories SET content = @Content, embedding = @Embedding, source = @Source, metadata = @Metadata::jsonb
+            WHERE id = @Id AND tenant_id = @TenantId
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("@Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = memory.Id });
+        cmd.Parameters.Add(new NpgsqlParameter("@TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = TenantId });
+        cmd.Parameters.Add(new NpgsqlParameter("@Content", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Content });
+        cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
+        cmd.Parameters.Add(new NpgsqlParameter("@Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
