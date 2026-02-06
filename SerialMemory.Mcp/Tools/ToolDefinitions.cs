@@ -132,6 +132,25 @@ public static class ToolDefinitions
                 },
                 required = new[] { "memory_id" }
             }
+        },
+        // memory_supersede
+        new
+        {
+            name = "memory_supersede",
+            description = "Replace a memory with new content. Creates new memory, invalidates old, links via causal_parents and superseded_by.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    old_memory_id = new { type = "string", description = "UUID of memory to supersede" },
+                    new_content = new { type = "string", description = "New replacement content" },
+                    reason = new { type = "string", description = "Why superseding" },
+                    extract_entities = new { type = "boolean", @default = true, description = "Extract entities from new content" },
+                    actor_id = new { type = "string", description = "Actor ID" }
+                },
+                required = new[] { "old_memory_id", "new_content" }
+            }
         }
     ];
 
@@ -341,6 +360,25 @@ public static class ToolDefinitions
                     user_id = new { type = "string", @default = "default_user", description = "User ID to export" },
                     output_path = new { type = "string", description = "Output file path" },
                     include_interactions = new { type = "boolean", @default = false, description = "Include interaction history" }
+                }
+            }
+        },
+        // export_markdown
+        new
+        {
+            name = "export_markdown",
+            description = "Export as Obsidian-compatible Markdown vault with wikilinks, YAML frontmatter, and folder organization.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    output_path = new { type = "string", description = "Output directory (default: serial_memory_vault)" },
+                    active_only = new { type = "boolean", @default = true, description = "Only export active memories" },
+                    include_entities = new { type = "boolean", @default = true, description = "Include entity pages" },
+                    include_sessions = new { type = "boolean", @default = true, description = "Include session summaries" },
+                    min_confidence = new { type = "number", @default = 0.0, description = "Minimum confidence filter (0.0-1.0)" },
+                    group_by = new { type = "string", @enum = new[] { "month", "layer", "source" }, @default = "month", description = "How to group memory files" }
                 }
             }
         }

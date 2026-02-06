@@ -13,6 +13,8 @@ namespace SerialMemory.Mcp.Tools;
 public sealed class MemoryLifecycleTools(
     IEventStore eventStore,
     IEmbeddingService embeddingService,
+    IEntityExtractionService entityExtractionService,
+    IKnowledgeGraphStore knowledgeGraphStore,
     ILogger logger)
 {
     /// <summary>
@@ -435,6 +437,141 @@ public sealed class MemoryLifecycleTools(
             $"Confidence at Expiration: {confidenceAtExpiration:F4}\n" +
             $"Access Count at Expiration: {accessCount}\n" +
             $"Event Sequence: {string.Join(", ", sequences)}");
+    }
+
+    /// <summary>
+    /// memory_supersede - Replace a memory with new content.
+    /// Creates new memory first, then invalidates old with superseded_by link.
+    /// Note: Uses two separate event writes — not a database transaction.
+    /// </summary>
+    public async Task<object> HandleMemorySupersede(JsonNode? arguments)
+    {
+        var oldMemoryIdStr = arguments?["old_memory_id"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrEmpty(oldMemoryIdStr) || !Guid.TryParse(oldMemoryIdStr, out var oldMemoryId))
+            throw new ArgumentException("Valid old_memory_id is required");
+
+        var newContent = arguments?["new_content"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrEmpty(newContent))
+            throw new ArgumentException("new_content is required");
+        if (newContent.Length > 100000)
+            throw new ArgumentException("Content exceeds maximum length of 100000 characters");
+
+        var reason = arguments?["reason"]?.GetValue<string>()?.Trim() ?? "Superseded with updated content";
+        var extractEntities = arguments?["extract_entities"]?.GetValue<bool>() ?? true;
+        var actorId = arguments?["actor_id"]?.GetValue<string>()?.Trim();
+
+        // Load old aggregate
+        var oldEvents = await eventStore.ReadStreamAsync(oldMemoryId);
+        if (oldEvents.Count == 0)
+            return CreateErrorResponse($"Memory {oldMemoryId} not found");
+
+        var oldAggregate = MemoryAggregate.FromEvents(oldEvents);
+
+        if (!oldAggregate.IsActive)
+            return CreateErrorResponse($"Memory {oldMemoryId} is already inactive and cannot be superseded");
+
+        // Generate embedding for new content
+        var newEmbedding = await embeddingService.EmbedTextAsync(newContent);
+
+        // Create new memory inheriting properties from old
+        var newAggregate = MemoryAggregate.Create(
+            content: newContent,
+            embedding: newEmbedding,
+            layer: oldAggregate.Layer,
+            confidenceScore: oldAggregate.ConfidenceScore,
+            halfLifeDays: oldAggregate.HalfLifeDays,
+            causalParents: [oldMemoryId],
+            source: oldAggregate.Source,
+            userId: oldAggregate.UserId,
+            createdBy: actorId);
+
+        // Persist new memory
+        var newSequences = await eventStore.AppendEventsAsync(
+            newAggregate.Id,
+            newAggregate.UncommittedEvents.ToList(),
+            0);
+
+        // Extract entities from new content and link to new memory
+        var entitiesExtracted = 0;
+        var relationshipsExtracted = 0;
+        if (extractEntities)
+        {
+            try
+            {
+                var (extractedEntities, extractedRelationships) =
+                    await entityExtractionService.ExtractAllAsync(newContent);
+
+                var entityIdMap = new Dictionary<string, Guid>();
+                foreach (var extracted in extractedEntities)
+                {
+                    var entity = new SerialMemory.Core.Models.Entity
+                    {
+                        Name = extracted.Text,
+                        EntityType = extracted.Label,
+                        CanonicalName = extracted.Text.ToLowerInvariant(),
+                        FirstSeenMemoryId = newAggregate.Id,
+                        Metadata = new Dictionary<string, object>
+                        {
+                            ["confidence"] = extracted.Confidence,
+                            ["start"] = extracted.Start,
+                            ["end"] = extracted.End
+                        }
+                    };
+                    var entityId = await knowledgeGraphStore.CreateEntityAsync(entity);
+                    entityIdMap[extracted.Text] = entityId;
+                    await knowledgeGraphStore.LinkMemoryToEntityAsync(newAggregate.Id, entityId, extracted.Confidence);
+                    entitiesExtracted++;
+                }
+
+                foreach (var extracted in extractedRelationships)
+                {
+                    if (!entityIdMap.TryGetValue(extracted.SourceEntity, out var sourceId) ||
+                        !entityIdMap.TryGetValue(extracted.TargetEntity, out var targetId))
+                        continue;
+
+                    var relationship = new SerialMemory.Core.Models.EntityRelationship
+                    {
+                        SourceEntityId = sourceId,
+                        TargetEntityId = targetId,
+                        RelationshipType = extracted.RelationType,
+                        Confidence = extracted.Confidence,
+                        FirstSeenMemoryId = newAggregate.Id
+                    };
+                    await knowledgeGraphStore.CreateRelationshipAsync(relationship);
+                    relationshipsExtracted++;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Entity extraction failed for superseded memory {NewId}, continuing without entities", newAggregate.Id);
+            }
+        }
+
+        // Invalidate old memory with superseded_by link
+        oldAggregate.Invalidate(reason, supersededById: newAggregate.Id, null, actorId);
+
+        var oldSequences = await eventStore.AppendEventsAsync(
+            oldAggregate.Id,
+            oldAggregate.UncommittedEvents.ToList(),
+            oldAggregate.Version - 1);
+
+        logger.LogInformation("Superseded memory {OldId} with {NewId}", oldMemoryId, newAggregate.Id);
+
+        var entityInfo = extractEntities
+            ? $"**Entities extracted:** {entitiesExtracted}\n**Relationships extracted:** {relationshipsExtracted}\n"
+            : "";
+
+        return CreateTextResponse(
+            $"Memory superseded successfully!\n\n" +
+            $"**Old Memory ID:** {oldMemoryId} (now inactive)\n" +
+            $"**New Memory ID:** {newAggregate.Id}\n" +
+            $"**Reason:** {reason}\n" +
+            $"**Layer:** {newAggregate.Layer}\n" +
+            $"**Confidence:** {newAggregate.ConfidenceScore:F3}\n" +
+            $"**Causal Parent:** {oldMemoryId}\n" +
+            entityInfo + "\n" +
+            $"Old memory event sequence: {string.Join(", ", oldSequences)}\n" +
+            $"New memory event sequence: {string.Join(", ", newSequences)}");
     }
 
     private static object CreateTextResponse(string text) =>
