@@ -1,0 +1,228 @@
+@page "/dashboard/exports"
+@model SerialMemory.Web.Pages.Dashboard.ExportsModel
+@{
+    ViewData["Title"] = "Exports";
+}
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-soft-white">Export Hub</h1>
+        <p class="mt-2 text-graphite">Export your memories, knowledge graph, and entities in multiple formats.</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="mb-6 bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="mb-6 bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded-lg">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    <!-- Stats Overview -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Active Memories</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.ActiveMemories ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Entities</div>
+            <div class="mt-1 text-2xl font-semibold text-cyan">@(Model.Stats?.TotalEntities ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Relationships</div>
+            <div class="mt-1 text-2xl font-semibold text-electric">@(Model.Stats?.TotalRelationships ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Total Exports</div>
+            <div class="mt-1 text-2xl font-semibold text-soft-white">@(Model.Stats?.TotalExports ?? 0)</div>
+        </div>
+        <div class="card">
+            <div class="text-sm font-medium text-graphite">Last Export</div>
+            <div class="mt-1 text-lg font-semibold text-soft-white">
+                @(Model.Stats?.LastExportAt?.ToString("MMM dd") ?? "Never")
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Format Cards -->
+    <h2 class="text-xl font-semibold text-soft-white mb-4">Export Formats</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <!-- JSON Export -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-soft-white">JSON</h3>
+                <span class="px-2 py-1 text-xs rounded bg-blue-600 text-white">Full Data</span>
+            </div>
+            <p class="text-sm text-graphite mb-4">Complete workspace export with memories, entities, and relationships.</p>
+            <form method="post" asp-page-handler="Export">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="format" value="json" />
+                <input type="hidden" name="activeOnly" value="true" />
+                <input type="hidden" name="includeEntities" value="true" />
+                <input type="hidden" name="minConfidence" value="0" />
+                <button type="submit" class="btn-primary w-full px-4 py-2 rounded-md text-sm font-medium">
+                    Export JSON
+                </button>
+            </form>
+        </div>
+
+        <!-- CSV Export -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-soft-white">CSV</h3>
+                <span class="px-2 py-1 text-xs rounded bg-green-600 text-white">Spreadsheet</span>
+            </div>
+            <p class="text-sm text-graphite mb-4">Tabular format for spreadsheets and data analysis tools.</p>
+            <form method="post" asp-page-handler="Export">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="format" value="csv" />
+                <input type="hidden" name="activeOnly" value="true" />
+                <input type="hidden" name="includeEntities" value="true" />
+                <input type="hidden" name="minConfidence" value="0" />
+                <button type="submit" class="btn-primary w-full px-4 py-2 rounded-md text-sm font-medium">
+                    Export CSV
+                </button>
+            </form>
+        </div>
+
+        <!-- GraphML Export -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-soft-white">GraphML</h3>
+                <span class="px-2 py-1 text-xs rounded bg-purple-600 text-white">Graph</span>
+            </div>
+            <p class="text-sm text-graphite mb-4">Knowledge graph in GraphML format for Gephi, yEd, and other graph tools.</p>
+            <form method="post" asp-page-handler="Export">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="format" value="graphml" />
+                <input type="hidden" name="activeOnly" value="true" />
+                <input type="hidden" name="includeEntities" value="true" />
+                <input type="hidden" name="minConfidence" value="0" />
+                <button type="submit" class="btn-primary w-full px-4 py-2 rounded-md text-sm font-medium">
+                    Export GraphML
+                </button>
+            </form>
+        </div>
+
+        <!-- Cytoscape Export -->
+        <div class="card">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-soft-white">Cytoscape</h3>
+                <span class="px-2 py-1 text-xs rounded bg-orange-600 text-white">Visualization</span>
+            </div>
+            <p class="text-sm text-graphite mb-4">Cytoscape JSON format for interactive network visualization.</p>
+            <form method="post" asp-page-handler="Export">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="format" value="cytoscape" />
+                <input type="hidden" name="activeOnly" value="true" />
+                <input type="hidden" name="includeEntities" value="true" />
+                <input type="hidden" name="minConfidence" value="0" />
+                <button type="submit" class="btn-primary w-full px-4 py-2 rounded-md text-sm font-medium">
+                    Export Cytoscape
+                </button>
+            </form>
+        </div>
+
+        <!-- Markdown Vault Export -->
+        <div class="card border border-cyan/30">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-soft-white">Markdown Vault</h3>
+                <span class="px-2 py-1 text-xs rounded bg-cyan text-black font-bold">NEW</span>
+            </div>
+            <p class="text-sm text-graphite mb-4">Obsidian-compatible vault with wikilinks, YAML frontmatter, and folder organization.</p>
+            <form method="post" asp-page-handler="Export">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="format" value="markdown" />
+                <input type="hidden" name="activeOnly" value="true" />
+                <input type="hidden" name="includeEntities" value="true" />
+                <input type="hidden" name="includeSessions" value="true" />
+                <input type="hidden" name="minConfidence" value="0" />
+                <div class="mb-3">
+                    <label class="block text-xs text-graphite mb-1">Group by</label>
+                    <select name="groupBy" class="w-full bg-slate border border-slate rounded-md px-2 py-1 text-sm text-soft-white">
+                        <option value="month">Month</option>
+                        <option value="layer">Layer</option>
+                        <option value="source">Source</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary w-full px-4 py-2 rounded-md text-sm font-medium">
+                    Export Markdown Vault
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Export History -->
+    <h2 class="text-xl font-semibold text-soft-white mb-4">Export History</h2>
+    <div class="card">
+        @if (Model.History.Count == 0)
+        {
+            <div class="text-center text-graphite py-8">
+                No exports yet. Choose a format above to get started.
+            </div>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-graphite border-b border-slate">
+                            <th class="pb-2">Format</th>
+                            <th class="pb-2">Status</th>
+                            <th class="pb-2">Size</th>
+                            <th class="pb-2">Created</th>
+                            <th class="pb-2">Duration</th>
+                            <th class="pb-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var export in Model.History)
+                        {
+                            <tr class="border-b border-slate/50">
+                                <td class="py-2">
+                                    <span class="font-medium text-soft-white">@export.Format.ToUpperInvariant()</span>
+                                </td>
+                                <td class="py-2">
+                                    <span class="px-2 py-1 text-xs rounded @(export.Status == "completed" ? "bg-green-600" : export.Status == "failed" ? "bg-red-600" : "bg-yellow-600") text-white">
+                                        @export.Status
+                                    </span>
+                                </td>
+                                <td class="py-2 text-graphite">
+                                    @(export.FileSizeBytes.HasValue ? ExportsModel.FormatBytes(export.FileSizeBytes.Value) : "-")
+                                </td>
+                                <td class="py-2 text-graphite">@export.CreatedAt.ToString("MMM dd HH:mm")</td>
+                                <td class="py-2 text-graphite">
+                                    @if (export.CompletedAt.HasValue)
+                                    {
+                                        @((export.CompletedAt.Value - export.CreatedAt).TotalSeconds.ToString("F1"))@:s
+                                    }
+                                    else
+                                    {
+                                        @:-
+                                    }
+                                </td>
+                                <td class="py-2">
+                                    @if (export.Status == "completed")
+                                    {
+                                        <a href="/api/exports/download/@export.Id" target="_blank"
+                                           class="text-cyan hover:text-electric text-sm">Download</a>
+                                    }
+                                    else if (!string.IsNullOrEmpty(export.ErrorMessage))
+                                    {
+                                        <span class="text-red-400 text-xs" title="@export.ErrorMessage">Error</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
