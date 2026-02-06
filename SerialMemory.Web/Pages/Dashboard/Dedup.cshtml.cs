@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SerialMemory.Web.Services;
@@ -47,13 +48,13 @@ public sealed class DedupModel : PageModel
 
     public sealed class DedupStats
     {
-        public int PeriodDays { get; init; }
-        public long DupesDetected { get; init; }
-        public long DupesSkipped { get; init; }
-        public long DupesAppended { get; init; }
-        public long DupesWarned { get; init; }
-        public long SupersedeCount { get; init; }
-        public long MergeCount { get; init; }
+        [JsonPropertyName("period_days")] public int PeriodDays { get; init; }
+        [JsonPropertyName("dupes_detected")] public long DupesDetected { get; init; }
+        [JsonPropertyName("dupes_skipped")] public long DupesSkipped { get; init; }
+        [JsonPropertyName("dupes_appended")] public long DupesAppended { get; init; }
+        [JsonPropertyName("dupes_warned")] public long DupesWarned { get; init; }
+        [JsonPropertyName("supersede_count")] public long SupersedeCount { get; init; }
+        [JsonPropertyName("merge_count")] public long MergeCount { get; init; }
     }
 
     public sealed class SupersedeResponse { public IReadOnlyList<SupersedeItem>? History { get; init; } }
@@ -61,23 +62,23 @@ public sealed class DedupModel : PageModel
 
     public sealed class SupersedeItem
     {
-        public Guid EventId { get; init; }
-        public Guid OldMemoryId { get; init; }
-        public Guid? NewMemoryId { get; init; }
+        [JsonPropertyName("event_id")] public Guid EventId { get; init; }
+        [JsonPropertyName("old_memory_id")] public Guid OldMemoryId { get; init; }
+        [JsonPropertyName("new_memory_id")] public Guid? NewMemoryId { get; init; }
         public string? Reason { get; init; }
-        public string? ActorId { get; init; }
-        public DateTimeOffset SupersededAt { get; init; }
-        public string? OldContentPreview { get; init; }
-        public string? NewContentPreview { get; init; }
+        [JsonPropertyName("actor_id")] public string? ActorId { get; init; }
+        [JsonPropertyName("superseded_at")] public DateTimeOffset SupersededAt { get; init; }
+        [JsonPropertyName("old_content_preview")] public string? OldContentPreview { get; init; }
+        [JsonPropertyName("new_content_preview")] public string? NewContentPreview { get; init; }
     }
 
     public sealed class MergeItem
     {
-        public Guid EventId { get; init; }
-        public Guid MergedMemoryId { get; init; }
+        [JsonPropertyName("event_id")] public Guid EventId { get; init; }
+        [JsonPropertyName("merged_memory_id")] public Guid MergedMemoryId { get; init; }
         public string? Strategy { get; init; }
-        public string? ActorId { get; init; }
-        public DateTimeOffset MergedAt { get; init; }
-        public string? ContentPreview { get; init; }
+        [JsonPropertyName("actor_id")] public string? ActorId { get; init; }
+        [JsonPropertyName("merged_at")] public DateTimeOffset MergedAt { get; init; }
+        [JsonPropertyName("content_preview")] public string? ContentPreview { get; init; }
     }
 }

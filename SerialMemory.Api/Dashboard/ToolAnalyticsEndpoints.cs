@@ -140,7 +140,7 @@ public static class ToolAnalyticsEndpoints
                 ORDER BY calls DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Days = periodDays, Limit = limit ?? 10 });
+                new { TenantId = tenantId, Days = periodDays, Limit = Math.Clamp(limit ?? 10, 1, 50) });
 
             // Enrich with category info
             var result = tools.Select(t => new
@@ -231,7 +231,7 @@ public static class ToolAnalyticsEndpoints
                 ORDER BY created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = limit ?? 50 });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 50, 1, 200) });
 
             return Results.Ok(new { events = events.ToList() });
         })

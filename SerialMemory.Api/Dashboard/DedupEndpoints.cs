@@ -54,7 +54,7 @@ public static class DedupEndpoints
                         AND (COALESCE(event_data, payload)::jsonb->>'supersededById') IS NOT NULL) AS supersede_count,
                     COUNT(*) FILTER (WHERE event_type::text = 'MemoryMerged') AS merge_count
                 FROM memory_events
-                WHERE (tenant_id = @TenantId OR tenant_id IS NULL)
+                WHERE tenant_id = @TenantId
                     AND COALESCE(created_at, timestamp) > NOW() - make_interval(days => @Days)
                 """,
                 new { TenantId = tenantId, Days = periodDays });
@@ -104,11 +104,11 @@ public static class DedupEndpoints
                 LEFT JOIN memories m_new ON (COALESCE(me.event_data, me.payload)::jsonb->>'supersededById')::uuid = m_new.id
                 WHERE me.event_type::text = 'MemoryInvalidated'
                     AND (COALESCE(me.event_data, me.payload)::jsonb->>'supersededById') IS NOT NULL
-                    AND (me.tenant_id = @TenantId OR me.tenant_id IS NULL)
+                    AND me.tenant_id = @TenantId
                 ORDER BY COALESCE(me.created_at, me.timestamp) DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = limit ?? 20 });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })
@@ -142,11 +142,11 @@ public static class DedupEndpoints
                 FROM memory_events me
                 LEFT JOIN memories m ON COALESCE(me.memory_id, me.stream_id) = m.id
                 WHERE me.event_type::text = 'MemoryMerged'
-                    AND (me.tenant_id = @TenantId OR me.tenant_id IS NULL)
+                    AND me.tenant_id = @TenantId
                 ORDER BY COALESCE(me.created_at, me.timestamp) DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = limit ?? 20 });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })

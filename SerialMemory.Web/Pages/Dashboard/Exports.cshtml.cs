@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -90,11 +91,11 @@ public sealed class ExportsModel : PageModel
 
     public sealed class ExportStats
     {
-        public long ActiveMemories { get; init; }
-        public long TotalEntities { get; init; }
-        public long TotalRelationships { get; init; }
-        public DateTimeOffset? LastExportAt { get; init; }
-        public long TotalExports { get; init; }
+        [JsonPropertyName("active_memories")] public long ActiveMemories { get; init; }
+        [JsonPropertyName("total_entities")] public long TotalEntities { get; init; }
+        [JsonPropertyName("total_relationships")] public long TotalRelationships { get; init; }
+        [JsonPropertyName("last_export_at")] public DateTimeOffset? LastExportAt { get; init; }
+        [JsonPropertyName("total_exports")] public long TotalExports { get; init; }
     }
 
     public sealed class ExportHistoryResponse { public IReadOnlyList<ExportHistoryItem>? Exports { get; init; } }
@@ -104,17 +105,17 @@ public sealed class ExportsModel : PageModel
         public Guid Id { get; init; }
         public string Format { get; init; } = "";
         public string Status { get; init; } = "";
-        public long? FileSizeBytes { get; init; }
-        public DateTimeOffset CreatedAt { get; init; }
-        public DateTimeOffset? CompletedAt { get; init; }
-        public string? ErrorMessage { get; init; }
+        [JsonPropertyName("file_size_bytes")] public long? FileSizeBytes { get; init; }
+        [JsonPropertyName("created_at")] public DateTimeOffset CreatedAt { get; init; }
+        [JsonPropertyName("completed_at")] public DateTimeOffset? CompletedAt { get; init; }
+        [JsonPropertyName("error_message")] public string? ErrorMessage { get; init; }
     }
 
     public sealed class ExportResult
     {
-        public Guid ExportId { get; init; }
+        [JsonPropertyName("export_id")] public Guid ExportId { get; init; }
         public string Status { get; init; } = "";
-        public long FileSizeBytes { get; init; }
-        public string? DownloadUrl { get; init; }
+        [JsonPropertyName("file_size_bytes")] public long FileSizeBytes { get; init; }
+        [JsonPropertyName("download_url")] public string? DownloadUrl { get; init; }
     }
 }

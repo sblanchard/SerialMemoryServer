@@ -62,6 +62,10 @@ public static class ExportEndpoints
                 request.Format is not ("json" or "csv" or "graphml" or "cytoscape" or "markdown"))
                 return Results.BadRequest(new { error = "invalid_format", message = "Format must be: json, csv, graphml, cytoscape, or markdown" });
 
+            if (!string.IsNullOrEmpty(request.GroupBy) &&
+                request.GroupBy is not ("month" or "layer" or "source"))
+                return Results.BadRequest(new { error = "invalid_group_by", message = "GroupBy must be: month, layer, or source" });
+
             await using var conn = await dataSource.OpenConnectionAsync(ct);
             await conn.SetInternalAdminWithTenantAsync(tenantId);
 
@@ -92,6 +96,14 @@ public static class ExportEndpoints
                 """,
                 new { Id = exportId, TenantId = tenantId, request.Format, Options = options });
 
+            // Guard against excessively large inline exports
+            var memoryCount = await conn.ExecuteScalarAsync<long>(
+                "SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND is_active = true",
+                new { TenantId = tenantId });
+
+            if (memoryCount > 100_000)
+                return Results.UnprocessableEntity(new { error = "dataset_too_large", message = "Dataset exceeds 100k memories. Use the background export API instead." });
+
             // Build export inline (for small datasets; large datasets would use a background worker)
             try
             {
@@ -105,7 +117,14 @@ public static class ExportEndpoints
 
                 var exportDir = Path.Combine(Path.GetTempPath(), "serialmemory_exports");
                 Directory.CreateDirectory(exportDir);
-                var fileName = $"{request.Format}_{tenantId.ToString()[..8]}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.json";
+                var ext = request.Format switch
+                {
+                    "csv" => ".csv",
+                    "graphml" => ".graphml",
+                    "markdown" => ".md",
+                    _ => ".json"
+                };
+                var fileName = $"{request.Format}_{tenantId.ToString()[..8]}_{DateTime.UtcNow:yyyyMMdd_HHmmss}{ext}";
                 var filePath = Path.Combine(exportDir, fileName);
                 await File.WriteAllTextAsync(filePath, json, ct);
 
@@ -134,7 +153,7 @@ public static class ExportEndpoints
                     "UPDATE exports SET status = 'failed', error_message = @Error, completed_at = NOW() WHERE id = @Id",
                     new { Id = exportId, Error = ex.Message });
 
-                return Results.Problem(detail: ex.Message, title: "Export failed", statusCode: 500);
+                return Results.Problem(detail: "An internal error occurred while generating the export.", title: "Export failed", statusCode: 500);
             }
         })
         .WithName("TriggerExport")
@@ -164,7 +183,7 @@ public static class ExportEndpoints
                 ORDER BY created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = limit ?? 20 });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { exports = exports.ToList() });
         })
@@ -190,18 +209,24 @@ public static class ExportEndpoints
                 "SELECT file_path, format FROM exports WHERE id = @Id AND tenant_id = @TenantId AND status = 'completed'",
                 new { Id = id, TenantId = tenantId });
 
-            if (export == null || string.IsNullOrEmpty(export.file_path) || !File.Exists(export.file_path))
+            if (export == null || string.IsNullOrEmpty(export.file_path))
+                return Results.NotFound(new { error = "not_found", message = "Export not found or file missing" });
+
+            // Path traversal protection: ensure file is within the expected export directory
+            var expectedDir = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "serialmemory_exports"));
+            var resolvedPath = Path.GetFullPath(export.file_path);
+            if (!resolvedPath.StartsWith(expectedDir, StringComparison.OrdinalIgnoreCase) || !File.Exists(resolvedPath))
                 return Results.NotFound(new { error = "not_found", message = "Export not found or file missing" });
 
             var contentType = export.format switch
             {
                 "csv" => "text/csv",
                 "graphml" => "application/xml",
+                "markdown" => "text/markdown",
                 _ => "application/json"
             };
 
-            var stream = File.OpenRead(export.file_path);
-            return Results.File(stream, contentType, Path.GetFileName(export.file_path));
+            return Results.File(resolvedPath, contentType, Path.GetFileName(resolvedPath));
         })
         .WithName("DownloadExport")
         .WithDescription("Download an exported file")
@@ -212,7 +237,7 @@ public static class ExportEndpoints
     private static async Task<object> BuildExportAsync(System.Data.IDbConnection conn, Guid tenantId, TriggerExportRequest request)
     {
         var activeFilter = request.ActiveOnly ? "AND is_active = true" : "";
-        var confidenceFilter = request.MinConfidence > 0 ? $"AND confidence >= {request.MinConfidence}" : "";
+        var confidenceFilter = request.MinConfidence > 0 ? "AND confidence >= @MinConfidence" : "";
 
         var memories = await conn.QueryAsync<dynamic>(
             $"""
@@ -222,7 +247,7 @@ public static class ExportEndpoints
             ORDER BY created_at DESC
             LIMIT 50000
             """,
-            new { TenantId = tenantId });
+            new { TenantId = tenantId, MinConfidence = request.MinConfidence });
 
         object? entities = null;
         object? relationships = null;

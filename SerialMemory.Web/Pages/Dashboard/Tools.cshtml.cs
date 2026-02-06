@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SerialMemory.Web.Services;
@@ -52,14 +53,14 @@ public sealed class ToolsModel : PageModel
 
     public sealed class ToolStats
     {
-        public long TotalCalls { get; init; }
-        public int UniqueTools { get; init; }
-        public decimal? AvgLatencyMs { get; init; }
-        public long ErrorCount { get; init; }
-        public decimal ErrorRatePct { get; init; }
-        public long CallsToday { get; init; }
-        public long Calls7d { get; init; }
-        public long Calls30d { get; init; }
+        [JsonPropertyName("total_calls")] public long TotalCalls { get; init; }
+        [JsonPropertyName("unique_tools")] public int UniqueTools { get; init; }
+        [JsonPropertyName("avg_latency_ms")] public decimal? AvgLatencyMs { get; init; }
+        [JsonPropertyName("error_count")] public long ErrorCount { get; init; }
+        [JsonPropertyName("error_rate_pct")] public decimal ErrorRatePct { get; init; }
+        [JsonPropertyName("calls_today")] public long CallsToday { get; init; }
+        [JsonPropertyName("calls_7d")] public long Calls7d { get; init; }
+        [JsonPropertyName("calls_30d")] public long Calls30d { get; init; }
     }
 
     public sealed class TopToolsResponse { public IReadOnlyList<TopTool>? Tools { get; init; } }
@@ -68,29 +69,29 @@ public sealed class ToolsModel : PageModel
 
     public sealed class TopTool
     {
-        public string ToolName { get; init; } = "";
+        [JsonPropertyName("tool_name")] public string ToolName { get; init; } = "";
         public string Category { get; init; } = "";
         public long Calls { get; init; }
-        public decimal? AvgLatencyMs { get; init; }
+        [JsonPropertyName("avg_latency_ms")] public decimal? AvgLatencyMs { get; init; }
         public long Errors { get; init; }
-        public DateTimeOffset? LastUsedAt { get; init; }
+        [JsonPropertyName("last_used_at")] public DateTimeOffset? LastUsedAt { get; init; }
     }
 
     public sealed class CategoryStats
     {
         public string Category { get; init; } = "";
         public long Calls { get; init; }
-        public int ToolCount { get; init; }
+        [JsonPropertyName("tool_count")] public int ToolCount { get; init; }
     }
 
     public sealed class RecentCall
     {
         public Guid Id { get; init; }
-        public string ToolName { get; init; } = "";
-        public decimal CreditsUsed { get; init; }
+        [JsonPropertyName("tool_name")] public string ToolName { get; init; } = "";
+        [JsonPropertyName("credits_used")] public decimal CreditsUsed { get; init; }
         public bool Success { get; init; }
-        public int? LatencyMs { get; init; }
-        public string? ErrorMessage { get; init; }
-        public DateTimeOffset CreatedAt { get; init; }
+        [JsonPropertyName("latency_ms")] public int? LatencyMs { get; init; }
+        [JsonPropertyName("error_message")] public string? ErrorMessage { get; init; }
+        [JsonPropertyName("created_at")] public DateTimeOffset CreatedAt { get; init; }
     }
 }
