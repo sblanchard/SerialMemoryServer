@@ -221,6 +221,9 @@ public static class DashboardExtensions
         app.MapTimelineEndpoints(selfHostedMode);
         app.MapBranchesEndpoints(selfHostedMode);
         app.MapApiKeysEndpoints(selfHostedMode);
+        app.MapExportEndpoints(selfHostedMode);
+        app.MapToolAnalyticsEndpoints(selfHostedMode);
+        app.MapDedupEndpoints(selfHostedMode);
         app.MapAdminEndpoints(selfHostedMode);
 
         return app;
