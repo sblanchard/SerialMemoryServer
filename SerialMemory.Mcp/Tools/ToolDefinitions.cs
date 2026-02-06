@@ -137,7 +137,7 @@ public static class ToolDefinitions
         new
         {
             name = "memory_supersede",
-            description = "Atomically replace a memory with new content. Creates new memory, invalidates old, links via causal_parents and superseded_by.",
+            description = "Replace a memory with new content. Creates new memory, invalidates old, links via causal_parents and superseded_by.",
             inputSchema = new
             {
                 type = "object",

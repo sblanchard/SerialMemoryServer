@@ -67,14 +67,23 @@ public class KnowledgeGraphService(
                 {
                     var merged = best.Content + "\n---\n" + content;
                     var mergedEmbedding = await _embeddingService.EmbedTextAsync(merged, cancellationToken);
+
+                    // Preserve existing metadata/session — only override if caller provided new values
+                    var mergedMetadata = best.Metadata ?? new Dictionary<string, object>();
+                    if (metadata != null)
+                    {
+                        foreach (var kvp in metadata)
+                            mergedMetadata[kvp.Key] = kvp.Value;
+                    }
+
                     var updatedMemory = new Memory
                     {
                         Id = best.Id,
                         Content = merged,
                         Embedding = mergedEmbedding,
                         Source = source ?? best.Source,
-                        ConversationSessionId = sessionId,
-                        Metadata = metadata
+                        ConversationSessionId = sessionId ?? best.ConversationSessionId,
+                        Metadata = mergedMetadata
                     };
                     await _store.UpdateMemoryAsync(updatedMemory, cancellationToken);
 

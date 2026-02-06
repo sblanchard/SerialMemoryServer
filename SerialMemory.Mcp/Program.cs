@@ -168,7 +168,7 @@ var kgService = new KnowledgeGraphService(store, embeddingService, entityService
 IEventStore eventStore = new PostgresEventStore(connectionString, loggerFactory.CreateLogger<PostgresEventStore>());
 
 // Initialize tool handlers
-var lifecycleTools = new MemoryLifecycleTools(eventStore, embeddingService, logger);
+var lifecycleTools = new MemoryLifecycleTools(eventStore, embeddingService, entityService, store, logger);
 var observabilityTools = new MemoryObservabilityTools(eventStore, connectionString, logger);
 var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
 var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
@@ -201,6 +201,9 @@ var jsonOptions = new JsonSerializerOptions
     WriteIndented = false,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
+
+// Build core tool definitions once — shared between HandleToolsList and HandleGetToolsInCategory
+var coreTools = BuildCoreTools();
 
 // Read JSON-RPC requests from STDIN, write responses to STDOUT
 await using var stdin = Console.OpenStandardInput();
@@ -280,8 +283,31 @@ object HandleToolsList()
 {
     var lazyMcpEnabled = configuration["LAZY_MCP_ENABLED"]?.ToLowerInvariant() is not ("false" or "0" or "no");
 
-    var coreTools = new object[]
-    {
+    return lazyMcpEnabled ? BuildLazyToolsList() : BuildFullToolsList();
+}
+
+object BuildLazyToolsList()
+{
+    var lazyToolNames = new HashSet<string> { "memory_search", "memory_ingest", "memory_multi_hop_search", "memory_about_user" };
+    var lazyTools = coreTools.Where(t => lazyToolNames.Contains(((dynamic)t).name)).ToArray();
+    var allTools = lazyTools.Concat(ToolHierarchy.GetMetaTools()).ToArray();
+    return new { tools = allTools };
+}
+
+object BuildFullToolsList()
+{
+    var allTools = coreTools
+        .Concat(ToolDefinitions.GetLifecycleTools())
+        .Concat(ToolDefinitions.GetObservabilityTools())
+        .Concat(ToolDefinitions.GetSafetyTools())
+        .Concat(ToolDefinitions.GetExportTools())
+        .Concat(ToolDefinitions.GetReasoningTools())
+        .ToArray();
+    return new { tools = allTools };
+}
+
+object[] BuildCoreTools() => new object[]
+{
             // memory_search
             new
             {
@@ -532,34 +558,6 @@ object HandleToolsList()
                 }
             }
     };
-
-    if (lazyMcpEnabled)
-    {
-        // Lazy-MCP: only expose core tools (search, ingest, multi_hop, about_user) + 2 meta-tools
-        // Remaining ~30 tools are discoverable via get_tools_in_category + execute_tool
-        var lazyTools = new object[]
-        {
-            coreTools[0],  // memory_search
-            coreTools[1],  // memory_ingest
-            coreTools[5],  // memory_multi_hop_search
-            coreTools[2],  // memory_about_user
-        };
-        var allTools = lazyTools.Concat(ToolHierarchy.GetMetaTools()).ToArray();
-        return new { tools = allTools };
-    }
-    else
-    {
-        // Full mode: list all tools (backwards compatible)
-        var allTools = coreTools
-            .Concat(ToolDefinitions.GetLifecycleTools())
-            .Concat(ToolDefinitions.GetObservabilityTools())
-            .Concat(ToolDefinitions.GetSafetyTools())
-            .Concat(ToolDefinitions.GetExportTools())
-            .Concat(ToolDefinitions.GetReasoningTools())
-            .ToArray();
-        return new { tools = allTools };
-    }
-}
 
 object HandleResourcesList()
 {
@@ -1549,9 +1547,9 @@ object HandleGetToolsInCategory(JsonNode? arguments)
 
     if (string.IsNullOrEmpty(path))
     {
-        // Root level: return category list
+        // Root level: return category list (stable ordering)
         var text = "## SerialMemory Tool Categories\n\n";
-        foreach (var (key, info) in ToolHierarchy.Categories)
+        foreach (var (key, info) in ToolHierarchy.CategoriesOrdered)
         {
             var toolCount = ToolHierarchy.ToolMap.Keys.Count(k => k.StartsWith(key + "."));
             text += $"- **{key}** ({toolCount} tools) — {info.Description}\n";
@@ -1560,19 +1558,13 @@ object HandleGetToolsInCategory(JsonNode? arguments)
         return CreateTextResponse(text);
     }
 
-    if (!ToolHierarchy.Categories.ContainsKey(path))
+    if (!ToolHierarchy.Categories.TryGetValue(path, out var categoryInfo))
         return CreateErrorResponse($"Unknown category: {path}. Available: {string.Join(", ", ToolHierarchy.Categories.Keys)}");
 
-    var tools = ToolHierarchy.GetToolsForCategory(path);
-    var result = new
-    {
-        category = path,
-        title = ToolHierarchy.Categories[path].Title,
-        description = ToolHierarchy.Categories[path].Description,
-        tools
-    };
+    // Pass coreTools so session/admin categories can extract from the single source of truth
+    var tools = ToolHierarchy.GetToolsForCategory(path, coreTools);
     return CreateTextResponse(
-        $"## {result.title}\n{result.description}\n\n" +
+        $"## {categoryInfo.Title}\n{categoryInfo.Description}\n\n" +
         $"**{tools.Length} tools available.** Use `execute_tool` with path `{path}.<tool_name>` to execute.\n\n" +
         System.Text.Json.JsonSerializer.Serialize(tools, new System.Text.Json.JsonSerializerOptions
         {
@@ -1587,20 +1579,84 @@ async Task<object> HandleExecuteTool(JsonNode? arguments)
     if (string.IsNullOrEmpty(toolPath))
         throw new ArgumentException("tool_path is required (e.g. 'lifecycle.memory_update')");
 
+    // Guard against recursion: execute_tool cannot dispatch to itself or get_tools_in_category
+    if (toolPath is "meta.execute_tool" or "meta.get_tools_in_category")
+        throw new ArgumentException("Cannot invoke meta-tools via execute_tool");
+
     if (!ToolHierarchy.ToolMap.TryGetValue(toolPath, out var actualToolName))
         throw new ArgumentException($"Unknown tool path: {toolPath}. Use get_tools_in_category to discover available tools.");
 
     var toolArguments = arguments?["arguments"];
 
-    // Dispatch to existing handler by constructing a synthetic params node
-    var syntheticParams = new JsonObject
-    {
-        ["name"] = actualToolName,
-        ["arguments"] = toolArguments?.DeepClone()
-    };
+    logger.LogInformation("→ execute_tool: {Path} → {Tool}", toolPath, actualToolName);
 
-    return await HandleToolsCall(syntheticParams);
+    // Dispatch directly to the tool handler (avoids double usage tracking via HandleToolsCall)
+    var sw = Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
+    try
+    {
+        var result = DispatchTool(actualToolName, toolArguments);
+        if (result == null)
+            throw new Exception($"Unknown tool: {actualToolName}");
+        return await result;
+    }
+    catch (Exception ex)
+    {
+        success = false;
+        errorMessage = ex.Message;
+        logger.LogError(ex, "Error executing tool {ToolName} via execute_tool", actualToolName);
+        return CreateErrorResponse(ex.Message);
+    }
+    finally
+    {
+        sw.Stop();
+        TrackToolUsage(actualToolName, (int)sw.ElapsedMilliseconds, success, errorMessage);
+    }
 }
+
+Task<object>? DispatchTool(string toolName, JsonNode? arguments) => toolName switch
+{
+    "memory_search" => HandleMemorySearch(arguments),
+    "memory_ingest" => HandleMemoryIngest(arguments),
+    "memory_about_user" => HandleMemoryAboutUser(arguments),
+    "initialise_conversation_session" => HandleInitialiseSession(arguments),
+    "end_conversation_session" => HandleEndSession(),
+    "memory_multi_hop_search" => HandleMultiHopSearch(arguments),
+    "get_integrations" => Task.FromResult(HandleGetIntegrations()),
+    "import_from_core" => HandleImportFromCore(arguments),
+    "set_user_persona" => HandleSetUserPersona(arguments),
+    "crawl_relationships" => HandleCrawlRelationships(arguments),
+    "get_graph_statistics" => HandleGetGraphStatistics(),
+    "get_model_info" => Task.FromResult(HandleGetModelInfo()),
+    "reembed_memories" => HandleReembedMemories(arguments),
+    "instantiate_context" => HandleInstantiateContext(arguments),
+    "memory_update" => lifecycleTools.HandleMemoryUpdate(arguments),
+    "memory_delete" => lifecycleTools.HandleMemoryDelete(arguments),
+    "memory_merge" => lifecycleTools.HandleMemoryMerge(arguments),
+    "memory_split" => lifecycleTools.HandleMemorySplit(arguments),
+    "memory_decay" => lifecycleTools.HandleMemoryDecay(arguments),
+    "memory_reinforce" => lifecycleTools.HandleMemoryReinforce(arguments),
+    "memory_expire" => lifecycleTools.HandleMemoryExpire(arguments),
+    "memory_supersede" => lifecycleTools.HandleMemorySupersede(arguments),
+    "memory_trace" => observabilityTools.HandleMemoryTrace(arguments),
+    "memory_lineage" => observabilityTools.HandleMemoryLineage(arguments),
+    "memory_explain" => observabilityTools.HandleMemoryExplain(arguments),
+    "memory_conflicts" => observabilityTools.HandleMemoryConflicts(arguments),
+    "detect_contradictions" => safetyTools.HandleDetectContradictions(arguments),
+    "detect_hallucinations" => safetyTools.HandleDetectHallucinations(arguments),
+    "verify_memory_integrity" => safetyTools.HandleVerifyIntegrity(arguments),
+    "scan_loops" => safetyTools.HandleScanLoops(arguments),
+    "export_workspace" => exportTools.HandleExportWorkspace(arguments),
+    "export_memories" => exportTools.HandleExportMemories(arguments),
+    "export_graph" => exportTools.HandleExportGraph(arguments),
+    "export_user_profile" => exportTools.HandleExportUserProfile(arguments),
+    "export_markdown" => exportTools.HandleExportMarkdown(arguments),
+    "engineering_analyze" => reasoningTools.HandleEngineeringAnalyze(arguments),
+    "engineering_visualize" => reasoningTools.HandleEngineeringVisualize(arguments),
+    "engineering_reason" => reasoningTools.HandleEngineeringReason(arguments),
+    _ => null
+};
 
 object CreateTextResponse(string text)
 {

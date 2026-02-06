@@ -127,7 +127,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task UpdateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            UPDATE memories SET content = @Content, embedding = @Embedding, source = @Source, metadata = @Metadata::jsonb
+            UPDATE memories SET content = @Content, embedding = @Embedding, source = @Source,
+                   metadata = @Metadata::jsonb, updated_at = NOW()
             WHERE id = @Id AND tenant_id = @TenantId
             """;
 
@@ -139,7 +140,9 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
         cmd.Parameters.Add(new NpgsqlParameter("@Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        var rowsAffected = await cmd.ExecuteNonQueryAsync(cancellationToken);
+        if (rowsAffected == 0)
+            throw new InvalidOperationException($"Memory {memory.Id} not found or not owned by tenant");
     }
 
     public async Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default)
