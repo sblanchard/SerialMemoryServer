@@ -294,6 +294,9 @@ public class InstrumentedKnowledgeGraphStore(
 
     #region Passthrough Operations (not instrumented)
 
+    public Task UpdateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
+        => inner.UpdateMemoryAsync(memory, cancellationToken);
+
     public Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default)
         => inner.GetMemoryByIdAsync(id, cancellationToken);
 

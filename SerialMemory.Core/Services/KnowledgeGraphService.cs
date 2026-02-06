@@ -27,10 +27,70 @@ public class KnowledgeGraphService(
         Guid? sessionId = null,
         Dictionary<string, object>? metadata = null,
         bool extractEntities = true,
+        string dedupMode = "warn",
+        float dedupThreshold = 0.85f,
         CancellationToken cancellationToken = default)
     {
         // Generate embedding
         var embedding = await _embeddingService.EmbedTextAsync(content, cancellationToken);
+
+        // Ingest-time deduplication check
+        List<DuplicateInfo>? similarMemories = null;
+        if (dedupMode is not "off")
+        {
+            var candidates = await _store.SearchMemoriesByEmbeddingAsync(
+                embedding, limit: 3, threshold: dedupThreshold, cancellationToken);
+
+            if (candidates.Count > 0)
+            {
+                var best = candidates[0];
+                similarMemories = candidates.Select(c => new DuplicateInfo
+                {
+                    MemoryId = c.Id,
+                    Similarity = c.Similarity,
+                    ContentPreview = c.Content.Length > 120 ? c.Content[..120] + "..." : c.Content
+                }).ToList();
+
+                if (dedupMode == "skip")
+                {
+                    return new MemoryIngestResult
+                    {
+                        MemoryId = best.Id,
+                        DuplicateDetected = true,
+                        DuplicateOf = best.Id,
+                        DuplicateSimilarity = best.Similarity,
+                        SimilarMemories = similarMemories
+                    };
+                }
+
+                if (dedupMode == "append")
+                {
+                    var merged = best.Content + "\n---\n" + content;
+                    var mergedEmbedding = await _embeddingService.EmbedTextAsync(merged, cancellationToken);
+                    var updatedMemory = new Memory
+                    {
+                        Id = best.Id,
+                        Content = merged,
+                        Embedding = mergedEmbedding,
+                        Source = source ?? best.Source,
+                        ConversationSessionId = sessionId,
+                        Metadata = metadata
+                    };
+                    await _store.UpdateMemoryAsync(updatedMemory, cancellationToken);
+
+                    return new MemoryIngestResult
+                    {
+                        MemoryId = best.Id,
+                        DuplicateDetected = true,
+                        DuplicateOf = best.Id,
+                        DuplicateSimilarity = best.Similarity,
+                        SimilarMemories = similarMemories
+                    };
+                }
+
+                // dedupMode == "warn": fall through to normal creation
+            }
+        }
 
         // Create memory
         var memory = new Memory
@@ -50,7 +110,10 @@ public class KnowledgeGraphService(
             EntitiesCreated = 0,
             RelationshipsCreated = 0,
             Entities = [],
-            Relationships = []
+            Relationships = [],
+            DuplicateDetected = similarMemories is { Count: > 0 },
+            DuplicateSimilarity = similarMemories?.FirstOrDefault()?.Similarity ?? 0f,
+            SimilarMemories = similarMemories
         };
 
         if (!extractEntities) return result;
@@ -736,7 +799,8 @@ public class KnowledgeGraphService(
                                 ["imported_from"] = "core"
                             },
                             false, // Don't re-extract entities
-                            cancellationToken);
+                            dedupMode: "off",
+                            cancellationToken: cancellationToken);
 
                         await _store.LinkMemoryToEntityAsync(ingestResult.MemoryId, entityId, 1.0f, cancellationToken);
                         result.ObservationsImported++;
@@ -838,6 +902,17 @@ public class MemoryIngestResult
     public int RelationshipsCreated { get; set; }
     public List<EntityInfo> Entities { get; set; } = [];
     public List<RelationshipInfo> Relationships { get; set; } = [];
+    public bool DuplicateDetected { get; set; }
+    public Guid? DuplicateOf { get; set; }
+    public float DuplicateSimilarity { get; set; }
+    public List<DuplicateInfo>? SimilarMemories { get; set; }
+}
+
+public class DuplicateInfo
+{
+    public Guid MemoryId { get; set; }
+    public float Similarity { get; set; }
+    public string ContentPreview { get; set; } = "";
 }
 
 public class MemorySearchResult

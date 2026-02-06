@@ -19,6 +19,7 @@ public enum UsageEventType
     MemoryDecay,
     MemoryReinforce,
     MemoryExpire,
+    MemorySupersede,
 
     // Graph operations
     CrawlRelationships,
@@ -29,6 +30,7 @@ public enum UsageEventType
     ExportMemories,
     ExportGraph,
     ExportUserProfile,
+    ExportMarkdown,
 
     // Model operations
     ReembedMemories,
@@ -61,6 +63,10 @@ public enum UsageEventType
     EngineeringAnalyze,
     EngineeringVisualize,
     EngineeringReason,
+
+    // Meta-tool operations (lazy-MCP)
+    GetToolsInCategory,
+    ExecuteTool,
 
     // LLM operations
     LlmChat,
