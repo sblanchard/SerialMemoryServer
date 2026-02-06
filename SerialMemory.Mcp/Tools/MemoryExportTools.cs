@@ -563,6 +563,443 @@ public sealed class MemoryExportTools
             (includeInteractions ? "- **Interactions**: Included\n" : ""));
     }
 
+    /// <summary>
+    /// export_markdown - Export as Obsidian-compatible Markdown vault.
+    /// </summary>
+    public async Task<object> HandleExportMarkdown(JsonNode? arguments)
+    {
+        var outputPath = arguments?["output_path"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrEmpty(outputPath))
+            outputPath = "serial_memory_vault";
+
+        var activeOnly = arguments?["active_only"]?.GetValue<bool>() ?? true;
+        var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
+        var includeSessions = arguments?["include_sessions"]?.GetValue<bool>() ?? true;
+        var minConfidence = arguments?["min_confidence"]?.GetValue<float>() ?? 0f;
+        var groupBy = arguments?["group_by"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "month";
+
+        await using var conn = await _dataSource.OpenConnectionAsync();
+
+        // Query memories
+        var memorySql = @"
+            SELECT memory_id, content, layer, confidence_score, half_life_days,
+                   created_at, content_hash, causal_parents, tags, source, user_id, is_active
+            FROM memory_projections
+            WHERE 1=1";
+
+        var parameters = new DynamicParameters();
+
+        if (activeOnly)
+            memorySql += " AND is_active = TRUE";
+
+        if (minConfidence > 0)
+        {
+            memorySql += " AND confidence_score >= @MinConfidence";
+            parameters.Add("MinConfidence", minConfidence);
+        }
+
+        memorySql += " ORDER BY created_at DESC LIMIT 50000";
+
+        var memories = (await conn.QueryAsync<dynamic>(memorySql, parameters)).ToList();
+
+        // Query memory-entity links
+        var memoryEntityLinks = new Dictionary<Guid, List<(string Name, string EntityType, Guid EntityId)>>();
+        if (includeEntities)
+        {
+            var links = await conn.QueryAsync<dynamic>(@"
+                SELECT mel.memory_id, e.entity_id, e.name, e.entity_type
+                FROM memory_entity_links mel
+                JOIN entity_projections e ON mel.entity_id = e.entity_id");
+
+            foreach (var link in links)
+            {
+                Guid memId = link.memory_id;
+                if (!memoryEntityLinks.TryGetValue(memId, out var list))
+                {
+                    list = [];
+                    memoryEntityLinks[memId] = list;
+                }
+                list.Add((link.name, link.entity_type, link.entity_id));
+            }
+        }
+
+        // Query entities
+        var entities = new List<dynamic>();
+        var entityMemoryCounts = new Dictionary<Guid, int>();
+        if (includeEntities)
+        {
+            entities = (await conn.QueryAsync<dynamic>(@"
+                SELECT entity_id, name, entity_type, canonical_name, confidence_score,
+                       memory_count, first_seen_at, last_seen_at
+                FROM entity_projections
+                WHERE is_active = TRUE
+                ORDER BY memory_count DESC")).ToList();
+
+            foreach (var e in entities)
+                entityMemoryCounts[(Guid)e.entity_id] = (int)(e.memory_count ?? 0);
+        }
+
+        // Query relationships
+        var relationships = new List<dynamic>();
+        if (includeEntities)
+        {
+            relationships = (await conn.QueryAsync<dynamic>(@"
+                SELECT r.source_entity_id, r.target_entity_id, r.relationship_type, r.confidence,
+                       s.name AS source_name, s.entity_type AS source_type,
+                       t.name AS target_name, t.entity_type AS target_type
+                FROM entity_relationship_projections r
+                JOIN entity_projections s ON r.source_entity_id = s.entity_id
+                JOIN entity_projections t ON r.target_entity_id = t.entity_id")).ToList();
+        }
+
+        // Build relationship lookup by entity
+        var entityRelationships = new Dictionary<Guid, List<dynamic>>();
+        foreach (var r in relationships)
+        {
+            Guid srcId = r.source_entity_id;
+            Guid tgtId = r.target_entity_id;
+            if (!entityRelationships.TryGetValue(srcId, out var srcList))
+            {
+                srcList = [];
+                entityRelationships[srcId] = srcList;
+            }
+            srcList.Add(r);
+            if (!entityRelationships.TryGetValue(tgtId, out var tgtList))
+            {
+                tgtList = [];
+                entityRelationships[tgtId] = tgtList;
+            }
+            tgtList.Add(r);
+        }
+
+        // Build entity memories lookup (entity -> list of memories mentioning it)
+        var entityMemories = new Dictionary<Guid, List<(Guid MemoryId, DateTimeOffset CreatedAt, string ContentPreview)>>();
+        foreach (var kvp in memoryEntityLinks)
+        {
+            var memId = kvp.Key;
+            var mem = memories.FirstOrDefault(m => (Guid)m.memory_id == memId);
+            if (mem == null) continue;
+
+            foreach (var (_, _, entityId) in kvp.Value)
+            {
+                if (!entityMemories.TryGetValue(entityId, out var list))
+                {
+                    list = [];
+                    entityMemories[entityId] = list;
+                }
+                var preview = ((string)mem.content).Length > 60
+                    ? ((string)mem.content)[..60] + "..."
+                    : (string)mem.content;
+                list.Add((memId, (DateTimeOffset)mem.created_at, preview));
+            }
+        }
+
+        // Query sessions
+        var sessions = new List<dynamic>();
+        if (includeSessions)
+        {
+            sessions = (await conn.QueryAsync<dynamic>(@"
+                SELECT id, session_name, started_at, ended_at, client_type
+                FROM conversation_sessions
+                ORDER BY started_at DESC
+                LIMIT 100")).ToList();
+        }
+
+        // Create directory structure
+        Directory.CreateDirectory(outputPath);
+        Directory.CreateDirectory(Path.Combine(outputPath, "memories"));
+
+        if (includeEntities)
+            Directory.CreateDirectory(Path.Combine(outputPath, "entities"));
+
+        if (includeSessions)
+            Directory.CreateDirectory(Path.Combine(outputPath, "sessions"));
+
+        var memoryCount = 0;
+        var entityCount = 0;
+        var sessionCount = 0;
+
+        // Write memory files
+        foreach (var m in memories)
+        {
+            Guid memoryId = m.memory_id;
+            DateTimeOffset createdAt = m.created_at;
+            var shortId = memoryId.ToString()[..12];
+
+            var subFolder = groupBy switch
+            {
+                "layer" => (string)(m.layer ?? "unknown"),
+                "source" => SanitizeFileName((string)(m.source ?? "unknown")),
+                _ => createdAt.ToString("yyyy-MM")
+            };
+
+            var memDir = Path.Combine(outputPath, "memories", subFolder);
+            Directory.CreateDirectory(memDir);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("---");
+            sb.AppendLine($"id: {memoryId}");
+            sb.AppendLine("type: memory");
+            sb.AppendLine($"layer: {m.layer ?? "unknown"}");
+            sb.AppendLine($"confidence: {SafeFloat(m.confidence_score):F3}");
+            sb.AppendLine($"created: {createdAt:O}");
+            if (m.source != null) sb.AppendLine($"source: {m.source}");
+
+            string[]? tags = m.tags;
+            if (tags is { Length: > 0 })
+                sb.AppendLine($"tags: [{string.Join(", ", tags)}]");
+
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine((string)m.content);
+
+            // Entity links
+            if (memoryEntityLinks.TryGetValue(memoryId, out var linkedEntities) && linkedEntities.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Entities");
+                foreach (var (name, entityType, _) in linkedEntities)
+                {
+                    var slug = SanitizeFileName(name);
+                    sb.AppendLine($"- [[entities/{entityType}/{slug}|{name}]] ({entityType})");
+                }
+            }
+
+            // Causal parents
+            Guid[]? causalParents = m.causal_parents;
+            if (causalParents is { Length: > 0 })
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Causal Parents");
+                foreach (var parentId in causalParents)
+                {
+                    var parentMem = memories.FirstOrDefault(p => (Guid)p.memory_id == parentId);
+                    if (parentMem != null)
+                    {
+                        var parentCreated = (DateTimeOffset)parentMem.created_at;
+                        var parentSubFolder = groupBy switch
+                        {
+                            "layer" => (string)(parentMem.layer ?? "unknown"),
+                            "source" => SanitizeFileName((string)(parentMem.source ?? "unknown")),
+                            _ => parentCreated.ToString("yyyy-MM")
+                        };
+                        sb.AppendLine($"- [[memories/{parentSubFolder}/{parentId.ToString()[..12]}]]");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"- {parentId}");
+                    }
+                }
+            }
+
+            await File.WriteAllTextAsync(Path.Combine(memDir, $"{shortId}.md"), sb.ToString());
+            memoryCount++;
+        }
+
+        // Write entity files
+        if (includeEntities)
+        {
+            foreach (var e in entities)
+            {
+                Guid entityId = e.entity_id;
+                string entityType = e.entity_type;
+                string name = e.name;
+                var slug = SanitizeFileName(name);
+
+                var typeDir = Path.Combine(outputPath, "entities", entityType);
+                Directory.CreateDirectory(typeDir);
+
+                var sb = new StringBuilder();
+                sb.AppendLine("---");
+                sb.AppendLine($"id: {entityId}");
+                sb.AppendLine("type: entity");
+                sb.AppendLine($"entity_type: {entityType}");
+                sb.AppendLine($"memory_count: {e.memory_count ?? 0}");
+                if (e.first_seen_at != null) sb.AppendLine($"first_seen: {((DateTimeOffset)e.first_seen_at):yyyy-MM-dd}");
+                sb.AppendLine("---");
+                sb.AppendLine();
+                sb.AppendLine($"# {name}");
+
+                // Relationships
+                if (entityRelationships.TryGetValue(entityId, out var rels) && rels.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("## Relationships");
+                    foreach (var r in rels)
+                    {
+                        Guid srcId = r.source_entity_id;
+                        string relType = r.relationship_type;
+                        float conf = SafeFloat(r.confidence, 1.0f);
+
+                        if (srcId == entityId)
+                        {
+                            var tgtSlug = SanitizeFileName((string)r.target_name);
+                            sb.AppendLine($"- [[entities/{r.target_type}/{tgtSlug}|{r.target_name}]] -- {relType} (confidence: {conf:F1})");
+                        }
+                        else
+                        {
+                            var srcSlug = SanitizeFileName((string)r.source_name);
+                            sb.AppendLine($"- [[entities/{r.source_type}/{srcSlug}|{r.source_name}]] -- {relType} (confidence: {conf:F1})");
+                        }
+                    }
+                }
+
+                // Memories mentioning this entity
+                if (entityMemories.TryGetValue(entityId, out var mems) && mems.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("## Memories");
+                    foreach (var (memId, createdAt, preview) in mems.OrderByDescending(x => x.CreatedAt).Take(20))
+                    {
+                        var memShort = memId.ToString()[..12];
+                        var subFolder = groupBy switch
+                        {
+                            "layer" => memories.FirstOrDefault(mm => (Guid)mm.memory_id == memId)?.layer ?? "unknown",
+                            "source" => SanitizeFileName((string)(memories.FirstOrDefault(mm => (Guid)mm.memory_id == memId)?.source ?? "unknown")),
+                            _ => createdAt.ToString("yyyy-MM")
+                        };
+                        sb.AppendLine($"- [[memories/{subFolder}/{memShort}|{createdAt:yyyy-MM-dd} - {preview}]]");
+                    }
+                }
+
+                await File.WriteAllTextAsync(Path.Combine(typeDir, $"{slug}.md"), sb.ToString());
+                entityCount++;
+            }
+        }
+
+        // Write session files
+        if (includeSessions)
+        {
+            foreach (var s in sessions)
+            {
+                Guid sessionId = s.id;
+                DateTimeOffset startedAt = s.started_at;
+                string sessionName = s.session_name ?? "Untitled";
+                var fileName = $"{startedAt:yyyy-MM-dd}_{SanitizeFileName(sessionName)}.md";
+
+                var sb = new StringBuilder();
+                sb.AppendLine("---");
+                sb.AppendLine($"id: {sessionId}");
+                sb.AppendLine("type: session");
+                sb.AppendLine($"started: {startedAt:O}");
+                if (s.ended_at != null) sb.AppendLine($"ended: {((DateTimeOffset)s.ended_at):O}");
+                if (s.client_type != null) sb.AppendLine($"client: {s.client_type}");
+                sb.AppendLine("---");
+                sb.AppendLine();
+                sb.AppendLine($"# {sessionName}");
+                sb.AppendLine();
+                sb.AppendLine($"**Started:** {startedAt:yyyy-MM-dd HH:mm}");
+                if (s.ended_at != null)
+                    sb.AppendLine($"**Ended:** {((DateTimeOffset)s.ended_at):yyyy-MM-dd HH:mm}");
+                if (s.client_type != null)
+                    sb.AppendLine($"**Client:** {s.client_type}");
+
+                await File.WriteAllTextAsync(
+                    Path.Combine(outputPath, "sessions", fileName),
+                    sb.ToString());
+                sessionCount++;
+            }
+        }
+
+        // Write index.md dashboard
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("---");
+            sb.AppendLine("type: index");
+            sb.AppendLine($"exported: {DateTimeOffset.UtcNow:O}");
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("# SerialMemory Vault");
+            sb.AppendLine();
+            sb.AppendLine("## Statistics");
+            sb.AppendLine($"- **Memories:** {memoryCount}");
+            sb.AppendLine($"- **Entities:** {entityCount}");
+            sb.AppendLine($"- **Relationships:** {relationships.Count}");
+            sb.AppendLine($"- **Sessions:** {sessionCount}");
+            sb.AppendLine();
+
+            // Entity type breakdown
+            if (entities.Count > 0)
+            {
+                sb.AppendLine("## Entity Types");
+                var typeGroups = entities.GroupBy(e => (string)e.entity_type)
+                    .OrderByDescending(g => g.Count());
+                foreach (var g in typeGroups)
+                {
+                    sb.AppendLine($"- **{g.Key}:** {g.Count()}");
+                }
+                sb.AppendLine();
+            }
+
+            // Recent memories
+            sb.AppendLine("## Recent Memories");
+            foreach (var m in memories.Take(10))
+            {
+                var shortId = ((Guid)m.memory_id).ToString()[..12];
+                var createdAt = (DateTimeOffset)m.created_at;
+                var subFolder = groupBy switch
+                {
+                    "layer" => (string)(m.layer ?? "unknown"),
+                    "source" => SanitizeFileName((string)(m.source ?? "unknown")),
+                    _ => createdAt.ToString("yyyy-MM")
+                };
+                var preview = ((string)m.content).Length > 80
+                    ? ((string)m.content)[..80] + "..."
+                    : (string)m.content;
+                sb.AppendLine($"- [[memories/{subFolder}/{shortId}|{createdAt:yyyy-MM-dd} - {preview}]]");
+            }
+
+            await File.WriteAllTextAsync(Path.Combine(outputPath, "index.md"), sb.ToString());
+        }
+
+        _logger.LogInformation("Markdown vault exported: {Memories} memories, {Entities} entities, {Sessions} sessions to {Path}",
+            memoryCount, entityCount, sessionCount, outputPath);
+
+        return CreateTextResponse(
+            $"Markdown vault exported successfully!\n\n" +
+            $"- **Output Path**: {outputPath}\n" +
+            $"- **Memories**: {memoryCount}\n" +
+            $"- **Entities**: {entityCount}\n" +
+            $"- **Sessions**: {sessionCount}\n" +
+            $"- **Relationships**: {relationships.Count}\n" +
+            $"- **Group By**: {groupBy}\n\n" +
+            $"Open `{outputPath}` in Obsidian to browse with graph view and wikilinks.");
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var sanitized = string.Join("_", name.Split(Path.GetInvalidFileNameChars()))
+            .Replace(" ", "-")
+            .ToLowerInvariant()
+            .Trim('-', '_');
+
+        // Guard against empty result or excessively long names
+        if (string.IsNullOrEmpty(sanitized))
+            sanitized = "unnamed";
+        if (sanitized.Length > 200)
+            sanitized = sanitized[..200];
+
+        return sanitized;
+    }
+
+    /// <summary>
+    /// Safely converts a dynamic value (float, decimal, double, or null) to float.
+    /// Npgsql may return different numeric types depending on column definition.
+    /// </summary>
+    private static float SafeFloat(dynamic? value, float defaultValue = 0f)
+    {
+        if (value == null) return defaultValue;
+        return value switch
+        {
+            float f => f,
+            double d => (float)d,
+            decimal m => (float)m,
+            int i => i,
+            long l => l,
+            _ => Convert.ToSingle(value)
+        };
+    }
+
     private async Task<object?> GetUserInteractions(NpgsqlConnection conn, string userId)
     {
         var interactions = await conn.QueryAsync<dynamic>(@"

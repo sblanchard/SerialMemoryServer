@@ -168,7 +168,7 @@ var kgService = new KnowledgeGraphService(store, embeddingService, entityService
 IEventStore eventStore = new PostgresEventStore(connectionString, loggerFactory.CreateLogger<PostgresEventStore>());
 
 // Initialize tool handlers
-var lifecycleTools = new MemoryLifecycleTools(eventStore, embeddingService, logger);
+var lifecycleTools = new MemoryLifecycleTools(eventStore, embeddingService, entityService, store, logger);
 var observabilityTools = new MemoryObservabilityTools(eventStore, connectionString, logger);
 var safetyTools = new MemorySafetyTools(eventStore, embeddingService, connectionString, logger);
 var exportTools = new MemoryExportTools(eventStore, connectionString, logger);
@@ -201,6 +201,9 @@ var jsonOptions = new JsonSerializerOptions
     WriteIndented = false,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
+
+// Build core tool definitions once — shared between HandleToolsList and HandleGetToolsInCategory
+var coreTools = BuildCoreTools();
 
 // Read JSON-RPC requests from STDIN, write responses to STDOUT
 await using var stdin = Console.OpenStandardInput();
@@ -278,8 +281,33 @@ object HandleInitialize()
 
 object HandleToolsList()
 {
-    var coreTools = new object[]
-    {
+    var lazyMcpEnabled = configuration["LAZY_MCP_ENABLED"]?.ToLowerInvariant() is not ("false" or "0" or "no");
+
+    return lazyMcpEnabled ? BuildLazyToolsList() : BuildFullToolsList();
+}
+
+object BuildLazyToolsList()
+{
+    var lazyToolNames = new HashSet<string> { "memory_search", "memory_ingest", "memory_multi_hop_search", "memory_about_user" };
+    var lazyTools = coreTools.Where(t => lazyToolNames.Contains(((dynamic)t).name)).ToArray();
+    var allTools = lazyTools.Concat(ToolHierarchy.GetMetaTools()).ToArray();
+    return new { tools = allTools };
+}
+
+object BuildFullToolsList()
+{
+    var allTools = coreTools
+        .Concat(ToolDefinitions.GetLifecycleTools())
+        .Concat(ToolDefinitions.GetObservabilityTools())
+        .Concat(ToolDefinitions.GetSafetyTools())
+        .Concat(ToolDefinitions.GetExportTools())
+        .Concat(ToolDefinitions.GetReasoningTools())
+        .ToArray();
+    return new { tools = allTools };
+}
+
+object[] BuildCoreTools() => new object[]
+{
             // memory_search
             new
             {
@@ -312,7 +340,9 @@ object HandleToolsList()
                         content = new { type = "string", description = "Memory content to store" },
                         source = new { type = "string", description = "Source of the memory (e.g., 'claude-desktop', 'cursor')" },
                         metadata = new { type = "object", description = "Additional metadata (tags, importance, etc.)" },
-                        extract_entities = new { type = "boolean", @default = true, description = "Whether to extract entities and relationships" }
+                        extract_entities = new { type = "boolean", @default = true, description = "Whether to extract entities and relationships" },
+                        dedup_mode = new { type = "string", @enum = new[] { "warn", "skip", "append", "off" }, @default = "warn", description = "Dedup mode: warn (create+report), skip (reject if dup), append (merge into existing), off (no check)" },
+                        dedup_threshold = new { type = "number", @default = 0.85, description = "Similarity threshold for duplicate detection (0.0-1.0)" }
                     },
                     required = new[] { "content" }
                 }
@@ -529,18 +559,6 @@ object HandleToolsList()
             }
     };
 
-    // Combine core tools with lifecycle, observability, safety, export, and reasoning tools
-    var allTools = coreTools
-        .Concat(ToolDefinitions.GetLifecycleTools())
-        .Concat(ToolDefinitions.GetObservabilityTools())
-        .Concat(ToolDefinitions.GetSafetyTools())
-        .Concat(ToolDefinitions.GetExportTools())
-        .Concat(ToolDefinitions.GetReasoningTools())
-        .ToArray();
-
-    return new { tools = allTools };
-}
-
 object HandleResourcesList()
 {
     return new
@@ -655,6 +673,7 @@ async Task<object> HandleToolsCall(JsonNode? @params)
             "memory_decay" => await lifecycleTools.HandleMemoryDecay(arguments),
             "memory_reinforce" => await lifecycleTools.HandleMemoryReinforce(arguments),
             "memory_expire" => await lifecycleTools.HandleMemoryExpire(arguments),
+            "memory_supersede" => await lifecycleTools.HandleMemorySupersede(arguments),
 
             // Observability tools
             "memory_trace" => await observabilityTools.HandleMemoryTrace(arguments),
@@ -673,11 +692,16 @@ async Task<object> HandleToolsCall(JsonNode? @params)
             "export_memories" => await exportTools.HandleExportMemories(arguments),
             "export_graph" => await exportTools.HandleExportGraph(arguments),
             "export_user_profile" => await exportTools.HandleExportUserProfile(arguments),
+            "export_markdown" => await exportTools.HandleExportMarkdown(arguments),
 
             // Reasoning tools
             "engineering_analyze" => await reasoningTools.HandleEngineeringAnalyze(arguments),
             "engineering_visualize" => await reasoningTools.HandleEngineeringVisualize(arguments),
             "engineering_reason" => await reasoningTools.HandleEngineeringReason(arguments),
+
+            // Meta-tools (lazy-MCP)
+            "get_tools_in_category" => HandleGetToolsInCategory(arguments),
+            "execute_tool" => await HandleExecuteTool(arguments),
 
             _ => throw new Exception($"Unknown tool: {toolName}")
         };
@@ -717,6 +741,7 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "memory_decay" => UsageEventType.MemoryDecay,
         "memory_reinforce" => UsageEventType.MemoryReinforce,
         "memory_expire" => UsageEventType.MemoryExpire,
+        "memory_supersede" => UsageEventType.MemorySupersede,
 
         // Graph operations
         "crawl_relationships" => UsageEventType.CrawlRelationships,
@@ -727,6 +752,7 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "export_memories" => UsageEventType.ExportMemories,
         "export_graph" => UsageEventType.ExportGraph,
         "export_user_profile" => UsageEventType.ExportUserProfile,
+        "export_markdown" => UsageEventType.ExportMarkdown,
 
         // Model operations
         "reembed_memories" => UsageEventType.ReembedMemories,
@@ -759,6 +785,10 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "engineering_analyze" => UsageEventType.EngineeringAnalyze,
         "engineering_visualize" => UsageEventType.EngineeringVisualize,
         "engineering_reason" => UsageEventType.EngineeringReason,
+
+        // Meta-tool operations (lazy-MCP)
+        "get_tools_in_category" => UsageEventType.GetToolsInCategory,
+        "execute_tool" => UsageEventType.ExecuteTool,
 
         _ => null
     };
@@ -827,6 +857,11 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
 
     var source = arguments?["source"]?.GetValue<string>()?.Trim();
     var extractEntities = arguments?["extract_entities"]?.GetValue<bool>() ?? true;
+    var dedupMode = arguments?["dedup_mode"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "warn";
+    var dedupThreshold = Math.Clamp(arguments?["dedup_threshold"]?.GetValue<float>() ?? 0.85f, 0f, 1f);
+
+    if (dedupMode is not ("warn" or "skip" or "append" or "off"))
+        dedupMode = "warn";
 
     Dictionary<string, object>? metadata = null;
     if (arguments?["metadata"] is JsonNode metadataNode)
@@ -839,15 +874,33 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
         source,
         currentSessionId,
         metadata,
-        extractEntities);
+        extractEntities,
+        dedupMode,
+        dedupThreshold);
 
-    var text =
-        $"Memory ingested successfully!\n\n" +
-        $"Memory ID: {result.MemoryId}\n" +
-        $"Entities extracted: {result.EntitiesCreated}\n" +
-        $"Relationships extracted: {result.RelationshipsCreated}\n\n" +
-        $"Entities: {string.Join(", ", result.Entities.Select(e => e.Name))}\n" +
-        $"Relationships: {string.Join(", ", result.Relationships.Select(r => $"{r.Source} --{r.Type}--> {r.Target}"))}";
+    var text = result.DuplicateDetected && dedupMode == "skip"
+        ? $"Duplicate detected — skipped ingestion.\n\n" +
+          $"Existing Memory ID: {result.DuplicateOf}\n" +
+          $"Similarity: {result.DuplicateSimilarity:F3}\n"
+        : result.DuplicateDetected && dedupMode == "append"
+            ? $"Duplicate detected — appended to existing memory.\n\n" +
+              $"Memory ID: {result.MemoryId}\n" +
+              $"Similarity: {result.DuplicateSimilarity:F3}\n"
+            : $"Memory ingested successfully!\n\n" +
+              $"Memory ID: {result.MemoryId}\n" +
+              $"Entities extracted: {result.EntitiesCreated}\n" +
+              $"Relationships extracted: {result.RelationshipsCreated}\n\n" +
+              $"Entities: {string.Join(", ", result.Entities.Select(e => e.Name))}\n" +
+              $"Relationships: {string.Join(", ", result.Relationships.Select(r => $"{r.Source} --{r.Type}--> {r.Target}"))}";
+
+    if (result.SimilarMemories is { Count: > 0 } && dedupMode == "warn")
+    {
+        text += $"\n\n**Dedup Warning:** {result.SimilarMemories.Count} similar memory(ies) found:\n";
+        foreach (var dup in result.SimilarMemories)
+        {
+            text += $"  - {dup.MemoryId} (similarity: {dup.Similarity:F3}): {dup.ContentPreview}\n";
+        }
+    }
 
     return CreateTextResponse(text);
 }
@@ -1487,6 +1540,123 @@ async Task<object> HandleInstantiateContext(JsonNode? arguments)
 
     return CreateTextResponse(text.ToString());
 }
+
+object HandleGetToolsInCategory(JsonNode? arguments)
+{
+    var path = arguments?["path"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "";
+
+    if (string.IsNullOrEmpty(path))
+    {
+        // Root level: return category list (stable ordering)
+        var text = "## SerialMemory Tool Categories\n\n";
+        foreach (var (key, info) in ToolHierarchy.CategoriesOrdered)
+        {
+            var toolCount = ToolHierarchy.ToolMap.Keys.Count(k => k.StartsWith(key + "."));
+            text += $"- **{key}** ({toolCount} tools) — {info.Description}\n";
+        }
+        text += "\nUse `get_tools_in_category` with a category name to see available tools and their parameters.";
+        return CreateTextResponse(text);
+    }
+
+    if (!ToolHierarchy.Categories.TryGetValue(path, out var categoryInfo))
+        return CreateErrorResponse($"Unknown category: {path}. Available: {string.Join(", ", ToolHierarchy.Categories.Keys)}");
+
+    // Pass coreTools so session/admin categories can extract from the single source of truth
+    var tools = ToolHierarchy.GetToolsForCategory(path, coreTools);
+    return CreateTextResponse(
+        $"## {categoryInfo.Title}\n{categoryInfo.Description}\n\n" +
+        $"**{tools.Length} tools available.** Use `execute_tool` with path `{path}.<tool_name>` to execute.\n\n" +
+        System.Text.Json.JsonSerializer.Serialize(tools, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+        }));
+}
+
+async Task<object> HandleExecuteTool(JsonNode? arguments)
+{
+    var toolPath = arguments?["tool_path"]?.GetValue<string>()?.Trim()?.ToLowerInvariant();
+    if (string.IsNullOrEmpty(toolPath))
+        throw new ArgumentException("tool_path is required (e.g. 'lifecycle.memory_update')");
+
+    // Guard against recursion: execute_tool cannot dispatch to itself or get_tools_in_category
+    if (toolPath is "meta.execute_tool" or "meta.get_tools_in_category")
+        throw new ArgumentException("Cannot invoke meta-tools via execute_tool");
+
+    if (!ToolHierarchy.ToolMap.TryGetValue(toolPath, out var actualToolName))
+        throw new ArgumentException($"Unknown tool path: {toolPath}. Use get_tools_in_category to discover available tools.");
+
+    var toolArguments = arguments?["arguments"];
+
+    logger.LogInformation("→ execute_tool: {Path} → {Tool}", toolPath, actualToolName);
+
+    // Dispatch directly to the tool handler (avoids double usage tracking via HandleToolsCall)
+    var sw = Stopwatch.StartNew();
+    var success = true;
+    string? errorMessage = null;
+    try
+    {
+        var result = DispatchTool(actualToolName, toolArguments);
+        if (result == null)
+            throw new Exception($"Unknown tool: {actualToolName}");
+        return await result;
+    }
+    catch (Exception ex)
+    {
+        success = false;
+        errorMessage = ex.Message;
+        logger.LogError(ex, "Error executing tool {ToolName} via execute_tool", actualToolName);
+        return CreateErrorResponse(ex.Message);
+    }
+    finally
+    {
+        sw.Stop();
+        TrackToolUsage(actualToolName, (int)sw.ElapsedMilliseconds, success, errorMessage);
+    }
+}
+
+Task<object>? DispatchTool(string toolName, JsonNode? arguments) => toolName switch
+{
+    "memory_search" => HandleMemorySearch(arguments),
+    "memory_ingest" => HandleMemoryIngest(arguments),
+    "memory_about_user" => HandleMemoryAboutUser(arguments),
+    "initialise_conversation_session" => HandleInitialiseSession(arguments),
+    "end_conversation_session" => HandleEndSession(),
+    "memory_multi_hop_search" => HandleMultiHopSearch(arguments),
+    "get_integrations" => Task.FromResult(HandleGetIntegrations()),
+    "import_from_core" => HandleImportFromCore(arguments),
+    "set_user_persona" => HandleSetUserPersona(arguments),
+    "crawl_relationships" => HandleCrawlRelationships(arguments),
+    "get_graph_statistics" => HandleGetGraphStatistics(),
+    "get_model_info" => Task.FromResult(HandleGetModelInfo()),
+    "reembed_memories" => HandleReembedMemories(arguments),
+    "instantiate_context" => HandleInstantiateContext(arguments),
+    "memory_update" => lifecycleTools.HandleMemoryUpdate(arguments),
+    "memory_delete" => lifecycleTools.HandleMemoryDelete(arguments),
+    "memory_merge" => lifecycleTools.HandleMemoryMerge(arguments),
+    "memory_split" => lifecycleTools.HandleMemorySplit(arguments),
+    "memory_decay" => lifecycleTools.HandleMemoryDecay(arguments),
+    "memory_reinforce" => lifecycleTools.HandleMemoryReinforce(arguments),
+    "memory_expire" => lifecycleTools.HandleMemoryExpire(arguments),
+    "memory_supersede" => lifecycleTools.HandleMemorySupersede(arguments),
+    "memory_trace" => observabilityTools.HandleMemoryTrace(arguments),
+    "memory_lineage" => observabilityTools.HandleMemoryLineage(arguments),
+    "memory_explain" => observabilityTools.HandleMemoryExplain(arguments),
+    "memory_conflicts" => observabilityTools.HandleMemoryConflicts(arguments),
+    "detect_contradictions" => safetyTools.HandleDetectContradictions(arguments),
+    "detect_hallucinations" => safetyTools.HandleDetectHallucinations(arguments),
+    "verify_memory_integrity" => safetyTools.HandleVerifyIntegrity(arguments),
+    "scan_loops" => safetyTools.HandleScanLoops(arguments),
+    "export_workspace" => exportTools.HandleExportWorkspace(arguments),
+    "export_memories" => exportTools.HandleExportMemories(arguments),
+    "export_graph" => exportTools.HandleExportGraph(arguments),
+    "export_user_profile" => exportTools.HandleExportUserProfile(arguments),
+    "export_markdown" => exportTools.HandleExportMarkdown(arguments),
+    "engineering_analyze" => reasoningTools.HandleEngineeringAnalyze(arguments),
+    "engineering_visualize" => reasoningTools.HandleEngineeringVisualize(arguments),
+    "engineering_reason" => reasoningTools.HandleEngineeringReason(arguments),
+    _ => null
+};
 
 object CreateTextResponse(string text)
 {
