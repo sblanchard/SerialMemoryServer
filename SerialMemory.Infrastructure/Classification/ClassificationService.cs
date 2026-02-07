@@ -72,6 +72,12 @@ public sealed class ClassificationService(
 
             return result;
         }
+        catch (Exception ex) when (IsTransientNetworkError(ex))
+        {
+            sw.Stop();
+            logger.LogWarning(ex, "Transient network error during {Layer} classification, returning fallback", layer);
+            return CreateFallbackResult(layer, content, sw.ElapsedMilliseconds);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Classification failed for {Layer}", layer);
@@ -588,6 +594,37 @@ public sealed class ClassificationService(
             Confidence = 0.1m,
             KnowledgeNodes = null
         };
+    }
+
+    /// <summary>
+    /// Checks if an exception is a transient network error that should trigger fallback
+    /// rather than failing the classification entirely.
+    /// </summary>
+    private static bool IsTransientNetworkError(Exception ex)
+    {
+        // AggregateException from SDK retry policies — flatten and check all inner exceptions
+        if (ex is AggregateException agg)
+            return agg.Flatten().InnerExceptions.Any(IsTransientNetworkError);
+
+        // Walk the exception chain looking for network-related failures
+        var current = ex;
+        while (current != null)
+        {
+            if (current is System.Net.Sockets.SocketException)
+                return true;
+            if (current is System.Net.Http.HttpRequestException)
+                return true;
+            if (current is TaskCanceledException tce && tce.InnerException is TimeoutException)
+                return true;
+            // ClientResultException from System.ClientModel wraps HTTP transport failures
+            if (current.GetType().Name == "ClientResultException"
+                && current.InnerException is System.Net.Http.HttpRequestException)
+                return true;
+
+            current = current.InnerException;
+        }
+
+        return false;
     }
 
     /// <summary>
