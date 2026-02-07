@@ -427,8 +427,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
                 edge_id,
                 node_type,
                 edge_type,
-                occurred_at AS timestamp,
-                tenant_id
+                occurred_at AS timestamp
             FROM graph_events
             ORDER BY occurred_at DESC
             LIMIT 20;
@@ -463,8 +462,7 @@ public sealed class IntrospectionBackgroundService : BackgroundService
                 EdgeId = m.edge_id as Guid?,
                 NodeType = m.node_type as string,
                 EdgeType = m.edge_type as string,
-                Timestamp = (DateTimeOffset)m.timestamp,
-                TenantId = m.tenant_id as string
+                Timestamp = (DateTimeOffset)m.timestamp
             }).ToList();
 
         var stats = await multi.ReadSingleOrDefaultAsync<dynamic>() ?? new
