@@ -91,7 +91,7 @@ public sealed class IntegrityWorker(
         {
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
-            await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = @TenantId::text", new { TenantId = tenantId });
+            await conn.ExecuteAsync($"SET app.role = 'internal_admin'; SET app.tenant_id = '{tenantId}'");
             await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId)", new { TenantId = tenantId });
 
             // Get unhashed memories in chronological order
@@ -231,7 +231,7 @@ public sealed class IntegrityWorker(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = @TenantId::text", new { TenantId = tenantId });
+        await conn.ExecuteAsync($"SET app.role = 'internal_admin'; SET app.tenant_id = '{tenantId}'");
         await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId)", new { TenantId = tenantId });
 
         // Check settings
