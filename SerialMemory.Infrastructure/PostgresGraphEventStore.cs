@@ -14,21 +14,10 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     /// <summary>
-    /// Returns the event type as a snake_case string matching the PostgreSQL CHECK constraint.
-    /// The production DB uses: 'node_created', 'node_updated', etc.
+    /// Returns the event type as a PascalCase string matching the PostgreSQL graph_event_type enum.
+    /// The production DB enum values: 'NodeCreated', 'NodeUpdated', etc.
     /// </summary>
-    private static string ToDbEventType(GraphEventType eventType) => eventType switch
-    {
-        GraphEventType.NodeCreated => "node_created",
-        GraphEventType.NodeUpdated => "node_updated",
-        GraphEventType.NodeDeleted => "node_deleted",
-        GraphEventType.EdgeCreated => "edge_created",
-        GraphEventType.EdgeUpdated => "edge_updated",
-        GraphEventType.EdgeDeleted => "edge_deleted",
-        GraphEventType.NodeMerged => "node_merged",
-        GraphEventType.EdgeStrengthened => "edge_strengthened",
-        _ => eventType.ToString().ToLowerInvariant()
-    };
+    private static string ToDbEventType(GraphEventType eventType) => eventType.ToString();
 
     private NpgsqlConnection CreateConnection() => new(connectionString);
 
