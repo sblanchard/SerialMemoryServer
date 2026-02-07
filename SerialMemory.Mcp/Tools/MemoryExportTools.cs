@@ -7,6 +7,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.EventSourcing.Store;
+using SerialMemory.Infrastructure;
 
 namespace SerialMemory.Mcp.Tools;
 
@@ -56,6 +57,7 @@ public sealed class MemoryExportTools
             throw new ArgumentException("encryption_key required when encrypt is true");
 
         await using var conn = await _dataSource.OpenConnectionAsync();
+        await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
         var export = new WorkspaceExport
         {
@@ -240,6 +242,7 @@ public sealed class MemoryExportTools
         var format = arguments?["format"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "json";
 
         await using var conn = await _dataSource.OpenConnectionAsync();
+        await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
         var sql = @"
             SELECT memory_id, content, layer, confidence_score, half_life_days,
@@ -344,6 +347,7 @@ public sealed class MemoryExportTools
         var includeIsolated = arguments?["include_isolated"]?.GetValue<bool>() ?? false;
 
         await using var conn = await _dataSource.OpenConnectionAsync();
+        await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
         // Get entities
         var entitySql = includeIsolated
@@ -489,6 +493,7 @@ public sealed class MemoryExportTools
         var includeInteractions = arguments?["include_interactions"]?.GetValue<bool>() ?? false;
 
         await using var conn = await _dataSource.OpenConnectionAsync();
+        await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
         // Get user persona attributes
         var personas = await conn.QueryAsync<dynamic>(@"
@@ -579,6 +584,9 @@ public sealed class MemoryExportTools
         var groupBy = arguments?["group_by"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "month";
 
         await using var conn = await _dataSource.OpenConnectionAsync();
+
+        // Set tenant context for RLS (use self-hosted default tenant)
+        await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
         // Query memories
         var memorySql = @"
