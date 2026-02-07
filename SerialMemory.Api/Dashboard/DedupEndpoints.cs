@@ -44,20 +44,20 @@ public static class DedupEndpoints
                     AND tool_name = 'memory_ingest'
                     AND created_at > NOW() - make_interval(days => @Days)
                 """,
-                new { TenantId = tenantId, Days = periodDays });
+                new { TenantId = tenantId.ToString(), Days = periodDays });
 
             // Count supersede and merge events from event store
             var eventStats = await conn.QueryFirstOrDefaultAsync<EventStatsRawDto>(
                 """
                 SELECT
                     COUNT(*) FILTER (WHERE event_type::text = 'MemoryInvalidated'
-                        AND (COALESCE(event_data, payload)::jsonb->>'supersededById') IS NOT NULL) AS supersede_count,
+                        AND (event_data::jsonb->>'supersededById') IS NOT NULL) AS supersede_count,
                     COUNT(*) FILTER (WHERE event_type::text = 'MemoryMerged') AS merge_count
                 FROM memory_events
                 WHERE tenant_id = @TenantId
-                    AND COALESCE(created_at, timestamp) > NOW() - make_interval(days => @Days)
+                    AND created_at > NOW() - make_interval(days => @Days)
                 """,
-                new { TenantId = tenantId, Days = periodDays });
+                new { TenantId = tenantId.ToString(), Days = periodDays });
 
             return Results.Ok(new
             {
@@ -91,24 +91,24 @@ public static class DedupEndpoints
             var history = await conn.QueryAsync<SupersedeHistoryDto>(
                 """
                 SELECT
-                    me.id AS event_id,
-                    COALESCE(me.memory_id, me.stream_id) AS old_memory_id,
-                    (COALESCE(me.event_data, me.payload)::jsonb->>'supersededById')::uuid AS new_memory_id,
-                    COALESCE(me.event_data, me.payload)::jsonb->>'reason' AS reason,
-                    COALESCE(me.actor_id, me.created_by) AS actor_id,
-                    COALESCE(me.created_at, me.timestamp) AS superseded_at,
+                    me.event_id AS event_id,
+                    me.stream_id AS old_memory_id,
+                    (me.event_data::jsonb->>'supersededById')::uuid AS new_memory_id,
+                    me.event_data::jsonb->>'reason' AS reason,
+                    me.created_by AS actor_id,
+                    me.created_at AS superseded_at,
                     LEFT(m_old.content, 120) AS old_content_preview,
                     LEFT(m_new.content, 120) AS new_content_preview
                 FROM memory_events me
-                LEFT JOIN memories m_old ON COALESCE(me.memory_id, me.stream_id) = m_old.id
-                LEFT JOIN memories m_new ON (COALESCE(me.event_data, me.payload)::jsonb->>'supersededById')::uuid = m_new.id
+                LEFT JOIN memories m_old ON me.stream_id = m_old.id
+                LEFT JOIN memories m_new ON (me.event_data::jsonb->>'supersededById')::uuid = m_new.id
                 WHERE me.event_type::text = 'MemoryInvalidated'
-                    AND (COALESCE(me.event_data, me.payload)::jsonb->>'supersededById') IS NOT NULL
+                    AND (me.event_data::jsonb->>'supersededById') IS NOT NULL
                     AND me.tenant_id = @TenantId
-                ORDER BY COALESCE(me.created_at, me.timestamp) DESC
+                ORDER BY me.created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
+                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })
@@ -133,20 +133,20 @@ public static class DedupEndpoints
             var history = await conn.QueryAsync<MergeHistoryDto>(
                 """
                 SELECT
-                    me.id AS event_id,
-                    COALESCE(me.memory_id, me.stream_id) AS merged_memory_id,
-                    COALESCE(me.event_data, me.payload)::jsonb->>'strategy' AS strategy,
-                    COALESCE(me.actor_id, me.created_by) AS actor_id,
-                    COALESCE(me.created_at, me.timestamp) AS merged_at,
+                    me.event_id AS event_id,
+                    me.stream_id AS merged_memory_id,
+                    me.event_data::jsonb->>'strategy' AS strategy,
+                    me.created_by AS actor_id,
+                    me.created_at AS merged_at,
                     LEFT(m.content, 120) AS content_preview
                 FROM memory_events me
-                LEFT JOIN memories m ON COALESCE(me.memory_id, me.stream_id) = m.id
+                LEFT JOIN memories m ON me.stream_id = m.id
                 WHERE me.event_type::text = 'MemoryMerged'
                     AND me.tenant_id = @TenantId
-                ORDER BY COALESCE(me.created_at, me.timestamp) DESC
+                ORDER BY me.created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
+                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })
