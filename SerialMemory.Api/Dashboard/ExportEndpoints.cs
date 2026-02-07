@@ -59,8 +59,8 @@ public static class ExportEndpoints
             var tenantId = GetTenantId(user, selfHostedMode);
 
             if (string.IsNullOrWhiteSpace(request.Format) ||
-                request.Format is not ("json" or "csv" or "graphml" or "cytoscape" or "markdown"))
-                return Results.BadRequest(new { error = "invalid_format", message = "Format must be: json, csv, graphml, cytoscape, or markdown" });
+                request.Format is not ("json" or "csv" or "graphml" or "cytoscape"))
+                return Results.BadRequest(new { error = "invalid_format", message = "Format must be: json, csv, graphml, or cytoscape. Markdown export is available via MCP tool only." });
 
             if (!string.IsNullOrEmpty(request.GroupBy) &&
                 request.GroupBy is not ("month" or "layer" or "source"))
@@ -121,7 +121,6 @@ public static class ExportEndpoints
                 {
                     "csv" => ".csv",
                     "graphml" => ".graphml",
-                    "markdown" => ".md",
                     _ => ".json"
                 };
                 var fileName = $"{request.Format}_{tenantId.ToString()[..8]}_{DateTime.UtcNow:yyyyMMdd_HHmmss}{ext}";
@@ -153,7 +152,7 @@ public static class ExportEndpoints
                     "UPDATE exports SET status = 'failed', error_message = @Error, completed_at = NOW() WHERE id = @Id",
                     new { Id = exportId, Error = ex.Message });
 
-                return Results.Problem(detail: "An internal error occurred while generating the export.", title: "Export failed", statusCode: 500);
+                return Results.Problem(detail: ex.Message, title: "Export failed", statusCode: 500);
             }
         })
         .WithName("TriggerExport")
@@ -222,7 +221,6 @@ public static class ExportEndpoints
             {
                 "csv" => "text/csv",
                 "graphml" => "application/xml",
-                "markdown" => "text/markdown",
                 _ => "application/json"
             };
 

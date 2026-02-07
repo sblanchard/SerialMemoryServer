@@ -72,6 +72,21 @@ CREATE INDEX idx_memory_events_global ON memory_events (global_sequence);
 CREATE INDEX idx_memory_events_type ON memory_events (event_type);
 CREATE INDEX idx_memory_events_created ON memory_events (created_at);
 
+-- Composite indexes for dedup history queries (Dashboard performance)
+CREATE INDEX IF NOT EXISTS idx_memory_events_tenant_type_created
+    ON memory_events(tenant_id, event_type, created_at DESC);
+
+-- Partial index for supersede queries (more selective)
+CREATE INDEX IF NOT EXISTS idx_memory_events_superseded
+    ON memory_events(tenant_id, created_at DESC)
+    WHERE event_type::text = 'MemoryInvalidated'
+    AND (event_data::jsonb->>'supersededById') IS NOT NULL;
+
+-- Partial index for merge queries
+CREATE INDEX IF NOT EXISTS idx_memory_events_merged
+    ON memory_events(tenant_id, created_at DESC)
+    WHERE event_type::text = 'MemoryMerged';
+
 -- ============================================================================
 -- READ MODEL PROJECTIONS (Materialized Views)
 -- ============================================================================

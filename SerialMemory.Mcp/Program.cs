@@ -189,6 +189,9 @@ logger.LogInformation("Usage metering service initialized for tenant {TenantId}"
 // Session state
 Guid? currentSessionId = null;
 
+// AsyncLocal for tool-specific metadata (e.g., dedup tracking)
+var toolMetadataContext = new AsyncLocal<Dictionary<string, object>?>();
+
 logger.LogInformation("Services initialized successfully (v2.3 with lifecycle, observability, safety, export, reasoning, multi-model reasoning, usage metering)");
 
 #endregion
@@ -646,6 +649,9 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     var success = true;
     string? errorMessage = null;
 
+    // Reset metadata context for this tool call
+    toolMetadataContext.Value = null;
+
     try
     {
         var result = toolName switch
@@ -719,11 +725,11 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     {
         sw.Stop();
         // Track usage for metered tools (non-blocking)
-        TrackToolUsage(toolName, (int)sw.ElapsedMilliseconds, success, errorMessage);
+        TrackToolUsage(toolName, (int)sw.ElapsedMilliseconds, success, errorMessage, toolMetadataContext.Value);
     }
 }
 
-void TrackToolUsage(string? toolName, int latencyMs, bool success, string? errorMessage)
+void TrackToolUsage(string? toolName, int latencyMs, bool success, string? errorMessage, Dictionary<string, object>? metadata = null)
 {
     // Map ALL MCP tools to usage event types - never miss a tool
     UsageEventType? eventType = toolName switch
@@ -801,7 +807,8 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
             sessionId: currentSessionId,
             latencyMs: latencyMs,
             success: success,
-            errorMessage: errorMessage);
+            errorMessage: errorMessage,
+            metadata: metadata);
     }
     else if (!string.IsNullOrEmpty(toolName))
     {
@@ -877,6 +884,15 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
         extractEntities,
         dedupMode,
         dedupThreshold);
+
+    // Set dedup metadata for usage tracking
+    toolMetadataContext.Value = new Dictionary<string, object>
+    {
+        ["dedup_mode"] = dedupMode,
+        ["dedup_detected"] = result.DuplicateDetected,
+        ["dedup_threshold"] = dedupThreshold,
+        ["similarity"] = result.DuplicateSimilarity ?? 0.0f
+    };
 
     var text = result.DuplicateDetected && dedupMode == "skip"
         ? $"Duplicate detected — skipped ingestion.\n\n" +
