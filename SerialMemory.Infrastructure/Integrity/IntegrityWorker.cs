@@ -63,6 +63,9 @@ public sealed class IntegrityWorker(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Set internal admin role to bypass RLS for cross-tenant access
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+
         // Get distinct tenants with unhashed memories
         var tenants = await conn.QueryAsync<Guid>(@"
             SELECT DISTINCT tenant_id
@@ -88,7 +91,8 @@ public sealed class IntegrityWorker(
         {
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
-            await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+            await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+            await conn.ExecuteAsync($"SELECT set_tenant_context('{tenantId}')");
 
             // Get unhashed memories in chronological order
             var memories = await conn.QueryAsync<MemoryHashRow>(@"
@@ -195,6 +199,9 @@ public sealed class IntegrityWorker(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Set internal admin role to bypass RLS for cross-tenant access
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+
         // Get tenants with hash verification enabled
         var tenants = await conn.QueryAsync<Guid>(@"
             SELECT tenant_id FROM tenant_privacy_settings
@@ -224,7 +231,8 @@ public sealed class IntegrityWorker(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+        await conn.ExecuteAsync($"SELECT set_tenant_context('{tenantId}')");
 
         // Check settings
         var settings = await conn.QueryFirstOrDefaultAsync<SettingsRow>(@"
