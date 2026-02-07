@@ -176,7 +176,7 @@ public sealed class MemoryExporter
                 ChunkIndex = chunkIndex,
                 FromSequence = currentSequence,
                 ToSequence = (long)memoryList.Last().global_sequence,
-                Memories = memoryList.Select(m => new ExportMemory
+                Memories = [.. memoryList.Select(m => new ExportMemory
                 {
                     MemoryId = m.memory_id,
                     Content = m.content,
@@ -187,7 +187,7 @@ public sealed class MemoryExporter
                     ContentHash = m.content_hash,
                     CausalParents = m.causal_parents ?? Array.Empty<Guid>(),
                     Tags = m.tags ?? Array.Empty<string>()
-                }).ToList(),
+                })],
                 IsLastChunk = memoryList.Count < chunkSize
             };
 
@@ -280,7 +280,7 @@ public sealed class MemoryExporter
             new { Layers = options.LayerFilter?.Select(l => l.ToString()).ToArray() },
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new ExportMemory
+        return [.. rows.Select(r => new ExportMemory
         {
             MemoryId = r.memory_id,
             Content = r.content,
@@ -291,7 +291,7 @@ public sealed class MemoryExporter
             ContentHash = r.content_hash,
             CausalParents = r.causal_parents ?? Array.Empty<Guid>(),
             Tags = r.tags ?? Array.Empty<string>()
-        }).ToList();
+        })];
     }
 
     private static async Task<List<ExportEntity>> GetEntitiesAsync(
@@ -304,14 +304,14 @@ public sealed class MemoryExporter
             ORDER BY mention_count DESC",
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new ExportEntity
+        return [.. rows.Select(r => new ExportEntity
         {
             EntityId = r.entity_id,
             Name = r.name,
             EntityType = r.entity_type,
             MentionCount = r.mention_count,
             CreatedAt = r.created_at
-        }).ToList();
+        })];
     }
 
     private static async Task<List<ExportRelationship>> GetRelationshipsAsync(
@@ -329,7 +329,7 @@ public sealed class MemoryExporter
             ORDER BY r.strength DESC",
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new ExportRelationship
+        return [.. rows.Select(r => new ExportRelationship
         {
             RelationshipId = r.relationship_id,
             SourceEntityId = r.source_entity_id,
@@ -339,7 +339,7 @@ public sealed class MemoryExporter
             RelationshipType = r.relationship_type,
             Strength = (float)(decimal)r.strength,
             CreatedAt = r.created_at
-        }).ToList();
+        })];
     }
 
     private static async Task<List<ExportEvent>> GetEventsAsync(
@@ -357,7 +357,7 @@ public sealed class MemoryExporter
             new { FromSequence = fromSequence ?? 0 },
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new ExportEvent
+        return [.. rows.Select(r => new ExportEvent
         {
             EventId = r.event_id,
             StreamId = r.stream_id,
@@ -369,7 +369,7 @@ public sealed class MemoryExporter
             CreatedAt = r.created_at,
             CreatedBy = r.created_by,
             ContentHash = r.content_hash
-        }).ToList();
+        })];
     }
 
     private static async Task<byte[]> EncryptAsync(byte[] data, string key, CancellationToken cancellationToken)

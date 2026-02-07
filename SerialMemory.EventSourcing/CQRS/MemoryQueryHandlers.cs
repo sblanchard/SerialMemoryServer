@@ -10,14 +10,9 @@ namespace SerialMemory.EventSourcing.CQRS;
 /// <summary>
 /// Handler for SearchMemoriesQuery.
 /// </summary>
-public sealed class SearchMemoriesQueryHandler : IQueryHandler<SearchMemoriesQuery, IReadOnlyList<RetrievalResult>>
+public sealed class SearchMemoriesQueryHandler(IRetrievalEngine retrievalEngine) : IQueryHandler<SearchMemoriesQuery, IReadOnlyList<RetrievalResult>>
 {
-    private readonly IRetrievalEngine _retrievalEngine;
-
-    public SearchMemoriesQueryHandler(IRetrievalEngine retrievalEngine)
-    {
-        _retrievalEngine = retrievalEngine;
-    }
+    private readonly IRetrievalEngine _retrievalEngine = retrievalEngine;
 
     public async Task<IReadOnlyList<RetrievalResult>> HandleAsync(
         SearchMemoriesQuery query,
@@ -131,7 +126,7 @@ public sealed class GetLayerStatisticsQueryHandler : IQueryHandler<GetLayerStati
             ORDER BY layer",
             cancellationToken: cancellationToken));
 
-        return results.Select(r => new LayerStatistics
+        return [.. results.Select(r => new LayerStatistics
         {
             Layer = Enum.Parse<MemoryLayer>((string)r.layer),
             TotalCount = (int)r.total_count,
@@ -140,7 +135,7 @@ public sealed class GetLayerStatisticsQueryHandler : IQueryHandler<GetLayerStati
             AvgAccessCount = (float)(decimal)r.avg_access_count,
             OldestMemory = r.oldest_memory,
             NewestMemory = r.newest_memory
-        }).ToList();
+        })];
     }
 }
 
@@ -184,7 +179,7 @@ public sealed class GetRecentMemoriesQueryHandler : IQueryHandler<GetRecentMemor
             },
             cancellationToken: cancellationToken));
 
-        return results.Select(r =>
+        return [.. results.Select(r =>
         {
             var lastReinforced = (DateTimeOffset)r.last_reinforced_at;
             var daysElapsed = (DateTimeOffset.UtcNow - lastReinforced).TotalDays;
@@ -211,7 +206,7 @@ public sealed class GetRecentMemoriesQueryHandler : IQueryHandler<GetRecentMemor
                 CausalParents = r.causal_parents ?? Array.Empty<Guid>(),
                 Tags = r.tags ?? Array.Empty<string>()
             };
-        }).ToList();
+        })];
     }
 }
 
@@ -274,7 +269,7 @@ public sealed class GetCognitiveStageLogsQueryHandler : IQueryHandler<GetCogniti
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(sql, parameters, cancellationToken: cancellationToken));
 
-        return results.Select(r => new CognitiveStageLog
+        return [.. results.Select(r => new CognitiveStageLog
         {
             LogId = r.log_id,
             SessionId = r.session_id,
@@ -286,6 +281,6 @@ public sealed class GetCognitiveStageLogsQueryHandler : IQueryHandler<GetCogniti
             MemoryIdsInvolved = r.memory_ids_involved ?? Array.Empty<Guid>(),
             Success = r.success,
             ErrorMessage = r.error_message
-        }).ToList();
+        })];
     }
 }

@@ -315,7 +315,7 @@ public sealed class CompositeRetrievalEngine : IRetrievalEngine
             new { MemoryId = memoryId, MaxDepth = maxDepth },
             cancellationToken: cancellationToken));
 
-        return rows.Select(row =>
+        return [.. rows.Select(row =>
         {
             var lastReinforced = (DateTimeOffset)row.last_reinforced_at;
             var daysElapsed = (DateTimeOffset.UtcNow - lastReinforced).TotalDays;
@@ -343,7 +343,7 @@ public sealed class CompositeRetrievalEngine : IRetrievalEngine
                 CausalParents = (Guid[]?)row.causal_parents ?? Array.Empty<Guid>(),
                 Tags = (string[]?)row.tags ?? Array.Empty<string>()
             };
-        }).ToList();
+        })];
     }
 
     public async Task<IReadOnlyList<(Guid MemoryA, Guid MemoryB, float Similarity)>> FindDuplicatesAsync(

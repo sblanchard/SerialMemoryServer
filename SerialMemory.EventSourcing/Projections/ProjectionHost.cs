@@ -13,7 +13,7 @@ public sealed class ProjectionHost(
     ILogger<ProjectionHost> logger)
     : IProjectionHost, IDisposable
 {
-    private readonly IReadOnlyList<IProjection> _projections = projections.ToList();
+    private readonly IReadOnlyList<IProjection> _projections = [.. projections];
     private readonly CancellationTokenSource _cts = new();
     private Task? _processingTask;
 

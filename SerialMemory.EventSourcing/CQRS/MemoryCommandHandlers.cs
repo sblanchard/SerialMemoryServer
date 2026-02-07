@@ -84,7 +84,7 @@ public sealed class CreateMemoryCommandHandler : ICommandHandler<CreateMemoryCom
             // Persist events
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 0,
                 cancellationToken);
 
@@ -146,7 +146,7 @@ public sealed class UpdateMemoryCommandHandler : ICommandHandler<UpdateMemoryCom
             // Persist events
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -203,7 +203,7 @@ public sealed class ReinforceMemoryCommandHandler : ICommandHandler<ReinforceMem
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -255,7 +255,7 @@ public sealed class InvalidateMemoryCommandHandler : ICommandHandler<InvalidateM
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -307,7 +307,7 @@ public sealed class TransitionLayerCommandHandler : ICommandHandler<TransitionLa
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -369,7 +369,7 @@ public sealed class MergeMemoriesCommandHandler : ICommandHandler<MergeMemoriesC
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 0,
                 cancellationToken);
 
@@ -426,7 +426,7 @@ public sealed class ApplyDecayCommandHandler : ICommandHandler<ApplyDecayCommand
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -482,7 +482,7 @@ public sealed class ArchiveMemoryCommandHandler : ICommandHandler<ArchiveMemoryC
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -537,7 +537,7 @@ public sealed class RecallMemoryCommandHandler : ICommandHandler<RecallMemoryCom
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -590,7 +590,7 @@ public sealed class IgnoreMemoryCommandHandler : ICommandHandler<IgnoreMemoryCom
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -648,7 +648,7 @@ public sealed class MarkContradictionCommandHandler : ICommandHandler<MarkContra
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -701,7 +701,7 @@ public sealed class ExpireMemoryCommandHandler : ICommandHandler<ExpireMemoryCom
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 
@@ -754,7 +754,7 @@ public sealed class SplitMemoryCommandHandler : ICommandHandler<SplitMemoryComma
 
             var sequences = await _eventStore.AppendEventsAsync(
                 aggregate.Id,
-                aggregate.UncommittedEvents.ToList(),
+                [.. aggregate.UncommittedEvents],
                 aggregate.Version - 1,
                 cancellationToken);
 

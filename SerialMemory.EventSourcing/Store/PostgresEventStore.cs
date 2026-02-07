@@ -138,7 +138,7 @@ public sealed class PostgresEventStore : IEventStore
             cancellationToken: cancellationToken
         ));
 
-        return stored.Select(DeserializeEvent).ToList();
+        return [.. stored.Select(DeserializeEvent)];
     }
 
     public async Task<IReadOnlyList<StoredEvent>> ReadAllAsync(
@@ -159,7 +159,7 @@ public sealed class PostgresEventStore : IEventStore
             cancellationToken: cancellationToken
         ));
 
-        return stored.Select(row => new StoredEvent
+        return [.. stored.Select(row => new StoredEvent
         {
             EventId = row.event_id,
             StreamId = row.stream_id,
@@ -173,7 +173,7 @@ public sealed class PostgresEventStore : IEventStore
             CreatedAt = row.created_at,
             CreatedBy = row.created_by,
             ContentHash = row.content_hash
-        }).ToList();
+        })];
     }
 
     public async Task<long> GetStreamVersionAsync(

@@ -137,7 +137,7 @@ public sealed class PostgresCognitiveInstrumentation : ICognitiveInstrumentation
             parameters,
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new CognitiveStageLog
+        return [.. rows.Select(r => new CognitiveStageLog
         {
             LogId = r.log_id,
             SessionId = r.session_id,
@@ -149,7 +149,7 @@ public sealed class PostgresCognitiveInstrumentation : ICognitiveInstrumentation
             MemoryIdsInvolved = r.memory_ids_involved ?? Array.Empty<Guid>(),
             Success = r.success,
             ErrorMessage = r.error_message
-        }).ToList();
+        })];
     }
 
     public async Task<IReadOnlyList<CognitiveStageStatistics>> GetStatisticsAsync(
@@ -192,7 +192,7 @@ public sealed class PostgresCognitiveInstrumentation : ICognitiveInstrumentation
             parameters,
             cancellationToken: cancellationToken));
 
-        return rows.Select(r => new CognitiveStageStatistics
+        return [.. rows.Select(r => new CognitiveStageStatistics
         {
             Stage = Enum.Parse<CognitiveStage>((string)r.stage),
             TotalCount = (int)(long)r.total_count,
@@ -204,12 +204,12 @@ public sealed class PostgresCognitiveInstrumentation : ICognitiveInstrumentation
             P50DurationMs = r.p50_duration_ms ?? 0,
             P95DurationMs = r.p95_duration_ms ?? 0,
             P99DurationMs = r.p99_duration_ms ?? 0
-        }).ToList();
+        })];
     }
 
     public IReadOnlyCollection<CognitiveStageLog> GetActiveStages()
     {
-        return _activeStages.Values.ToList();
+        return [.. _activeStages.Values];
     }
 }
 
