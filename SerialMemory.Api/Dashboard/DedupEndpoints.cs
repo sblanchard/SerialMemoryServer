@@ -57,7 +57,7 @@ public static class DedupEndpoints
                 WHERE tenant_id = @TenantId
                     AND created_at > NOW() - make_interval(days => @Days)
                 """,
-                new { TenantId = tenantId.ToString(), Days = periodDays });
+                new { TenantId = tenantId, Days = periodDays });
 
             return Results.Ok(new
             {
@@ -108,7 +108,7 @@ public static class DedupEndpoints
                 ORDER BY me.created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 20, 1, 100) });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })
@@ -146,7 +146,7 @@ public static class DedupEndpoints
                 ORDER BY me.created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 20, 1, 100) });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { history = history.ToList() });
         })
