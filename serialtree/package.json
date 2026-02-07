@@ -1,0 +1,279 @@
+{
+  "name": "serialtree",
+  "displayName": "SerialTree",
+  "description": "Knowledge graph memory explorer for SerialMemory — 3D graph visualization, semantic search, code analysis, and Claude Code integration",
+  "version": "0.1.0",
+  "publisher": "serialcoder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/serialcoder/serialtree"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "serialtree.showGraph",
+        "title": "SerialTree: Show Knowledge Graph",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "serialtree.searchMemory",
+        "title": "SerialTree: Search Memory",
+        "icon": "$(search)"
+      },
+      {
+        "command": "serialtree.showActivity",
+        "title": "SerialTree: Toggle Activity Feed"
+      },
+      {
+        "command": "serialtree.analyzeWorkspace",
+        "title": "SerialTree: Analyze Workspace",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "serialtree.ingestSelection",
+        "title": "SerialTree: Ingest Selection as Memory",
+        "icon": "$(add)"
+      },
+      {
+        "command": "serialtree.sendToClaudeCode",
+        "title": "SerialTree: Send to Claude Code",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "serialtree.summarizeSession",
+        "title": "SerialTree: Summarize Session"
+      },
+      {
+        "command": "serialtree.showFindings",
+        "title": "SerialTree: Show Code Findings"
+      },
+      {
+        "command": "serialtree.refreshActivity",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serialtree.refreshFindings",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serialtree.findingSendToClaude",
+        "title": "Send to Claude",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "serialtree.findingOpenFile",
+        "title": "Open File",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "serialtree.findingDismiss",
+        "title": "Dismiss",
+        "icon": "$(close)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "serialtree.showGraph",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g"
+      },
+      {
+        "command": "serialtree.searchMemory",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m"
+      },
+      {
+        "command": "serialtree.ingestSelection",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "serialtree.sendToClaudeCode",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "editorHasSelection"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "serialtree",
+          "title": "SerialTree",
+          "icon": "media/serialtree-sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "serialtree": [
+        {
+          "id": "serialtree.searchView",
+          "name": "Memory Search",
+          "type": "webview"
+        },
+        {
+          "id": "serialtree.activity",
+          "name": "Session Activity",
+          "type": "tree"
+        },
+        {
+          "id": "serialtree.findings",
+          "name": "Code Analysis",
+          "type": "tree"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "serialtree.ingestSelection",
+          "when": "editorHasSelection",
+          "group": "serialtree@1"
+        },
+        {
+          "command": "serialtree.sendToClaudeCode",
+          "when": "editorHasSelection",
+          "group": "serialtree@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "serialtree.refreshActivity",
+          "when": "view == serialtree.activity",
+          "group": "navigation"
+        },
+        {
+          "command": "serialtree.analyzeWorkspace",
+          "when": "view == serialtree.findings",
+          "group": "navigation"
+        },
+        {
+          "command": "serialtree.refreshFindings",
+          "when": "view == serialtree.findings",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "serialtree.findingSendToClaude",
+          "when": "view == serialtree.findings && viewItem == finding",
+          "group": "inline@1"
+        },
+        {
+          "command": "serialtree.findingOpenFile",
+          "when": "view == serialtree.findings && viewItem == finding",
+          "group": "inline@2"
+        },
+        {
+          "command": "serialtree.findingDismiss",
+          "when": "view == serialtree.findings && viewItem == finding",
+          "group": "inline@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SerialTree",
+      "properties": {
+        "serialtree.mcpProjectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to SerialMemory.Mcp project directory (e.g. /home/user/SerialMemoryServer/SerialMemory.Mcp)"
+        },
+        "serialtree.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "SerialMemory API URL (fallback when MCP not available)"
+        },
+        "serialtree.connectionMode": {
+          "type": "string",
+          "enum": ["mcp", "api"],
+          "default": "mcp",
+          "description": "Connection mode: 'mcp' for STDIO or 'api' for HTTP"
+        },
+        "serialtree.claudeTerminalPattern": {
+          "type": "string",
+          "default": "Claude",
+          "description": "Regex pattern to match Claude Code terminal name"
+        },
+        "serialtree.promptTemplate": {
+          "type": "string",
+          "default": "Based on this finding:\n{finding}\n\nPlease fix this issue.",
+          "description": "Template for prompts sent to Claude Code"
+        },
+        "serialtree.autoAnalyzeOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run code analysis when workspace opens"
+        },
+        "serialtree.analysisScope": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["src/**/*.ts", "**/*.cs"],
+          "description": "Glob patterns for code analysis scope"
+        },
+        "serialtree.maxFunctionLength": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum function length before flagging as tech debt"
+        },
+        "serialtree.maxFileLength": {
+          "type": "number",
+          "default": 800,
+          "description": "Maximum file length before flagging as tech debt"
+        },
+        "serialtree.sessionLogDir": {
+          "type": "string",
+          "default": "~/.cc-serialmemory/sessions",
+          "description": "Directory containing JSONL session logs"
+        },
+        "serialtree.showActivityOnStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show activity feed sidebar on startup"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node esbuild.config.mjs --production",
+    "watch": "node esbuild.config.mjs --watch",
+    "lint": "tsc --noEmit",
+    "test": "node ./test/runTest.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@vscode/webview-ui-toolkit": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.181.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "mocha": "^10.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-force-graph-3d": "^1.29.0",
+    "three": "^0.181.0",
+    "typescript": "^5.7.0"
+  }
+}
