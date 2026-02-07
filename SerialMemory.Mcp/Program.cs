@@ -126,9 +126,10 @@ var userId = authResult.UserId;
 logger.LogInformation("Authenticated as tenant {TenantId} (user: {UserId})", tenantId, userId);
 DebugFileLogger.Log("MCP", $"Authenticated tenantId={tenantId}, userId={userId}");
 
-// Initialize services with authenticated tenant context
-var tenantContext = new FixedTenantContext(tenantId, "default", userId);
-DebugFileLogger.Log("MCP", $"Created FixedTenantContext: TenantId={tenantContext.TenantId}, WorkspaceId={tenantContext.WorkspaceId}");
+// Initialize services with mutable tenant context (supports workspace switching)
+var tenantContext = new TenantContext();
+tenantContext.SetContext(tenantId, "default", userId);
+DebugFileLogger.Log("MCP", $"Created TenantContext: TenantId={tenantContext.TenantId}, WorkspaceId={tenantContext.WorkspaceId}");
 IKnowledgeGraphStore store = new PostgresKnowledgeGraphStore(connectionString, tenantContext);
 DebugFileLogger.Log("MCP", $"Created PostgresKnowledgeGraphStore");
 
@@ -181,13 +182,122 @@ IMultiModelReasoningService multiModelService = new SerialMemory.Infrastructure.
     store, reasoningService, modelFactory, loggerFactory.CreateLogger<SerialMemory.Infrastructure.Services.MultiModelReasoningService>());
 var reasoningTools = new EngineeringReasoningTools(reasoningService, visualizationService, multiModelService, logger);
 
+// Session state (declared early so snapshot tools can reference it via closure)
+Guid? currentSessionId = null;
+
+// Initialize workspace and snapshot tools
+var workspaceTools = new WorkspaceTools(store, tenantContext, logger);
+var snapshotTools = new SnapshotTools(store, tenantContext, logger, () => currentSessionId);
+
+// Initialize two-tool gateway and register all categorized tools
+var gateway = new ToolGateway();
+
+// Register lifecycle tools
+foreach (var schema in ToolDefinitions.GetLifecycleTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("lifecycle", (string)name, schema, name switch
+    {
+        "memory_update" => (args) => lifecycleTools.HandleMemoryUpdate(args),
+        "memory_delete" => (args) => lifecycleTools.HandleMemoryDelete(args),
+        "memory_merge" => (args) => lifecycleTools.HandleMemoryMerge(args),
+        "memory_split" => (args) => lifecycleTools.HandleMemorySplit(args),
+        "memory_decay" => (args) => lifecycleTools.HandleMemoryDecay(args),
+        "memory_reinforce" => (args) => lifecycleTools.HandleMemoryReinforce(args),
+        "memory_expire" => (args) => lifecycleTools.HandleMemoryExpire(args),
+        "memory_supersede" => (args) => lifecycleTools.HandleMemorySupersede(args),
+        _ => throw new InvalidOperationException($"Unknown lifecycle tool: {name}")
+    });
+}
+
+// Register observability tools
+foreach (var schema in ToolDefinitions.GetObservabilityTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("observability", (string)name, schema, name switch
+    {
+        "memory_trace" => (args) => observabilityTools.HandleMemoryTrace(args),
+        "memory_lineage" => (args) => observabilityTools.HandleMemoryLineage(args),
+        "memory_explain" => (args) => observabilityTools.HandleMemoryExplain(args),
+        "memory_conflicts" => (args) => observabilityTools.HandleMemoryConflicts(args),
+        _ => throw new InvalidOperationException($"Unknown observability tool: {name}")
+    });
+}
+
+// Register safety tools
+foreach (var schema in ToolDefinitions.GetSafetyTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("safety", (string)name, schema, name switch
+    {
+        "detect_contradictions" => (args) => safetyTools.HandleDetectContradictions(args),
+        "detect_hallucinations" => (args) => safetyTools.HandleDetectHallucinations(args),
+        "verify_memory_integrity" => (args) => safetyTools.HandleVerifyIntegrity(args),
+        "scan_loops" => (args) => safetyTools.HandleScanLoops(args),
+        _ => throw new InvalidOperationException($"Unknown safety tool: {name}")
+    });
+}
+
+// Register export tools
+foreach (var schema in ToolDefinitions.GetExportTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("export", (string)name, schema, name switch
+    {
+        "export_workspace" => (args) => exportTools.HandleExportWorkspace(args),
+        "export_memories" => (args) => exportTools.HandleExportMemories(args),
+        "export_graph" => (args) => exportTools.HandleExportGraph(args),
+        "export_user_profile" => (args) => exportTools.HandleExportUserProfile(args),
+        "export_markdown" => (args) => exportTools.HandleExportMarkdown(args),
+        _ => throw new InvalidOperationException($"Unknown export tool: {name}")
+    });
+}
+
+// Register reasoning tools
+foreach (var schema in ToolDefinitions.GetReasoningTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("reasoning", (string)name, schema, name switch
+    {
+        "engineering_analyze" => (args) => reasoningTools.HandleEngineeringAnalyze(args),
+        "engineering_visualize" => (args) => reasoningTools.HandleEngineeringVisualize(args),
+        "engineering_reason" => (args) => reasoningTools.HandleEngineeringReason(args),
+        _ => throw new InvalidOperationException($"Unknown reasoning tool: {name}")
+    });
+}
+
+// Register admin tools via gateway
+gateway.Register("admin", "set_user_persona", new { name = "set_user_persona" }, HandleSetUserPersona);
+gateway.Register("admin", "get_integrations", new { name = "get_integrations" }, _ => Task.FromResult(HandleGetIntegrations()));
+gateway.Register("admin", "import_from_core", new { name = "import_from_core" }, HandleImportFromCore);
+gateway.Register("admin", "crawl_relationships", new { name = "crawl_relationships" }, HandleCrawlRelationships);
+gateway.Register("admin", "get_graph_statistics", new { name = "get_graph_statistics" }, _ => HandleGetGraphStatistics());
+gateway.Register("admin", "get_model_info", new { name = "get_model_info" }, _ => Task.FromResult(HandleGetModelInfo()));
+gateway.Register("admin", "reembed_memories", new { name = "reembed_memories" }, HandleReembedMemories);
+
+// Register session tools via gateway
+gateway.Register("session", "instantiate_context", new { name = "instantiate_context" }, HandleInstantiateContext);
+
+// Register workspace tools via gateway
+foreach (var schema in ToolDefinitions.GetWorkspaceTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("workspace", (string)name, schema, name switch
+    {
+        "workspace_create" => (args) => workspaceTools.HandleWorkspaceCreate(args),
+        "workspace_list" => (args) => workspaceTools.HandleWorkspaceList(args),
+        "workspace_switch" => (args) => workspaceTools.HandleWorkspaceSwitch(args),
+        "snapshot_create" => (args) => snapshotTools.HandleSnapshotCreate(args),
+        "snapshot_list" => (args) => snapshotTools.HandleSnapshotList(args),
+        "snapshot_load" => (args) => snapshotTools.HandleSnapshotLoad(args),
+        _ => throw new InvalidOperationException($"Unknown workspace tool: {name}")
+    });
+}
+
 // Initialize usage service (non-blocking metering) - use authenticated tenant context
 var usageLogger = loggerFactory.CreateLogger<UsageService>();
 using var usageService = new UsageService(connectionString, usageLogger, tenantId: tenantId, workspaceId: tenantContext.WorkspaceId);
 logger.LogInformation("Usage metering service initialized for tenant {TenantId}", tenantId);
-
-// Session state
-Guid? currentSessionId = null;
 
 // AsyncLocal for tool-specific metadata (e.g., dedup tracking)
 var toolMetadataContext = new AsyncLocal<Dictionary<string, object>?>();
@@ -291,9 +401,16 @@ object HandleToolsList()
 
 object BuildLazyToolsList()
 {
-    var lazyToolNames = new HashSet<string> { "memory_search", "memory_ingest", "memory_multi_hop_search", "memory_about_user" };
+    // Core tools always listed directly
+    var lazyToolNames = new HashSet<string>
+    {
+        "memory_search", "memory_ingest", "memory_multi_hop_search", "memory_about_user",
+        "initialise_conversation_session", "end_conversation_session"
+    };
     var lazyTools = coreTools.Where(t => lazyToolNames.Contains(((dynamic)t).name)).ToArray();
-    var allTools = lazyTools.Concat(ToolHierarchy.GetMetaTools()).ToArray();
+    // Add gateway meta-tools
+    var gatewayTools = ToolDefinitions.GetGatewayTools();
+    var allTools = lazyTools.Concat(gatewayTools).ToArray();
     return new { tools = allTools };
 }
 
@@ -305,6 +422,7 @@ object BuildFullToolsList()
         .Concat(ToolDefinitions.GetSafetyTools())
         .Concat(ToolDefinitions.GetExportTools())
         .Concat(ToolDefinitions.GetReasoningTools())
+        .Concat(ToolDefinitions.GetWorkspaceTools())
         .ToArray();
     return new { tools = allTools };
 }
@@ -648,68 +766,92 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     var sw = Stopwatch.StartNew();
     var success = true;
     string? errorMessage = null;
+    var trackedToolName = toolName;
 
     // Reset metadata context for this tool call
     toolMetadataContext.Value = null;
 
+    // --- Context envelope extraction ---
+    // Every tool call may include an optional "context" envelope to override workspace/session
+    string? savedWorkspaceId = null;
+    Guid? savedSessionId = null;
+    CallContext? callContext = null;
+
     try
     {
+        if (arguments?["context"] is JsonNode contextNode)
+        {
+            callContext = new CallContext
+            {
+                WorkspaceId = contextNode["workspace_id"]?.GetValue<string>()?.Trim(),
+                SessionId = contextNode["session_id"]?.GetValue<string>()?.Trim(),
+                Memory = contextNode["memory"]?.GetValue<string>()?.Trim(),
+                Goal = contextNode["goal"]?.GetValue<string>()?.Trim(),
+                Constraints = contextNode["constraints"]?.GetValue<string>()?.Trim()
+            };
+
+            // Override workspace if provided
+            if (!string.IsNullOrEmpty(callContext.WorkspaceId))
+            {
+                savedWorkspaceId = tenantContext.WorkspaceId;
+                tenantContext.SetContext(
+                    tenantContext.TenantId,
+                    callContext.WorkspaceId,
+                    tenantContext.UserId,
+                    tenantContext.UserEmail,
+                    tenantContext.UserRole,
+                    tenantContext.SessionId,
+                    tenantContext.IsLabMode,
+                    tenantContext.AllowPowerMode,
+                    tenantContext.IsRootAdmin,
+                    tenantContext.Scopes);
+                logger.LogDebug("Context envelope: workspace overridden to {WorkspaceId}", callContext.WorkspaceId);
+            }
+
+            // Override session if provided
+            if (!string.IsNullOrEmpty(callContext.SessionId) && Guid.TryParse(callContext.SessionId, out var overrideSessionId))
+            {
+                savedSessionId = currentSessionId;
+                currentSessionId = overrideSessionId;
+                logger.LogDebug("Context envelope: session overridden to {SessionId}", callContext.SessionId);
+            }
+
+            // Store memory/goal/constraints as session metadata if session is active
+            if (currentSessionId.HasValue && (callContext.Memory != null || callContext.Goal != null || callContext.Constraints != null))
+            {
+                var sessionMeta = new Dictionary<string, object>();
+                if (callContext.Memory != null) sessionMeta["memory"] = callContext.Memory;
+                if (callContext.Goal != null) sessionMeta["goal"] = callContext.Goal;
+                if (callContext.Constraints != null) sessionMeta["constraints"] = callContext.Constraints;
+                _ = Task.Run(async () =>
+                {
+                    try { await store.UpdateSessionMetadataAsync(currentSessionId.Value, sessionMeta); }
+                    catch (Exception ex) { logger.LogWarning(ex, "Failed to update session metadata"); }
+                });
+            }
+        }
+
+        // --- Tool dispatch ---
         var result = toolName switch
         {
+            // Core tools (always direct)
             "memory_search" => await HandleMemorySearch(arguments),
             "memory_ingest" => await HandleMemoryIngest(arguments),
             "memory_about_user" => await HandleMemoryAboutUser(arguments),
             "initialise_conversation_session" => await HandleInitialiseSession(arguments),
             "end_conversation_session" => await HandleEndSession(),
             "memory_multi_hop_search" => await HandleMultiHopSearch(arguments),
-            "get_integrations" => HandleGetIntegrations(),
-            "import_from_core" => await HandleImportFromCore(arguments),
-            "set_user_persona" => await HandleSetUserPersona(arguments),
-            "crawl_relationships" => await HandleCrawlRelationships(arguments),
-            "get_graph_statistics" => await HandleGetGraphStatistics(),
-            "get_model_info" => HandleGetModelInfo(),
-            "reembed_memories" => await HandleReembedMemories(arguments),
-            "instantiate_context" => await HandleInstantiateContext(arguments),
 
-            // Lifecycle tools
-            "memory_update" => await lifecycleTools.HandleMemoryUpdate(arguments),
-            "memory_delete" => await lifecycleTools.HandleMemoryDelete(arguments),
-            "memory_merge" => await lifecycleTools.HandleMemoryMerge(arguments),
-            "memory_split" => await lifecycleTools.HandleMemorySplit(arguments),
-            "memory_decay" => await lifecycleTools.HandleMemoryDecay(arguments),
-            "memory_reinforce" => await lifecycleTools.HandleMemoryReinforce(arguments),
-            "memory_expire" => await lifecycleTools.HandleMemoryExpire(arguments),
-            "memory_supersede" => await lifecycleTools.HandleMemorySupersede(arguments),
+            // Gateway meta-tools
+            "get_tools" => gateway.HandleGetTools(arguments),
+            "use_tool" => await HandleUseToolViaGateway(arguments),
 
-            // Observability tools
-            "memory_trace" => await observabilityTools.HandleMemoryTrace(arguments),
-            "memory_lineage" => await observabilityTools.HandleMemoryLineage(arguments),
-            "memory_explain" => await observabilityTools.HandleMemoryExplain(arguments),
-            "memory_conflicts" => await observabilityTools.HandleMemoryConflicts(arguments),
-
-            // Safety tools
-            "detect_contradictions" => await safetyTools.HandleDetectContradictions(arguments),
-            "detect_hallucinations" => await safetyTools.HandleDetectHallucinations(arguments),
-            "verify_memory_integrity" => await safetyTools.HandleVerifyIntegrity(arguments),
-            "scan_loops" => await safetyTools.HandleScanLoops(arguments),
-
-            // Export tools
-            "export_workspace" => await exportTools.HandleExportWorkspace(arguments),
-            "export_memories" => await exportTools.HandleExportMemories(arguments),
-            "export_graph" => await exportTools.HandleExportGraph(arguments),
-            "export_user_profile" => await exportTools.HandleExportUserProfile(arguments),
-            "export_markdown" => await exportTools.HandleExportMarkdown(arguments),
-
-            // Reasoning tools
-            "engineering_analyze" => await reasoningTools.HandleEngineeringAnalyze(arguments),
-            "engineering_visualize" => await reasoningTools.HandleEngineeringVisualize(arguments),
-            "engineering_reason" => await reasoningTools.HandleEngineeringReason(arguments),
-
-            // Meta-tools (lazy-MCP)
+            // Legacy meta-tools (kept for backward compat)
             "get_tools_in_category" => HandleGetToolsInCategory(arguments),
             "execute_tool" => await HandleExecuteTool(arguments),
 
-            _ => throw new Exception($"Unknown tool: {toolName}")
+            // Fallback: try gateway for any registered tool
+            _ => await HandleViaGatewayFallback(toolName!, arguments)
         };
 
         return result;
@@ -724,8 +866,58 @@ async Task<object> HandleToolsCall(JsonNode? @params)
     finally
     {
         sw.Stop();
+
+        // Restore workspace if overridden
+        if (savedWorkspaceId != null)
+        {
+            tenantContext.SetContext(
+                tenantContext.TenantId,
+                savedWorkspaceId,
+                tenantContext.UserId,
+                tenantContext.UserEmail,
+                tenantContext.UserRole,
+                tenantContext.SessionId,
+                tenantContext.IsLabMode,
+                tenantContext.AllowPowerMode,
+                tenantContext.IsRootAdmin,
+                tenantContext.Scopes);
+        }
+
+        // Restore session if overridden
+        if (savedSessionId.HasValue)
+        {
+            currentSessionId = savedSessionId;
+        }
+
         // Track usage for metered tools (non-blocking)
-        TrackToolUsage(toolName, (int)sw.ElapsedMilliseconds, success, errorMessage, toolMetadataContext.Value);
+        TrackToolUsage(trackedToolName, (int)sw.ElapsedMilliseconds, success, errorMessage, toolMetadataContext.Value);
+    }
+}
+
+async Task<object> HandleUseToolViaGateway(JsonNode? arguments)
+{
+    var (result, innerToolName) = await gateway.HandleUseTool(arguments);
+    // Track the inner tool name for usage, not "use_tool"
+    TrackToolUsage(innerToolName, 0, true, null);
+    return result;
+}
+
+async Task<object> HandleViaGatewayFallback(string toolName, JsonNode? arguments)
+{
+    // Try to dispatch via gateway for tools registered there
+    try
+    {
+        var wrappedArgs = new JsonObject
+        {
+            ["tool_name"] = toolName,
+            ["arguments"] = arguments?.DeepClone()
+        };
+        var (result, _) = await gateway.HandleUseTool(wrappedArgs);
+        return result;
+    }
+    catch (ArgumentException)
+    {
+        throw new Exception($"Unknown tool: {toolName}");
     }
 }
 
@@ -795,6 +987,20 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         // Meta-tool operations (lazy-MCP)
         "get_tools_in_category" => UsageEventType.GetToolsInCategory,
         "execute_tool" => UsageEventType.ExecuteTool,
+
+        // Gateway meta-tools
+        "get_tools" => UsageEventType.GetTools,
+        "use_tool" => UsageEventType.UseTool,
+
+        // Workspace operations
+        "workspace_create" => UsageEventType.WorkspaceCreate,
+        "workspace_list" => UsageEventType.WorkspaceList,
+        "workspace_switch" => UsageEventType.WorkspaceSwitch,
+
+        // Snapshot operations
+        "snapshot_create" => UsageEventType.SnapshotCreate,
+        "snapshot_list" => UsageEventType.SnapshotList,
+        "snapshot_load" => UsageEventType.SnapshotLoad,
 
         _ => null
     };
@@ -891,7 +1097,7 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
         ["dedup_mode"] = dedupMode,
         ["dedup_detected"] = result.DuplicateDetected,
         ["dedup_threshold"] = dedupThreshold,
-        ["similarity"] = result.DuplicateSimilarity ?? 0.0f
+        ["similarity"] = result.DuplicateSimilarity
     };
 
     var text = result.DuplicateDetected && dedupMode == "skip"

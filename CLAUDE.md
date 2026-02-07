@@ -220,6 +220,12 @@ cat backup.sql | docker exec -i serialmemory-postgres psql -U pgadmin contextdb
 ```
 SerialMemory.Mcp/
 ├── Program.cs                    # MCP server entry point & STDIO handler
+├── Tools/
+│   ├── ToolDefinitions.cs        # Tool schemas (lifecycle, safety, export, etc.)
+│   ├── ToolHierarchy.cs          # Lazy-MCP category hierarchy
+│   ├── ToolGateway.cs            # Two-tool gateway (get_tools/use_tool)
+│   ├── WorkspaceTools.cs         # Workspace CRUD handlers
+│   └── SnapshotTools.cs          # State snapshot handlers
 
 SerialMemory.Core/
 ├── Models/
@@ -227,7 +233,10 @@ SerialMemory.Core/
 │   ├── Entity.cs                 # Named entity (PERSON, ORG, etc.)
 │   ├── EntityRelationship.cs     # Knowledge graph edges
 │   ├── ConversationSession.cs    # Session tracking
-│   └── UserPersona.cs            # User preferences/skills
+│   ├── UserPersona.cs            # User preferences/skills
+│   ├── Workspace.cs              # Workspace definition
+│   ├── WorkspaceSnapshot.cs      # State snapshot with WorkspaceStateData
+│   └── CallContext.cs            # Per-call context envelope
 ├── Interfaces/
 │   ├── IKnowledgeGraphStore.cs   # Data access contract
 │   ├── IEmbeddingService.cs      # Embedding generation
@@ -236,7 +245,8 @@ SerialMemory.Core/
     └── KnowledgeGraphService.cs  # Orchestration layer
 
 SerialMemory.Infrastructure/
-└── PostgresKnowledgeGraphStore.cs # PostgreSQL + pgvector implementation
+├── PostgresKnowledgeGraphStore.cs # PostgreSQL + pgvector implementation
+└── TenantDbConnectionFactory.cs  # Tenant + workspace DB context
 
 SerialMemory.ML/
 ├── HttpEmbeddingService.cs       # HTTP API for embeddings
@@ -245,14 +255,16 @@ SerialMemory.ML/
 
 ### Database Schema
 
-Located in `ops/init.sql`, the knowledge graph uses 8 tables:
+Located in `ops/init.sql` + `ops/migrate_workspace_scoping.sql`, the knowledge graph uses 10 tables:
 
-- **memories** - Episodes with embeddings (vector(384)), content, timestamps
+- **memories** - Episodes with embeddings (vector(384)), content, timestamps, workspace_id
 - **entities** - Named entities with types (PERSON, ORG, GPE, DATE, etc.)
 - **entity_relationships** - Directed edges between entities
-- **memory_entities** - Many-to-many links between memories and entities
-- **user_personas** - User preferences, skills, background
-- **conversation_sessions** - Session tracking
+- **memory_entities** - Many-to-many links between memories and entities, workspace_id
+- **user_personas** - User preferences, skills, background, workspace_id
+- **conversation_sessions** - Session tracking, workspace_id
+- **workspaces** - Workspace definitions within a tenant
+- **workspace_snapshots** - State snapshots for workspace checkpointing
 - **integrations** + **integration_actions** - External tool registry
 
 ## MCP Server Configuration
@@ -279,21 +291,66 @@ Located in `ops/init.sql`, the knowledge graph uses 8 tables:
 
 ### MCP Tools Available
 
+**Core Tools** (always listed):
+
 | Tool | Description |
 |------|-------------|
 | `memory_search` | Search memories using semantic/text/hybrid search |
 | `memory_ingest` | Add memories with automatic entity/relationship extraction |
 | `memory_about_user` | Retrieve user persona (preferences, skills, background) |
-| `set_user_persona` | Set/update user persona attributes |
+| `memory_multi_hop_search` | Traverse knowledge graph for multi-hop reasoning |
 | `initialise_conversation_session` | Start a new conversation session |
 | `end_conversation_session` | End the current conversation session |
-| `memory_multi_hop_search` | Traverse knowledge graph for multi-hop reasoning |
-| `get_integrations` | List available external integrations |
-| `import_from_core` | **Import from CORE MCP** (entities, relations, observations) |
-| `crawl_relationships` | Extract entities/relationships from existing memories |
-| `get_graph_statistics` | Get knowledge graph statistics (counts by type) |
-| `get_model_info` | Get current embedding model info and upgrade options |
-| `reembed_memories` | Re-generate embeddings after switching models |
+| `get_tools` | Discover tools by category (gateway) |
+| `use_tool` | Execute a tool by name (gateway) |
+
+**Gateway Tools** (discoverable via `get_tools`):
+
+| Category | Tools |
+|----------|-------|
+| lifecycle | memory_update, memory_delete, memory_merge, memory_split, memory_decay, memory_reinforce, memory_expire, memory_supersede |
+| observability | memory_trace, memory_lineage, memory_explain, memory_conflicts |
+| safety | detect_contradictions, detect_hallucinations, verify_memory_integrity, scan_loops |
+| export | export_workspace, export_memories, export_graph, export_user_profile, export_markdown |
+| reasoning | engineering_analyze, engineering_visualize, engineering_reason |
+| session | initialise_conversation_session, end_conversation_session, instantiate_context |
+| admin | set_user_persona, get_integrations, import_from_core, crawl_relationships, get_graph_statistics, get_model_info, reembed_memories |
+| workspace | workspace_create, workspace_list, workspace_switch, snapshot_create, snapshot_list, snapshot_load |
+
+### Workspace Scoping
+
+Memories, sessions, and user personas are scoped to workspaces within a tenant. Entities and relationships remain tenant-shared.
+
+- Default workspace is `default` (backward compatible)
+- Use `workspace_create` to create project-specific workspaces
+- Use `workspace_switch` to change active workspace for the MCP session
+- All subsequent operations are automatically scoped to the active workspace via PostgreSQL RLS
+
+### Context Envelope
+
+Every tool call accepts an optional `context` parameter:
+
+```json
+{
+  "context": {
+    "workspace_id": "override workspace for this call only",
+    "session_id": "override session for this call only",
+    "memory": "1-3 sentence conversation essence",
+    "goal": "current objective",
+    "constraints": "rules or limits"
+  }
+}
+```
+
+Workspace and session overrides are temporary (restored after the call).
+
+### State Snapshots
+
+Capture and restore workspace state for checkpointing:
+
+- `snapshot_create` - saves recent memories, active entities, session state, custom metadata
+- `snapshot_list` - lists snapshots for a workspace
+- `snapshot_load` - loads a snapshot for context restoration
 
 ### MCP Resources Available
 

@@ -384,6 +384,154 @@ public static class ToolDefinitions
         }
     ];
 
+    /// <summary>
+    /// Shared context schema fragment for per-call context envelope.
+    /// Added as optional property to tool schemas.
+    /// </summary>
+    public static object ContextSchemaFragment => new
+    {
+        type = "object",
+        description = "Optional per-call context envelope",
+        properties = new
+        {
+            workspace_id = new { type = "string", description = "Override workspace for this call" },
+            session_id = new { type = "string", description = "Override session for this call" },
+            memory = new { type = "string", description = "1-3 sentence conversation essence" },
+            goal = new { type = "string", description = "Current objective" },
+            constraints = new { type = "string", description = "Rules or limits" }
+        }
+    };
+
+    public static object[] GetWorkspaceTools() =>
+    [
+        new
+        {
+            name = "workspace_create",
+            description = "Create a new workspace for scoping memories and sessions.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    name = new { type = "string", description = "Workspace slug identifier (e.g., 'my-project')" },
+                    display_name = new { type = "string", description = "Human-readable display name" },
+                    description = new { type = "string", description = "Workspace description" }
+                },
+                required = new[] { "name" }
+            }
+        },
+        new
+        {
+            name = "workspace_list",
+            description = "List all workspaces for the current tenant.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    limit = new { type = "integer", @default = 50, description = "Maximum workspaces to return" }
+                }
+            }
+        },
+        new
+        {
+            name = "workspace_switch",
+            description = "Switch the active workspace for this MCP session. All subsequent operations will be scoped to the new workspace.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    workspace_id = new { type = "string", description = "Workspace slug to switch to" }
+                },
+                required = new[] { "workspace_id" }
+            }
+        },
+        new
+        {
+            name = "snapshot_create",
+            description = "Create a named state snapshot of the current workspace. Captures recent memories, active entities, session state, and custom metadata.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    snapshot_name = new { type = "string", description = "Unique name for this snapshot (e.g., 'checkpoint-1')" },
+                    goal = new { type = "string", description = "Current goal to capture" },
+                    constraints = new { type = "string", description = "Current constraints to capture" },
+                    memory = new { type = "string", description = "Conversation essence to capture" },
+                    metadata = new { type = "object", description = "Custom metadata to include" }
+                },
+                required = new[] { "snapshot_name" }
+            }
+        },
+        new
+        {
+            name = "snapshot_list",
+            description = "List snapshots for a workspace.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    workspace_id = new { type = "string", description = "Workspace to list snapshots for (defaults to current)" },
+                    limit = new { type = "integer", @default = 20, description = "Maximum snapshots to return" }
+                }
+            }
+        },
+        new
+        {
+            name = "snapshot_load",
+            description = "Load a named snapshot and return its captured state data for context restoration.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    snapshot_name = new { type = "string", description = "Name of the snapshot to load" },
+                    workspace_id = new { type = "string", description = "Workspace to load from (defaults to current)" }
+                },
+                required = new[] { "snapshot_name" }
+            }
+        }
+    ];
+
+    /// <summary>
+    /// Gateway meta-tools: get_tools + use_tool. Token-efficient discovery and dispatch.
+    /// </summary>
+    public static object[] GetGatewayTools() =>
+    [
+        new
+        {
+            name = "get_tools",
+            description = "Discover available SerialMemory tools by category. Returns tool schemas and descriptions. Categories: lifecycle, observability, safety, export, reasoning, admin, session, workspace.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    category = new { type = "string", description = "Filter by category (omit for category listing)" }
+                }
+            }
+        },
+        new
+        {
+            name = "use_tool",
+            description = "Execute a SerialMemory tool by name. Use get_tools first to discover available tools and their parameters.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    tool_name = new { type = "string", description = "Name of the tool to execute" },
+                    arguments = new { type = "object", description = "Tool arguments" },
+                    context = ContextSchemaFragment
+                },
+                required = new[] { "tool_name" }
+            }
+        }
+    ];
+
     public static object[] GetReasoningTools() =>
     [
         // engineering_analyze

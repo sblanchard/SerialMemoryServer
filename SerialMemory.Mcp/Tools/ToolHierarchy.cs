@@ -18,7 +18,8 @@ public static class ToolHierarchy
         ("export", new("Export", "Export workspace, memories, graph, user profile, markdown vault")),
         ("reasoning", new("Engineering Reasoning", "Analyze graphs, visualize, multi-model reasoning")),
         ("session", new("Session Management", "Create/end sessions, instantiate context")),
-        ("admin", new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed"))
+        ("admin", new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed")),
+        ("workspace", new("Workspace & Snapshots", "Create/switch workspaces, create/load state snapshots"))
     ];
 
     public static readonly Dictionary<string, CategoryInfo> Categories =
@@ -80,7 +81,15 @@ public static class ToolHierarchy
         ["admin.crawl_relationships"] = "crawl_relationships",
         ["admin.get_graph_statistics"] = "get_graph_statistics",
         ["admin.get_model_info"] = "get_model_info",
-        ["admin.reembed_memories"] = "reembed_memories"
+        ["admin.reembed_memories"] = "reembed_memories",
+
+        // Workspace & Snapshots
+        ["workspace.workspace_create"] = "workspace_create",
+        ["workspace.workspace_list"] = "workspace_list",
+        ["workspace.workspace_switch"] = "workspace_switch",
+        ["workspace.snapshot_create"] = "snapshot_create",
+        ["workspace.snapshot_list"] = "snapshot_list",
+        ["workspace.snapshot_load"] = "snapshot_load"
     };
 
     /// <summary>
@@ -100,6 +109,7 @@ public static class ToolHierarchy
             "admin" => FilterCoreToolsByName(coreTools,
                 "set_user_persona", "get_integrations", "import_from_core",
                 "crawl_relationships", "get_graph_statistics", "get_model_info", "reembed_memories"),
+            "workspace" => ToolDefinitions.GetWorkspaceTools(),
             _ => []
         };
 
@@ -122,7 +132,7 @@ public static class ToolHierarchy
         new
         {
             name = "get_tools_in_category",
-            description = "Browse available SerialMemory tools by category. Call with no path for root categories. Categories: lifecycle, observability, safety, export, reasoning, session, admin.",
+            description = "Browse available SerialMemory tools by category. Call with no path for root categories. Categories: lifecycle, observability, safety, export, reasoning, session, admin, workspace.",
             inputSchema = new
             {
                 type = "object",

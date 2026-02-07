@@ -74,7 +74,14 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
                 "SELECT set_tenant_context(@TenantId)",
                 new { TenantId = tenantId });
 
-            _logger.LogDebug("Connection opened and tenant context set for {TenantId}", tenantId);
+            // Set workspace context for workspace-scoped RLS
+            var workspaceId = _tenantContext.WorkspaceId;
+            _logger.LogDebug("Setting workspace context via set_workspace_context({WorkspaceId})", workspaceId);
+            await connection.ExecuteAsync(
+                "SELECT set_workspace_context(@WorkspaceId)",
+                new { WorkspaceId = workspaceId });
+
+            _logger.LogDebug("Connection opened with tenant={TenantId}, workspace={WorkspaceId}", tenantId, workspaceId);
             return connection;
         }
         catch (Exception ex)

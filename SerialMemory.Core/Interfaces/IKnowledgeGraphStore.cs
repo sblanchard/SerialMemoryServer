@@ -52,4 +52,17 @@ public interface IKnowledgeGraphStore
 
     // Date range queries for context instantiation
     Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default);
+
+    // Workspace operations
+    Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default);
+    Task<List<Workspace>> GetWorkspacesAsync(int limit = 50, CancellationToken ct = default);
+    Task<Workspace?> GetWorkspaceBySlugAsync(string workspaceId, CancellationToken ct = default);
+
+    // Session metadata updates
+    Task UpdateSessionMetadataAsync(Guid sessionId, Dictionary<string, object> metadata, CancellationToken ct = default);
+
+    // Workspace snapshot operations
+    Task<Guid> CreateSnapshotAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default);
+    Task<List<WorkspaceSnapshot>> GetSnapshotsAsync(string workspaceId, int limit = 20, CancellationToken ct = default);
+    Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default);
 }

@@ -68,6 +68,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     private Guid TenantId => Guid.Parse(_tenantContext.TenantId);
 
     /// <summary>
+    /// Gets the current workspace ID from tenant context.
+    /// </summary>
+    private string WorkspaceId => _tenantContext.WorkspaceId;
+
+    /// <summary>
     /// Opens a connection with tenant context set for RLS enforcement.
     /// Returns NpgsqlConnection for pgvector operations.
     /// </summary>
@@ -93,8 +98,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
 
-                                       INSERT INTO memories (id, tenant_id, content, embedding, source, conversation_session_id, metadata)
-                                       VALUES (@Id, @TenantId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)
+                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)
                            """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
@@ -104,6 +109,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
         cmd.Parameters.Add(new NpgsqlParameter("@TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = tenantId });
+        cmd.Parameters.Add(new NpgsqlParameter("@WorkspaceId", NpgsqlTypes.NpgsqlDbType.Text) { Value = WorkspaceId });
         cmd.Parameters.Add(new NpgsqlParameter("@Content", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Content });
         cmd.Parameters.AddWithValue("@Embedding", memory.Embedding != null ? new Vector(memory.Embedding) : DBNull.Value);
         cmd.Parameters.Add(new NpgsqlParameter("@Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
@@ -344,8 +350,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     {
         const string sql = """
 
-                                       INSERT INTO memory_entities (tenant_id, memory_id, entity_id, relevance)
-                                       VALUES (@TenantId, @MemoryId, @EntityId, @Relevance)
+                                       INSERT INTO memory_entities (tenant_id, workspace_id, memory_id, entity_id, relevance)
+                                       VALUES (@TenantId, @WorkspaceId, @MemoryId, @EntityId, @Relevance)
                                        ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = EXCLUDED.relevance
                            """;
 
@@ -353,7 +359,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
-            new { TenantId, MemoryId = memoryId, EntityId = entityId, Relevance = relevance },
+            new { TenantId, WorkspaceId, MemoryId = memoryId, EntityId = entityId, Relevance = relevance },
             cancellationToken: cancellationToken
         ));
     }
@@ -494,13 +500,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // Use Version 7 GUID (time-ordered) for better indexing and sorting
         var id = Guid.CreateVersion7();
 
-        // Unique constraint is now (tenant_id, user_id, attribute_type, attribute_key)
+        // Unique constraint is now (tenant_id, workspace_id, user_id, attribute_type, attribute_key)
         const string sql = """
 
                                        INSERT INTO user_personas
-                                           (id, tenant_id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
-                                       VALUES (@Id, @TenantId, @UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
-                                       ON CONFLICT (tenant_id, user_id, attribute_type, attribute_key) DO UPDATE SET
+                                           (id, tenant_id, workspace_id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @UserId, @AttributeType, @AttributeKey, @AttributeValue, @Confidence, @SourceMemoryId)
+                                       ON CONFLICT (tenant_id, workspace_id, user_id, attribute_type, attribute_key) DO UPDATE SET
                                            attribute_value = EXCLUDED.attribute_value,
                                            confidence = EXCLUDED.confidence,
                                            updated_at = NOW()
@@ -514,6 +520,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             {
                 Id = id,
                 TenantId,
+                WorkspaceId,
                 persona.UserId,
                 persona.AttributeType,
                 persona.AttributeKey,
@@ -575,8 +582,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
 
-                                       INSERT INTO conversation_sessions (id, tenant_id, session_name, client_type, metadata)
-                                       VALUES (@Id, @TenantId, @SessionName, @ClientType, @Metadata::jsonb)
+                                       INSERT INTO conversation_sessions (id, tenant_id, workspace_id, session_name, client_type, metadata)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @SessionName, @ClientType, @Metadata::jsonb)
                            """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
@@ -587,6 +594,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             {
                 Id = id,
                 TenantId,
+                WorkspaceId,
                 session.SessionName,
                 session.ClientType,
                 Metadata = session.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(session.Metadata) : null
@@ -955,6 +963,209 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                 ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
                 : null
         }).ToList();
+    }
+
+    #endregion
+
+    #region Workspace Operations
+
+    public async Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default)
+    {
+        var id = Guid.CreateVersion7();
+
+        const string sql = """
+            INSERT INTO workspaces (id, tenant_id, workspace_id, display_name, description, metadata)
+            VALUES (@Id, @TenantId, @WorkspaceSlug, @DisplayName, @Description, @Metadata::jsonb)
+            ON CONFLICT (tenant_id, workspace_id) DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, workspaces.display_name),
+                description = COALESCE(EXCLUDED.description, workspaces.description),
+                metadata = COALESCE(EXCLUDED.metadata, workspaces.metadata),
+                updated_at = NOW()
+            RETURNING id
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        return await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+            sql,
+            new
+            {
+                Id = id,
+                TenantId,
+                WorkspaceSlug = workspace.WorkspaceId,
+                workspace.DisplayName,
+                workspace.Description,
+                Metadata = workspace.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(workspace.Metadata) : null
+            },
+            cancellationToken: ct
+        ));
+    }
+
+    public async Task<List<Workspace>> GetWorkspacesAsync(int limit = 50, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT id, workspace_id, display_name, description, metadata::text, created_at, updated_at
+            FROM workspaces
+            ORDER BY created_at ASC
+            LIMIT @Limit
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql, new { Limit = limit }, cancellationToken: ct));
+
+        return results.Select(row => new Workspace
+        {
+            Id = row.id,
+            WorkspaceId = row.workspace_id,
+            DisplayName = row.display_name,
+            Description = row.description,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at
+        }).ToList();
+    }
+
+    public async Task<Workspace?> GetWorkspaceBySlugAsync(string workspaceId, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT id, workspace_id, display_name, description, metadata::text, created_at, updated_at
+            FROM workspaces
+            WHERE workspace_id = @WorkspaceSlug
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        var row = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
+            sql, new { WorkspaceSlug = workspaceId }, cancellationToken: ct));
+
+        if (row == null) return null;
+
+        return new Workspace
+        {
+            Id = row.id,
+            WorkspaceId = row.workspace_id,
+            DisplayName = row.display_name,
+            Description = row.description,
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
+                : null,
+            CreatedAt = row.created_at,
+            UpdatedAt = row.updated_at
+        };
+    }
+
+    #endregion
+
+    #region Session Metadata Operations
+
+    public async Task UpdateSessionMetadataAsync(Guid sessionId, Dictionary<string, object> metadata, CancellationToken ct = default)
+    {
+        const string sql = """
+            UPDATE conversation_sessions
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || @Metadata::jsonb
+            WHERE id = @SessionId
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        await conn.ExecuteAsync(new CommandDefinition(
+            sql,
+            new
+            {
+                SessionId = sessionId,
+                Metadata = System.Text.Json.JsonSerializer.Serialize(metadata)
+            },
+            cancellationToken: ct
+        ));
+    }
+
+    #endregion
+
+    #region Workspace Snapshot Operations
+
+    public async Task<Guid> CreateSnapshotAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var id = Guid.CreateVersion7();
+
+        const string sql = """
+            INSERT INTO workspace_snapshots (id, tenant_id, workspace_id, snapshot_name, state_data)
+            VALUES (@Id, @TenantId, @WorkspaceSlug, @SnapshotName, @StateData::jsonb)
+            ON CONFLICT (tenant_id, workspace_id, snapshot_name) DO UPDATE SET
+                state_data = EXCLUDED.state_data,
+                created_at = NOW()
+            RETURNING id
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        return await conn.QuerySingleAsync<Guid>(new CommandDefinition(
+            sql,
+            new
+            {
+                Id = id,
+                TenantId,
+                WorkspaceSlug = snapshot.WorkspaceId,
+                snapshot.SnapshotName,
+                StateData = System.Text.Json.JsonSerializer.Serialize(snapshot.StateData)
+            },
+            cancellationToken: ct
+        ));
+    }
+
+    public async Task<List<WorkspaceSnapshot>> GetSnapshotsAsync(string workspaceId, int limit = 20, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT id, workspace_id, snapshot_name, state_data::text, created_at
+            FROM workspace_snapshots
+            WHERE workspace_id = @WorkspaceSlug
+            ORDER BY created_at DESC
+            LIMIT @Limit
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql, new { WorkspaceSlug = workspaceId, Limit = limit }, cancellationToken: ct));
+
+        return results.Select(row => new WorkspaceSnapshot
+        {
+            Id = row.id,
+            WorkspaceId = row.workspace_id,
+            SnapshotName = row.snapshot_name,
+            StateData = System.Text.Json.JsonSerializer.Deserialize<WorkspaceStateData>(row.state_data.ToString())
+                ?? new WorkspaceStateData(),
+            CreatedAt = row.created_at
+        }).ToList();
+    }
+
+    public async Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT id, workspace_id, snapshot_name, state_data::text, created_at
+            FROM workspace_snapshots
+            WHERE workspace_id = @WorkspaceSlug AND snapshot_name = @SnapshotName
+            """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        var row = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
+            sql, new { WorkspaceSlug = workspaceId, SnapshotName = snapshotName }, cancellationToken: ct));
+
+        if (row == null) return null;
+
+        return new WorkspaceSnapshot
+        {
+            Id = row.id,
+            WorkspaceId = row.workspace_id,
+            SnapshotName = row.snapshot_name,
+            StateData = System.Text.Json.JsonSerializer.Deserialize<WorkspaceStateData>(row.state_data.ToString())
+                ?? new WorkspaceStateData(),
+            CreatedAt = row.created_at
+        };
     }
 
     #endregion

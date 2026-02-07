@@ -360,5 +360,29 @@ public class InstrumentedKnowledgeGraphStore(
     public Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default)
         => inner.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
 
+    // Workspace operations
+    public Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default)
+        => inner.CreateWorkspaceAsync(workspace, ct);
+
+    public Task<List<Workspace>> GetWorkspacesAsync(int limit = 50, CancellationToken ct = default)
+        => inner.GetWorkspacesAsync(limit, ct);
+
+    public Task<Workspace?> GetWorkspaceBySlugAsync(string workspaceId, CancellationToken ct = default)
+        => inner.GetWorkspaceBySlugAsync(workspaceId, ct);
+
+    // Session metadata
+    public Task UpdateSessionMetadataAsync(Guid sessionId, Dictionary<string, object> metadata, CancellationToken ct = default)
+        => inner.UpdateSessionMetadataAsync(sessionId, metadata, ct);
+
+    // Snapshot operations
+    public Task<Guid> CreateSnapshotAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+        => inner.CreateSnapshotAsync(snapshot, ct);
+
+    public Task<List<WorkspaceSnapshot>> GetSnapshotsAsync(string workspaceId, int limit = 20, CancellationToken ct = default)
+        => inner.GetSnapshotsAsync(workspaceId, limit, ct);
+
+    public Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default)
+        => inner.GetSnapshotByNameAsync(workspaceId, snapshotName, ct);
+
     #endregion
 }

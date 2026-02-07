@@ -68,6 +68,20 @@ public enum UsageEventType
     GetToolsInCategory,
     ExecuteTool,
 
+    // Gateway meta-tools
+    GetTools,
+    UseTool,
+
+    // Workspace operations
+    WorkspaceCreate,
+    WorkspaceList,
+    WorkspaceSwitch,
+
+    // Snapshot operations
+    SnapshotCreate,
+    SnapshotList,
+    SnapshotLoad,
+
     // LLM operations
     LlmChat,
     Embedding,
@@ -100,6 +114,7 @@ public static class UsageCreditCosts
         [UsageEventType.MemoryDecay] = 0.1m,            // Simple confidence update
         [UsageEventType.MemoryReinforce] = 0.1m,        // Simple confidence update
         [UsageEventType.MemoryExpire] = 0.1m,           // Mark as expired
+        [UsageEventType.MemorySupersede] = 0.5m,        // Create new + invalidate old
 
         // Graph operations
         [UsageEventType.CrawlRelationships] = 1.0m,     // Entity extraction per memory
@@ -110,6 +125,7 @@ public static class UsageCreditCosts
         [UsageEventType.ExportMemories] = 5.0m,         // Memory subset export
         [UsageEventType.ExportGraph] = 5.0m,            // Graph export
         [UsageEventType.ExportUserProfile] = 2.0m,      // User profile export
+        [UsageEventType.ExportMarkdown] = 5.0m,         // Markdown vault export
 
         // Model operations
         [UsageEventType.ReembedMemories] = 5.0m,        // Batch re-embedding
@@ -143,6 +159,20 @@ public static class UsageCreditCosts
         [UsageEventType.EngineeringVisualize] = 2.0m,   // Visualization data
         [UsageEventType.EngineeringReason] = 5.0m,      // Multi-model reasoning
 
+        // Gateway meta-tools
+        [UsageEventType.GetTools] = 0.0m,                // Free - just discovery
+        [UsageEventType.UseTool] = 0.0m,                 // Free - usage tracked on inner tool
+
+        // Workspace operations
+        [UsageEventType.WorkspaceCreate] = 0.1m,         // Simple write
+        [UsageEventType.WorkspaceList] = 0.0m,           // Free - just info
+        [UsageEventType.WorkspaceSwitch] = 0.0m,         // Free - in-memory switch
+
+        // Snapshot operations
+        [UsageEventType.SnapshotCreate] = 0.25m,         // State gathering + write
+        [UsageEventType.SnapshotList] = 0.0m,            // Free - just info
+        [UsageEventType.SnapshotLoad] = 0.1m,            // Simple read
+
         // LLM operations
         [UsageEventType.LlmChat] = 2.0m,                // Chat completion
         [UsageEventType.Embedding] = 0.5m,              // Single embedding
@@ -169,12 +199,14 @@ public static class UsageCreditCosts
         UsageEventType.MemoryDecay => "memory_decay",
         UsageEventType.MemoryReinforce => "memory_reinforce",
         UsageEventType.MemoryExpire => "memory_expire",
+        UsageEventType.MemorySupersede => "memory_supersede",
         UsageEventType.CrawlRelationships => "crawl_relationships",
         UsageEventType.GetGraphStatistics => "get_graph_statistics",
         UsageEventType.ExportWorkspace => "export_workspace",
         UsageEventType.ExportMemories => "export_memories",
         UsageEventType.ExportGraph => "export_graph",
         UsageEventType.ExportUserProfile => "export_user_profile",
+        UsageEventType.ExportMarkdown => "export_markdown",
         UsageEventType.ReembedMemories => "reembed_memories",
         UsageEventType.GetModelInfo => "get_model_info",
         UsageEventType.MemoryAboutUser => "memory_about_user",
@@ -195,6 +227,14 @@ public static class UsageCreditCosts
         UsageEventType.EngineeringAnalyze => "engineering_analyze",
         UsageEventType.EngineeringVisualize => "engineering_visualize",
         UsageEventType.EngineeringReason => "engineering_reason",
+        UsageEventType.GetTools => "get_tools",
+        UsageEventType.UseTool => "use_tool",
+        UsageEventType.WorkspaceCreate => "workspace_create",
+        UsageEventType.WorkspaceList => "workspace_list",
+        UsageEventType.WorkspaceSwitch => "workspace_switch",
+        UsageEventType.SnapshotCreate => "snapshot_create",
+        UsageEventType.SnapshotList => "snapshot_list",
+        UsageEventType.SnapshotLoad => "snapshot_load",
         UsageEventType.LlmChat => "llm_chat",
         UsageEventType.Embedding => "embedding",
         UsageEventType.EntityExtraction => "entity_extraction",
@@ -213,12 +253,14 @@ public static class UsageCreditCosts
         "memory_decay" => UsageEventType.MemoryDecay,
         "memory_reinforce" => UsageEventType.MemoryReinforce,
         "memory_expire" => UsageEventType.MemoryExpire,
+        "memory_supersede" => UsageEventType.MemorySupersede,
         "crawl_relationships" => UsageEventType.CrawlRelationships,
         "get_graph_statistics" => UsageEventType.GetGraphStatistics,
         "export_workspace" => UsageEventType.ExportWorkspace,
         "export_memories" => UsageEventType.ExportMemories,
         "export_graph" => UsageEventType.ExportGraph,
         "export_user_profile" => UsageEventType.ExportUserProfile,
+        "export_markdown" => UsageEventType.ExportMarkdown,
         "reembed_memories" => UsageEventType.ReembedMemories,
         "get_model_info" => UsageEventType.GetModelInfo,
         "memory_about_user" => UsageEventType.MemoryAboutUser,
@@ -242,6 +284,14 @@ public static class UsageCreditCosts
         "llm_chat" => UsageEventType.LlmChat,
         "embedding" => UsageEventType.Embedding,
         "entity_extraction" => UsageEventType.EntityExtraction,
+        "get_tools" => UsageEventType.GetTools,
+        "use_tool" => UsageEventType.UseTool,
+        "workspace_create" => UsageEventType.WorkspaceCreate,
+        "workspace_list" => UsageEventType.WorkspaceList,
+        "workspace_switch" => UsageEventType.WorkspaceSwitch,
+        "snapshot_create" => UsageEventType.SnapshotCreate,
+        "snapshot_list" => UsageEventType.SnapshotList,
+        "snapshot_load" => UsageEventType.SnapshotLoad,
         _ => null
     };
 }
