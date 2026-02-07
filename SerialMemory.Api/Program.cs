@@ -4929,54 +4929,69 @@ app.MapGet("/api/integrity/scan-loops", async (
     var maxD = Math.Clamp(maxDepth ?? 10, 1, 20);
     var lim = Math.Clamp(limit ?? 50, 1, 200);
 
-    await using var conn = await dataSource.OpenConnectionAsync();
-    var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
-
-    // Get all memories with causal parents
-    var memoriesWithParents = await conn.QueryAsync<(Guid memory_id, Guid[] causal_parents)>(@"
-        SELECT id AS memory_id, causal_parents
-        FROM memories
-        WHERE tenant_id = @TenantId
-          AND causal_parents IS NOT NULL
-          AND array_length(causal_parents, 1) > 0
-        LIMIT @Limit",
-        new { TenantId = tenantId, Limit = lim * 10 });
-
-    var parentMap = new Dictionary<Guid, Guid[]>();
-    foreach (var m in memoriesWithParents)
+    try
     {
-        parentMap[m.memory_id] = m.causal_parents ?? Array.Empty<Guid>();
-    }
+        await using var conn = await dataSource.OpenConnectionAsync();
+        var tenantId = Guid.Parse(tenantContext.TenantId);
+        await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
 
-    var loops = new List<object>();
-    var visited = new HashSet<Guid>();
-    var recursionStack = new HashSet<Guid>();
+        // Get all memories with causal parents
+        var memoriesWithParents = await conn.QueryAsync<(Guid memory_id, Guid[] causal_parents)>(@"
+            SELECT id AS memory_id, causal_parents
+            FROM memories
+            WHERE tenant_id = @TenantId
+              AND causal_parents IS NOT NULL
+              AND array_length(causal_parents, 1) > 0
+            LIMIT @Limit",
+            new { TenantId = tenantId, Limit = lim * 10 });
 
-    foreach (var memoryId in parentMap.Keys)
-    {
-        if (loops.Count >= lim) break;
-
-        var path = new List<Guid>();
-        if (DetectCycleInGraph(memoryId, parentMap, visited, recursionStack, path, maxD))
+        var parentMap = new Dictionary<Guid, Guid[]>();
+        foreach (var m in memoriesWithParents)
         {
-            loops.Add(new { cycleMemoryIds = path.ToArray(), cycleLength = path.Count });
+            parentMap[m.memory_id] = m.causal_parents ?? Array.Empty<Guid>();
         }
 
-        visited.Clear();
-        recursionStack.Clear();
-    }
+        var loops = new List<object>();
+        var visited = new HashSet<Guid>();
+        var recursionStack = new HashSet<Guid>();
 
-    return Results.Ok(new
+        foreach (var memoryId in parentMap.Keys)
+        {
+            if (loops.Count >= lim) break;
+
+            var path = new List<Guid>();
+            if (DetectCycleInGraph(memoryId, parentMap, visited, recursionStack, path, maxD))
+            {
+                loops.Add(new { cycleMemoryIds = path.ToArray(), cycleLength = path.Count });
+            }
+
+            visited.Clear();
+            recursionStack.Clear();
+        }
+
+        return Results.Ok(new
+        {
+            maxDepth = maxD,
+            memoriesScanned = parentMap.Count,
+            loopsFound = loops.Count,
+            loops,
+            message = loops.Count == 0
+                ? "No causal loops detected. Graph is acyclic."
+                : $"Found {loops.Count} causal loop(s). Consider breaking cycles by invalidating one memory in each loop."
+        });
+    }
+    catch (Npgsql.PostgresException ex) when (ex.SqlState == "42703")
     {
-        maxDepth = maxD,
-        memoriesScanned = parentMap.Count,
-        loopsFound = loops.Count,
-        loops,
-        message = loops.Count == 0
-            ? "No causal loops detected. Graph is acyclic."
-            : $"Found {loops.Count} causal loop(s). Consider breaking cycles by invalidating one memory in each loop."
-    });
+        // causal_parents column not in schema (event-sourcing feature not migrated)
+        return Results.Ok(new
+        {
+            maxDepth = maxD,
+            memoriesScanned = 0,
+            loopsFound = 0,
+            loops = Array.Empty<object>(),
+            message = "Causal loop detection not available: event-sourcing schema not migrated."
+        });
+    }
 });
 
 // ============================================

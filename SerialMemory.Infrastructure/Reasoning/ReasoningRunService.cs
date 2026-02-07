@@ -3,6 +3,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 
@@ -118,7 +119,15 @@ public sealed class ReasoningRunService(
         using var conn = await connectionFactory.OpenInternalWithTenantAsync(execution.TenantId, cancellationToken);
 
         // Insert execution record as pending
-        await InsertExecutionAsync(conn, execution);
+        try
+        {
+            await InsertExecutionAsync(conn, execution);
+        }
+        catch (PostgresException ex) when (ex.SqlState == "42P01")
+        {
+            logger.LogWarning("Reasoning execution skipped: {Table} (schema not migrated)", ex.MessageText);
+            throw new InvalidOperationException("Reasoning execution tables not available. Run the reasoning schema migration first.");
+        }
 
         // Update to running
         execution.Status = ReasoningExecutionStatus.Running;

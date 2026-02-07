@@ -94,6 +94,13 @@ public sealed class AnalysisResultsRepository : IAnalysisResultsRepository
 
             return result.TraceId;
         }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P01")
+        {
+            // reasoning_results/reasoning_findings tables don't exist (feature not migrated)
+            await tx.RollbackAsync(ct);
+            _logger.LogWarning("Analysis results storage not available: {Table} table does not exist", ex.MessageText);
+            return result.TraceId;
+        }
         catch (Exception ex)
         {
             await tx.RollbackAsync(ct);
@@ -104,35 +111,45 @@ public sealed class AnalysisResultsRepository : IAnalysisResultsRepository
 
     public async Task<IReadOnlyList<AnalysisTrace>> GetRecentTracesAsync(int limit = 20, CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
 
-        const string sql = """
-            SELECT
-                r.id AS Id,
-                r.started_at AS StartedAt,
-                r.completed_at AS CompletedAt,
-                r.duration_ms AS DurationMs,
-                r.directory AS Directory,
-                r.files_analyzed AS FilesAnalyzed,
-                r.findings_count AS FindingsCount,
-                r.status AS Status,
-                COUNT(CASE WHEN f.severity = 'Critical' THEN 1 END) AS CriticalCount,
-                COUNT(CASE WHEN f.severity = 'High' THEN 1 END) AS HighCount,
-                COUNT(CASE WHEN f.severity = 'Medium' THEN 1 END) AS MediumCount,
-                COUNT(CASE WHEN f.severity = 'Low' THEN 1 END) AS LowCount
-            FROM reasoning_results r
-            LEFT JOIN reasoning_findings f ON f.trace_id = r.id
-            GROUP BY r.id, r.started_at, r.completed_at, r.duration_ms, r.directory, r.files_analyzed, r.findings_count, r.status
-            ORDER BY r.started_at DESC
-            LIMIT @Limit
-            """;
+            const string sql = """
+                SELECT
+                    r.id AS Id,
+                    r.started_at AS StartedAt,
+                    r.completed_at AS CompletedAt,
+                    r.duration_ms AS DurationMs,
+                    r.directory AS Directory,
+                    r.files_analyzed AS FilesAnalyzed,
+                    r.findings_count AS FindingsCount,
+                    r.status AS Status,
+                    COUNT(CASE WHEN f.severity = 'Critical' THEN 1 END) AS CriticalCount,
+                    COUNT(CASE WHEN f.severity = 'High' THEN 1 END) AS HighCount,
+                    COUNT(CASE WHEN f.severity = 'Medium' THEN 1 END) AS MediumCount,
+                    COUNT(CASE WHEN f.severity = 'Low' THEN 1 END) AS LowCount
+                FROM reasoning_results r
+                LEFT JOIN reasoning_findings f ON f.trace_id = r.id
+                GROUP BY r.id, r.started_at, r.completed_at, r.duration_ms, r.directory, r.files_analyzed, r.findings_count, r.status
+                ORDER BY r.started_at DESC
+                LIMIT @Limit
+                """;
 
-        var traces = await conn.QueryAsync<AnalysisTrace>(sql, new { Limit = limit });
-        return traces.ToList();
+            var traces = await conn.QueryAsync<AnalysisTrace>(sql, new { Limit = limit });
+            return traces.ToList();
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P01")
+        {
+            _logger.LogWarning("Analysis traces not available: reasoning tables not migrated");
+            return [];
+        }
     }
 
     public async Task<CodeAnalysisResult?> GetTraceByIdAsync(Guid traceId, CancellationToken ct = default)
     {
+        try
+        {
         await using var conn = new NpgsqlConnection(_connectionString);
 
         const string traceSql = """
@@ -178,29 +195,43 @@ public sealed class AnalysisResultsRepository : IAnalysisResultsRepository
         trace.Findings = findings.ToList();
 
         return trace;
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P01")
+        {
+            _logger.LogWarning("Analysis trace not available: reasoning tables not migrated");
+            return null;
+        }
     }
 
     public async Task<AnalysisStats> GetStatsAsync(CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(_connectionString);
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
 
-        const string sql = """
-            SELECT
-                COUNT(DISTINCT r.id) AS TotalTraces,
-                COALESCE(AVG(r.duration_ms), 0) AS AvgDurationMs,
-                COALESCE(SUM(r.findings_count), 0) AS TotalFindings,
-                COUNT(CASE WHEN f.severity = 'Critical' THEN 1 END) AS CriticalFindings,
-                COUNT(CASE WHEN f.severity = 'High' THEN 1 END) AS HighFindings,
-                COUNT(CASE WHEN f.type = 'SQL_INJECTION' THEN 1 END) AS SqlInjectionCount,
-                COUNT(CASE WHEN f.type = 'MISSING_TRY_CATCH' THEN 1 END) AS MissingTryCatchCount,
-                COUNT(CASE WHEN f.type = 'EF_CORE_N_PLUS_ONE' THEN 1 END) AS NPlusOneCount,
-                MAX(r.started_at) AS LastRunAt
-            FROM reasoning_results r
-            LEFT JOIN reasoning_findings f ON f.trace_id = r.id
-            """;
+            const string sql = """
+                SELECT
+                    COUNT(DISTINCT r.id) AS TotalTraces,
+                    COALESCE(AVG(r.duration_ms), 0) AS AvgDurationMs,
+                    COALESCE(SUM(r.findings_count), 0) AS TotalFindings,
+                    COUNT(CASE WHEN f.severity = 'Critical' THEN 1 END) AS CriticalFindings,
+                    COUNT(CASE WHEN f.severity = 'High' THEN 1 END) AS HighFindings,
+                    COUNT(CASE WHEN f.type = 'SQL_INJECTION' THEN 1 END) AS SqlInjectionCount,
+                    COUNT(CASE WHEN f.type = 'MISSING_TRY_CATCH' THEN 1 END) AS MissingTryCatchCount,
+                    COUNT(CASE WHEN f.type = 'EF_CORE_N_PLUS_ONE' THEN 1 END) AS NPlusOneCount,
+                    MAX(r.started_at) AS LastRunAt
+                FROM reasoning_results r
+                LEFT JOIN reasoning_findings f ON f.trace_id = r.id
+                """;
 
-        var stats = await conn.QuerySingleAsync<AnalysisStats>(sql);
-        return stats;
+            var stats = await conn.QuerySingleAsync<AnalysisStats>(sql);
+            return stats;
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P01")
+        {
+            _logger.LogWarning("Analysis stats not available: reasoning tables not migrated");
+            return new AnalysisStats();
+        }
     }
 }
 

@@ -115,17 +115,36 @@ public sealed class DecayJobWorker : BackgroundService
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
 
-        // Get memories needing decay
-        var memoriesNeedingDecay = (await conn.QueryAsync<(Guid Id, float Confidence, int HalfLifeDays, DateTimeOffset LastReinforced)>(
-            """
-            SELECT id, confidence_score, half_life_days, last_reinforced_at
-            FROM memories
-            WHERE is_active = TRUE
-                AND confidence_score > @MinConfidence
-                AND last_reinforced_at < NOW() - @DaysThreshold * INTERVAL '1 day'
-            LIMIT @BatchSize
-            """,
-            new { job.MinConfidence, job.DaysThreshold, job.BatchSize })).ToList();
+        // Get memories needing decay (requires event-sourcing columns)
+        List<(Guid Id, float Confidence, int HalfLifeDays, DateTimeOffset LastReinforced)> memoriesNeedingDecay;
+        try
+        {
+            memoriesNeedingDecay = (await conn.QueryAsync<(Guid Id, float Confidence, int HalfLifeDays, DateTimeOffset LastReinforced)>(
+                """
+                SELECT id, confidence_score, half_life_days, last_reinforced_at
+                FROM memories
+                WHERE is_active = TRUE
+                    AND confidence_score > @MinConfidence
+                    AND last_reinforced_at < NOW() - @DaysThreshold * INTERVAL '1 day'
+                LIMIT @BatchSize
+                """,
+                new { job.MinConfidence, job.DaysThreshold, job.BatchSize })).ToList();
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState is "42703" or "42P01")
+        {
+            // Event-sourcing columns (half_life_days, confidence_score, etc.) not in schema
+            _logger.LogWarning("Decay job skipped: event-sourcing schema not migrated ({Column})", ex.MessageText);
+
+            await _liveEventEmitter.EmitJobCompletedAsync(new JobCompletedEvent
+            {
+                JobId = job.JobId,
+                JobType = "decay",
+                Status = "skipped",
+                TenantId = job.TenantId,
+                ErrorMessage = "Event-sourcing schema not available"
+            });
+            return;
+        }
 
         var totalItems = memoriesNeedingDecay.Count;
 

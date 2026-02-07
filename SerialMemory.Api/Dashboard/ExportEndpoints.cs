@@ -30,18 +30,36 @@ public static class ExportEndpoints
             await using var conn = await dataSource.OpenConnectionAsync(ct);
             await conn.SetInternalAdminWithTenantAsync(tenantId);
 
-            var stats = await conn.QueryFirstOrDefaultAsync<ExportStatsDto>(
-                """
-                SELECT
-                    (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND is_active = true) AS active_memories,
-                    (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId) AS total_entities,
-                    (SELECT COUNT(*) FROM entity_relationships WHERE tenant_id = @TenantId) AS total_relationships,
-                    (SELECT MAX(created_at) FROM exports WHERE tenant_id = @TenantId AND status = 'completed') AS last_export_at,
-                    (SELECT COUNT(*) FROM exports WHERE tenant_id = @TenantId) AS total_exports
-                """,
-                new { TenantId = tenantId });
+            try
+            {
+                var stats = await conn.QueryFirstOrDefaultAsync<ExportStatsDto>(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId) AS active_memories,
+                        (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId) AS total_entities,
+                        (SELECT COUNT(*) FROM entity_relationships WHERE tenant_id = @TenantId) AS total_relationships,
+                        (SELECT MAX(created_at) FROM exports WHERE tenant_id = @TenantId AND status = 'completed') AS last_export_at,
+                        (SELECT COUNT(*) FROM exports WHERE tenant_id = @TenantId) AS total_exports
+                    """,
+                    new { TenantId = tenantId });
 
-            return Results.Ok(stats ?? new ExportStatsDto());
+                return Results.Ok(stats ?? new ExportStatsDto());
+            }
+            catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+            {
+                // exports table or is_active column may not exist
+                var fallback = await conn.QueryFirstOrDefaultAsync<ExportStatsDto>(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId) AS active_memories,
+                        (SELECT COUNT(*) FROM entities WHERE tenant_id = @TenantId) AS total_entities,
+                        (SELECT COUNT(*) FROM entity_relationships WHERE tenant_id = @TenantId) AS total_relationships,
+                        NULL::timestamptz AS last_export_at,
+                        0 AS total_exports
+                    """,
+                    new { TenantId = tenantId });
+                return Results.Ok(fallback ?? new ExportStatsDto());
+            }
         })
         .WithName("GetExportStats")
         .WithDescription("Get export overview statistics")
@@ -174,17 +192,24 @@ public static class ExportEndpoints
             await using var conn = await dataSource.OpenConnectionAsync(ct);
             await conn.SetInternalAdminWithTenantAsync(tenantId);
 
-            var exports = await conn.QueryAsync<ExportHistoryDto>(
-                """
-                SELECT id, format, status, file_size_bytes, options, created_at, completed_at, error_message
-                FROM exports
-                WHERE tenant_id = @TenantId
-                ORDER BY created_at DESC
-                LIMIT @Limit
-                """,
-                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
+            try
+            {
+                var exports = await conn.QueryAsync<ExportHistoryDto>(
+                    """
+                    SELECT id, format, status, file_size_bytes, options, created_at, completed_at, error_message
+                    FROM exports
+                    WHERE tenant_id = @TenantId
+                    ORDER BY created_at DESC
+                    LIMIT @Limit
+                    """,
+                    new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
-            return Results.Ok(new { exports = exports.ToList() });
+                return Results.Ok(new { exports = exports.ToList() });
+            }
+            catch (PostgresException ex) when (ex.SqlState == "42P01")
+            {
+                return Results.Ok(new { exports = Array.Empty<ExportHistoryDto>() });
+            }
         })
         .WithName("GetExportHistory")
         .WithDescription("Get recent export history")
@@ -234,18 +259,15 @@ public static class ExportEndpoints
 
     private static async Task<object> BuildExportAsync(System.Data.IDbConnection conn, Guid tenantId, TriggerExportRequest request)
     {
-        var activeFilter = request.ActiveOnly ? "AND is_active = true" : "";
-        var confidenceFilter = request.MinConfidence > 0 ? "AND confidence >= @MinConfidence" : "";
-
         var memories = await conn.QueryAsync<dynamic>(
-            $"""
-            SELECT id, content, layer, confidence, source, created_at, updated_at, metadata
+            """
+            SELECT id, content, source, created_at, updated_at, metadata
             FROM memories
-            WHERE tenant_id = @TenantId {activeFilter} {confidenceFilter}
+            WHERE tenant_id = @TenantId
             ORDER BY created_at DESC
             LIMIT 50000
             """,
-            new { TenantId = tenantId, MinConfidence = request.MinConfidence });
+            new { TenantId = tenantId });
 
         object? entities = null;
         object? relationships = null;

@@ -288,6 +288,9 @@ public sealed class IntegrityAuditService(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
+        // Must set tenant context to bypass RLS (prevents UUID cast error on empty app.tenant_id)
+        await conn.SetInternalAdminWithTenantAsync(_tenantId);
+
         var enabled = await conn.ExecuteScalarAsync<bool?>(@"
             SELECT enable_audit_logs FROM tenant_privacy_settings WHERE tenant_id = @TenantId",
             new { TenantId = _tenantId });
