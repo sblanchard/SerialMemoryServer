@@ -63,8 +63,8 @@ public sealed class IntegrityWorker(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
-        // Set internal admin role to bypass RLS for cross-tenant access
-        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+        // Set internal admin role and a valid tenant_id to bypass RLS
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
 
         // Get distinct tenants with unhashed memories
         var tenants = await conn.QueryAsync<Guid>(@"
@@ -91,7 +91,7 @@ public sealed class IntegrityWorker(
         {
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
-            await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+            await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = @TenantId::text", new { TenantId = tenantId });
             await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId)", new { TenantId = tenantId });
 
             // Get unhashed memories in chronological order
@@ -199,8 +199,8 @@ public sealed class IntegrityWorker(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
 
-        // Set internal admin role to bypass RLS for cross-tenant access
-        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+        // Set internal admin role and a valid tenant_id to bypass RLS
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = '00000000-0000-0000-0000-000000000000'");
 
         // Get tenants with hash verification enabled
         var tenants = await conn.QueryAsync<Guid>(@"
@@ -231,7 +231,7 @@ public sealed class IntegrityWorker(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync("SET app.role = 'internal_admin'");
+        await conn.ExecuteAsync("SET app.role = 'internal_admin'; SET app.tenant_id = @TenantId::text", new { TenantId = tenantId });
         await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId)", new { TenantId = tenantId });
 
         // Check settings
