@@ -29,6 +29,10 @@ public sealed class MemoryObservabilityTools
         _logger = logger;
     }
 
+    private const string EventSourcingNotAvailable =
+        "Event-sourcing schema not available. This tool requires the memory_events table. " +
+        "Run eventsourcing_schema.sql migration to enable this feature.";
+
     /// <summary>
     /// memory_trace - Get complete event history for a memory.
     /// </summary>
@@ -40,40 +44,48 @@ public sealed class MemoryObservabilityTools
 
         var includePayloads = arguments?["include_payloads"]?.GetValue<bool>() ?? false;
 
-        // Read all events for this stream
-        var events = await _eventStore.ReadStreamAsync(memoryId);
-
-        if (events.Count == 0)
-            return CreateErrorResponse($"Memory {memoryId} not found");
-
-        var traceLines = new List<string>
+        try
         {
-            $"## Memory Trace: {memoryId}",
-            $"Total Events: {events.Count}",
-            ""
-        };
+            // Read all events for this stream
+            var events = await _eventStore.ReadStreamAsync(memoryId);
 
-        foreach (var evt in events.OrderBy(e => e.EventVersion))
-        {
-            traceLines.Add($"### Event {evt.EventVersion}: {evt.EventType}");
-            traceLines.Add($"- Event ID: {evt.EventId}");
-            traceLines.Add($"- Timestamp: {evt.CreatedAt:O}");
-            traceLines.Add($"- Created By: {evt.CreatedBy ?? "N/A"}");
-            traceLines.Add($"- Content Hash: {evt.ContentHash}");
+            if (events.Count == 0)
+                return CreateErrorResponse($"Memory {memoryId} not found");
 
-            if (includePayloads)
+            var traceLines = new List<string>
             {
-                traceLines.Add($"- Payload:");
-                var payloadSummary = GetEventPayloadSummary(evt);
-                traceLines.Add($"  ```");
-                traceLines.Add($"  {payloadSummary}");
-                traceLines.Add($"  ```");
+                $"## Memory Trace: {memoryId}",
+                $"Total Events: {events.Count}",
+                ""
+            };
+
+            foreach (var evt in events.OrderBy(e => e.EventVersion))
+            {
+                traceLines.Add($"### Event {evt.EventVersion}: {evt.EventType}");
+                traceLines.Add($"- Event ID: {evt.EventId}");
+                traceLines.Add($"- Timestamp: {evt.CreatedAt:O}");
+                traceLines.Add($"- Created By: {evt.CreatedBy ?? "N/A"}");
+                traceLines.Add($"- Content Hash: {evt.ContentHash}");
+
+                if (includePayloads)
+                {
+                    traceLines.Add($"- Payload:");
+                    var payloadSummary = GetEventPayloadSummary(evt);
+                    traceLines.Add($"  ```");
+                    traceLines.Add($"  {payloadSummary}");
+                    traceLines.Add($"  ```");
+                }
+
+                traceLines.Add("");
             }
 
-            traceLines.Add("");
+            return CreateTextResponse(string.Join("\n", traceLines));
         }
-
-        return CreateTextResponse(string.Join("\n", traceLines));
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("memory_trace skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(EventSourcingNotAvailable);
+        }
     }
 
     /// <summary>
@@ -88,71 +100,77 @@ public sealed class MemoryObservabilityTools
         var maxDepth = Math.Clamp(arguments?["max_depth"]?.GetValue<int>() ?? 5, 1, 10);
         var direction = arguments?["direction"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "ancestors";
 
-        var visited = new HashSet<Guid>();
-        var lineage = new List<(Guid Id, int Depth, string Direction)>();
-
-        if (direction == "ancestors" || direction == "both")
+        try
         {
-            await TraceAncestors(memoryId, 0, maxDepth, visited, lineage);
-        }
+            var visited = new HashSet<Guid>();
+            var lineage = new List<(Guid Id, int Depth, string Direction)>();
 
-        if (direction == "descendants" || direction == "both")
-        {
-            visited.Clear();
-            await TraceDescendants(memoryId, 0, maxDepth, visited, lineage);
-        }
-
-        // Build response
-        var responseLines = new List<string>
-        {
-            $"## Memory Lineage: {memoryId}",
-            $"Direction: {direction}",
-            $"Max Depth: {maxDepth}",
-            $"Nodes Found: {lineage.Count}",
-            ""
-        };
-
-        // Build tree structure
-        var ancestors = lineage.Where(l => l.Direction == "ancestor").OrderByDescending(l => l.Depth).ToList();
-        var descendants = lineage.Where(l => l.Direction == "descendant").OrderBy(l => l.Depth).ToList();
-
-        if (ancestors.Count > 0)
-        {
-            responseLines.Add("### Ancestors (parents/grandparents):");
-            foreach (var (id, depth, _) in ancestors)
+            if (direction == "ancestors" || direction == "both")
             {
-                var indent = new string(' ', (maxDepth - depth) * 2);
-                var events = await _eventStore.ReadStreamAsync(id);
-                var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
-                responseLines.Add($"{indent}└─ [{depth}] {id}");
-                responseLines.Add($"{indent}   {summary}");
+                await TraceAncestors(memoryId, 0, maxDepth, visited, lineage);
+            }
+
+            if (direction == "descendants" || direction == "both")
+            {
+                visited.Clear();
+                await TraceDescendants(memoryId, 0, maxDepth, visited, lineage);
+            }
+
+            var responseLines = new List<string>
+            {
+                $"## Memory Lineage: {memoryId}",
+                $"Direction: {direction}",
+                $"Max Depth: {maxDepth}",
+                $"Nodes Found: {lineage.Count}",
+                ""
+            };
+
+            var ancestors = lineage.Where(l => l.Direction == "ancestor").OrderByDescending(l => l.Depth).ToList();
+            var descendants = lineage.Where(l => l.Direction == "descendant").OrderBy(l => l.Depth).ToList();
+
+            if (ancestors.Count > 0)
+            {
+                responseLines.Add("### Ancestors (parents/grandparents):");
+                foreach (var (id, depth, _) in ancestors)
+                {
+                    var indent = new string(' ', (maxDepth - depth) * 2);
+                    var events = await _eventStore.ReadStreamAsync(id);
+                    var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
+                    responseLines.Add($"{indent}└─ [{depth}] {id}");
+                    responseLines.Add($"{indent}   {summary}");
+                }
+                responseLines.Add("");
+            }
+
+            responseLines.Add($"### Current Memory:");
+            responseLines.Add($"   ★ {memoryId}");
+            var currentEvents = await _eventStore.ReadStreamAsync(memoryId);
+            if (currentEvents.Count > 0)
+            {
+                responseLines.Add($"     {GetMemorySummary(currentEvents)}");
             }
             responseLines.Add("");
-        }
 
-        responseLines.Add($"### Current Memory:");
-        responseLines.Add($"   ★ {memoryId}");
-        var currentEvents = await _eventStore.ReadStreamAsync(memoryId);
-        if (currentEvents.Count > 0)
-        {
-            responseLines.Add($"     {GetMemorySummary(currentEvents)}");
-        }
-        responseLines.Add("");
-
-        if (descendants.Count > 0)
-        {
-            responseLines.Add("### Descendants (children/grandchildren):");
-            foreach (var (id, depth, _) in descendants)
+            if (descendants.Count > 0)
             {
-                var indent = new string(' ', depth * 2);
-                var events = await _eventStore.ReadStreamAsync(id);
-                var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
-                responseLines.Add($"{indent}└─ [{depth}] {id}");
-                responseLines.Add($"{indent}   {summary}");
+                responseLines.Add("### Descendants (children/grandchildren):");
+                foreach (var (id, depth, _) in descendants)
+                {
+                    var indent = new string(' ', depth * 2);
+                    var events = await _eventStore.ReadStreamAsync(id);
+                    var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
+                    responseLines.Add($"{indent}└─ [{depth}] {id}");
+                    responseLines.Add($"{indent}   {summary}");
+                }
             }
-        }
 
-        return CreateTextResponse(string.Join("\n", responseLines));
+            return CreateTextResponse(string.Join("\n", responseLines));
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("memory_lineage skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(EventSourcingNotAvailable);
+        }
     }
 
     /// <summary>
@@ -164,6 +182,8 @@ public sealed class MemoryObservabilityTools
         if (string.IsNullOrEmpty(memoryIdStr) || !Guid.TryParse(memoryIdStr, out var memoryId))
             throw new ArgumentException("Valid memory_id is required");
 
+        try
+        {
         // Load aggregate
         var events = await _eventStore.ReadStreamAsync(memoryId);
         if (events.Count == 0)
@@ -249,6 +269,12 @@ public sealed class MemoryObservabilityTools
         }
 
         return CreateTextResponse(string.Join("\n", explanation));
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("memory_explain skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(EventSourcingNotAvailable);
+        }
     }
 
     /// <summary>

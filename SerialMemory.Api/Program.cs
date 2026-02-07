@@ -459,6 +459,29 @@ builder.Services.AddApiKeyAuth();
 
 var app = builder.Build();
 
+// Manual CORS preflight handler - must be FIRST middleware.
+// The built-in UseCors() middleware does not reliably intercept OPTIONS in .NET 10
+// with implicit UseRouting(), so we handle preflight explicitly.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Method == "OPTIONS" && context.Request.Headers.ContainsKey("Origin"))
+    {
+        var origin = context.Request.Headers.Origin.ToString();
+        context.Response.Headers.Append("Access-Control-Allow-Origin", origin);
+        context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Requested-With, X-SignalR-User-Agent");
+        context.Response.Headers.Append("Access-Control-Allow-Credentials", "true");
+        context.Response.Headers.Append("Access-Control-Max-Age", "86400");
+        context.Response.StatusCode = 204;
+        return;
+    }
+
+    await next();
+});
+
+// Standard CORS middleware for non-preflight requests (adds headers to normal responses)
+app.UseCors();
+
 // Panic Switch Middleware - must be early to block requests
 app.Use(async (context, next) =>
 {
@@ -478,8 +501,6 @@ app.Use(async (context, next) =>
 
     await next();
 });
-
-app.UseCors();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -534,7 +555,11 @@ app.MapDashboardEndpoints();
 var healthService = new HealthCheckService(operationalConfig, "2.1.0", Environment.GetEnvironmentVariable("ENVIRONMENT") ?? "development");
 healthService.AddCheck(new LivenessCheck());
 healthService.AddCheck(new DatabaseHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
-healthService.AddCheck(new RlsHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
+// RLS guardrail check is only relevant for multi-tenant SaaS mode
+if (!deploymentContext.IsSelfHosted)
+{
+    healthService.AddCheck(new RlsHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
+}
 
 // Liveness probe - is the process running?
 app.MapGet("/health/live", async () =>

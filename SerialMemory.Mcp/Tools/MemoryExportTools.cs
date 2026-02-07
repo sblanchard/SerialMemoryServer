@@ -17,6 +17,10 @@ namespace SerialMemory.Mcp.Tools;
 /// </summary>
 public sealed class MemoryExportTools
 {
+    private const string ExportSchemaNotAvailable =
+        "Export schema not available. Some tables required for export may not exist. " +
+        "Run eventsourcing_schema.sql and migrate_workspace_scoping.sql migrations.";
+
     private readonly IEventStore _eventStore;
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger _logger;
@@ -56,6 +60,8 @@ public sealed class MemoryExportTools
         if (encrypt && string.IsNullOrEmpty(encryptionKey))
             throw new ArgumentException("encryption_key required when encrypt is true");
 
+        try
+        {
         await using var conn = await _dataSource.OpenConnectionAsync();
         await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
@@ -223,6 +229,12 @@ public sealed class MemoryExportTools
             $"- **Relationships**: {export.Relationships.Count}\n" +
             $"- **User Personas**: {export.UserPersonas.Count}\n" +
             $"- **Events**: {export.Events?.Count ?? 0}");
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("export_workspace skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(ExportSchemaNotAvailable);
+        }
     }
 
     /// <summary>
@@ -241,6 +253,8 @@ public sealed class MemoryExportTools
         var limit = Math.Clamp(arguments?["limit"]?.GetValue<int>() ?? 10000, 1, 100000);
         var format = arguments?["format"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "json";
 
+        try
+        {
         await using var conn = await _dataSource.OpenConnectionAsync();
         await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
@@ -332,6 +346,12 @@ public sealed class MemoryExportTools
             (minConfidence > 0 ? $"  - Min Confidence: {minConfidence:F2}\n" : "") +
             (fromDate != null ? $"  - From Date: {fromDate}\n" : "") +
             (toDate != null ? $"  - To Date: {toDate}\n" : ""));
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("export_memories skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(ExportSchemaNotAvailable);
+        }
     }
 
     /// <summary>
@@ -346,6 +366,8 @@ public sealed class MemoryExportTools
         var format = arguments?["format"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "json";
         var includeIsolated = arguments?["include_isolated"]?.GetValue<bool>() ?? false;
 
+        try
+        {
         await using var conn = await _dataSource.OpenConnectionAsync();
         await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
@@ -478,6 +500,12 @@ public sealed class MemoryExportTools
             $"- **Nodes (Entities)**: {entities.Count}\n" +
             $"- **Edges (Relationships)**: {relationships.Count}\n" +
             $"- **Include Isolated**: {includeIsolated}");
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("export_graph skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(ExportSchemaNotAvailable);
+        }
     }
 
     /// <summary>
@@ -492,6 +520,8 @@ public sealed class MemoryExportTools
 
         var includeInteractions = arguments?["include_interactions"]?.GetValue<bool>() ?? false;
 
+        try
+        {
         await using var conn = await _dataSource.OpenConnectionAsync();
         await conn.SetInternalAdminWithTenantAsync(Guid.Parse("00000000-0000-0000-0000-000000000000"));
 
@@ -566,6 +596,12 @@ public sealed class MemoryExportTools
             $"  - Average Confidence: {(memoryStats?.avg_confidence != null ? ((decimal)memoryStats.avg_confidence).ToString("F3") : "N/A")}\n" +
             $"  - Total Recalls: {memoryStats?.total_recalls ?? 0}\n" +
             (includeInteractions ? "- **Interactions**: Included\n" : ""));
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("export_user_profile skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(ExportSchemaNotAvailable);
+        }
     }
 
     /// <summary>
@@ -583,6 +619,8 @@ public sealed class MemoryExportTools
         var minConfidence = arguments?["min_confidence"]?.GetValue<float>() ?? 0f;
         var groupBy = arguments?["group_by"]?.GetValue<string>()?.Trim()?.ToLowerInvariant() ?? "month";
 
+        try
+        {
         await using var conn = await _dataSource.OpenConnectionAsync();
 
         // Set tenant context for RLS (use self-hosted default tenant)
@@ -972,6 +1010,12 @@ public sealed class MemoryExportTools
             $"- **Relationships**: {relationships.Count}\n" +
             $"- **Group By**: {groupBy}\n\n" +
             $"Open `{outputPath}` in Obsidian to browse with graph view and wikilinks.");
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+        {
+            _logger.LogWarning("export_markdown skipped: {Message}", ex.MessageText);
+            return CreateErrorResponse(ExportSchemaNotAvailable);
+        }
     }
 
     private static string SanitizeFileName(string name)
@@ -1069,6 +1113,16 @@ public sealed class MemoryExportTools
             {
                 new { type = "text", text }
             }
+        };
+
+    private static object CreateErrorResponse(string message) =>
+        new
+        {
+            content = new[]
+            {
+                new { type = "text", text = $"Error: {message}" }
+            },
+            isError = true
         };
 
     #region Export Models

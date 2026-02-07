@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Models;
 
@@ -170,59 +171,67 @@ public sealed class EngineeringReasoningTools(
         logger.LogInformation("Visualization requested. MemoryId: {MemoryId}, Project: {Project}, Mode: {Mode}",
             memoryIdStr, project, mode);
 
-        GraphVisualizationResult result;
+        try
+        {
+            GraphVisualizationResult result;
 
-        if (!string.IsNullOrEmpty(memoryIdStr) && Guid.TryParse(memoryIdStr, out var memoryId))
-        {
-            result = await visualizationService.GenerateMemoryVisualizationAsync(memoryId, mode, includeOverlays);
-        }
-        else
-        {
-            result = await visualizationService.GenerateVisualizationAsync(mode, project, includeOverlays);
-        }
-
-        // Return JSON for react-force-graph consumption
-        var jsonResult = new
-        {
-            nodes = result.Nodes.Select(n => new
+            if (!string.IsNullOrEmpty(memoryIdStr) && Guid.TryParse(memoryIdStr, out var memoryId))
             {
-                id = n.Id.ToString(),
-                label = n.Label,
-                type = n.Type,
-                category = n.Category
-            }),
-            links = result.Links.Select(l => new
-            {
-                source = l.Source.ToString(),
-                target = l.Target.ToString(),
-                type = l.Type,
-                category = l.Category,
-                weight = l.Weight
-            }),
-            overlays = result.Overlays.Select(o => new
-            {
-                entityId = o.EntityId.ToString(),
-                type = o.Type,
-                message = o.Message,
-                confidence = o.Confidence
-            }),
-            mode = result.Mode.ToString().ToLowerInvariant(),
-            generatedAt = result.GeneratedAt.ToString("O"),
-            summary = new
-            {
-                totalNodes = result.TotalNodes,
-                totalLinks = result.TotalLinks,
-                totalOverlays = result.TotalOverlays
+                result = await visualizationService.GenerateMemoryVisualizationAsync(memoryId, mode, includeOverlays);
             }
-        };
+            else
+            {
+                result = await visualizationService.GenerateVisualizationAsync(mode, project, includeOverlays);
+            }
 
-        var jsonOptions = new JsonSerializerOptions
+            // Return JSON for react-force-graph consumption
+            var jsonResult = new
+            {
+                nodes = result.Nodes.Select(n => new
+                {
+                    id = n.Id.ToString(),
+                    label = n.Label,
+                    type = n.Type,
+                    category = n.Category
+                }),
+                links = result.Links.Select(l => new
+                {
+                    source = l.Source.ToString(),
+                    target = l.Target.ToString(),
+                    type = l.Type,
+                    category = l.Category,
+                    weight = l.Weight
+                }),
+                overlays = result.Overlays.Select(o => new
+                {
+                    entityId = o.EntityId.ToString(),
+                    type = o.Type,
+                    message = o.Message,
+                    confidence = o.Confidence
+                }),
+                mode = result.Mode.ToString().ToLowerInvariant(),
+                generatedAt = result.GeneratedAt.ToString("O"),
+                summary = new
+                {
+                    totalNodes = result.TotalNodes,
+                    totalLinks = result.TotalLinks,
+                    totalOverlays = result.TotalOverlays
+                }
+            };
+
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            };
+
+            return CreateJsonResponse(JsonSerializer.Serialize(jsonResult, jsonOptions));
+        }
+        catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        };
-
-        return CreateJsonResponse(JsonSerializer.Serialize(jsonResult, jsonOptions));
+            logger.LogWarning("engineering_visualize skipped: {Message}", ex.MessageText);
+            return CreateTextResponse("Error: Visualization schema not available. Required database tables are missing.");
+        }
     }
 
     private static object CreateJsonResponse(string json)

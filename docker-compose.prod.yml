@@ -61,6 +61,10 @@ services:
       - ./ops/llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm-settings.sql:ro
       - ./ops/classification_schema.sql:/docker-entrypoint-initdb.d/12-classification.sql:ro
       - ./ops/fix_memories_columns.sql:/docker-entrypoint-initdb.d/13-fix-memories-columns.sql:ro
+      - ./ops/migrate_workspace_scoping.sql:/docker-entrypoint-initdb.d/13b-workspace-scoping.sql:ro
+      - ./ops/rag_l2_embeddings_schema.sql:/docker-entrypoint-initdb.d/13c-rag-l2-embeddings.sql:ro
+      - ./ops/migrations/fix_workspace_rls_policies.sql:/docker-entrypoint-initdb.d/13d-workspace-rls-fix.sql:ro
+      - ./ops/migrations/fix_complete_layer_classification_fk.sql:/docker-entrypoint-initdb.d/13e-classification-fk-fix.sql:ro
       - ./ops/email_verification_schema.sql:/docker-entrypoint-initdb.d/14-email-verification.sql:ro
       - ./ops/shadow_memory_schema.sql:/docker-entrypoint-initdb.d/15-shadow-memory.sql:ro
       - ./ops/migrations/20251201_comprehensive_fixes_v1.sql:/docker-entrypoint-initdb.d/16-comprehensive-fixes.sql:ro
@@ -262,6 +266,26 @@ services:
       - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
+  # Graph Viewer (Knowledge Graph Web UI)
+  # ---------------------------------------------------------------------------
+  graph-viewer:
+    build:
+      context: SerialMemory.Web
+      dockerfile: Dockerfile
+    container_name: serialmemory-graph-viewer
+    ports:
+      - "${GRAPH_VIEWER_PORT:-5003}:80"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
   # Worker (Background Processing)
   # ---------------------------------------------------------------------------
   worker:
@@ -314,6 +338,7 @@ services:
         condition: service_healthy
     networks:
       - internal
+      - external
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
