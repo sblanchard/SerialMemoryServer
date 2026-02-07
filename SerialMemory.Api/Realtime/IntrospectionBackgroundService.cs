@@ -310,10 +310,10 @@ public sealed class IntrospectionBackgroundService : BackgroundService
 
             -- Issues counts (24h)
             SELECT
-                COUNT(*) FILTER (WHERE status IN ('fail', 'warning', 'error')) AS issues_detected,
+                COUNT(*) FILTER (WHERE severity IN ('Warning', 'Error', 'Critical')) AS issues_detected,
                 0 AS issues_resolved
             FROM security_events
-            WHERE created_at > NOW() - INTERVAL '24 hours';
+            WHERE occurred_at > NOW() - INTERVAL '24 hours';
 
             -- Active scans
             SELECT
@@ -332,22 +332,18 @@ public sealed class IntrospectionBackgroundService : BackgroundService
 
             -- Recent issues
             SELECT
-                id AS issue_id,
+                event_id AS issue_id,
                 event_type AS issue_type,
-                CASE
-                    WHEN status = 'fail' THEN 'Critical'
-                    WHEN status = 'warning' THEN 'Warning'
-                    ELSE 'Info'
-                END AS severity,
-                COALESCE(details->>'message', event_type) AS description,
-                target_id,
-                target_type,
-                created_at AS detected_at,
+                severity,
+                COALESCE(message, event_type::text) AS description,
+                memory_id AS target_id,
+                'memory' AS target_type,
+                occurred_at AS detected_at,
                 FALSE AS resolved
             FROM security_events
-            WHERE status IN ('fail', 'warning', 'error')
-            AND created_at > NOW() - INTERVAL '24 hours'
-            ORDER BY created_at DESC
+            WHERE severity IN ('Warning', 'Error', 'Critical')
+            AND occurred_at > NOW() - INTERVAL '24 hours'
+            ORDER BY occurred_at DESC
             LIMIT 10;
         ";
 

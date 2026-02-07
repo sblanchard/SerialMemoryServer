@@ -92,7 +92,7 @@ public sealed class IntegrityWorker(
             await using var conn = new NpgsqlConnection(connectionString);
             await conn.OpenAsync(ct);
             await conn.ExecuteAsync("SET app.role = 'internal_admin'");
-            await conn.ExecuteAsync($"SELECT set_tenant_context('{tenantId}')");
+            await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId::text)", new { TenantId = tenantId });
 
             // Get unhashed memories in chronological order
             var memories = await conn.QueryAsync<MemoryHashRow>(@"
@@ -232,7 +232,7 @@ public sealed class IntegrityWorker(
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await conn.ExecuteAsync("SET app.role = 'internal_admin'");
-        await conn.ExecuteAsync($"SELECT set_tenant_context('{tenantId}')");
+        await conn.ExecuteAsync("SELECT set_tenant_context(@TenantId::text)", new { TenantId = tenantId });
 
         // Check settings
         var settings = await conn.QueryFirstOrDefaultAsync<SettingsRow>(@"

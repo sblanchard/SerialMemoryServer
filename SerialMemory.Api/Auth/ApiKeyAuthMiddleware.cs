@@ -100,6 +100,37 @@ public sealed class ApiKeyAuthMiddleware
             return;
         }
 
+        // SelfHosted mode: bypass API key requirement entirely
+        if (deploymentContext.IsSelfHosted)
+        {
+            tenantContext.SetContext(
+                tenantId: Guid.Empty.ToString(),
+                workspaceId: "default",
+                userId: "admin",
+                userRole: "owner",
+                sessionId: null,
+                isLabMode: false,
+                allowPowerMode: true,
+                scopes: new[] { "all" });
+
+            context.Items["TenantId"] = Guid.Empty;
+            context.User = CreateClaimsPrincipal(
+                tenantId: Guid.Empty.ToString(),
+                userId: "admin",
+                role: "owner",
+                scopes: new[] { "all" });
+
+            try
+            {
+                await _next(context);
+                return;
+            }
+            finally
+            {
+                tenantContext.Clear();
+            }
+        }
+
         // Get API key from header
         var xApiKey = context.Request.Headers["X-Api-Key"].FirstOrDefault();
         var bearerToken = context.Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");

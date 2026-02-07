@@ -203,9 +203,6 @@ public static class DashboardExtensions
         // Auth endpoints (signup, verify-email, magic-link)
         MapDashboardAuthEndpoints(app, selfHostedMode);
 
-        // Billing endpoints
-        MapBillingEndpoints(app, selfHostedMode);
-
         // Admin endpoints
         MapSystemAdminEndpoints(app, selfHostedMode);
 
@@ -520,159 +517,6 @@ public static class DashboardExtensions
         .AllowAnonymous();
     }
 
-    private static void MapBillingEndpoints(WebApplication app, bool selfHostedMode)
-    {
-        // GET /billing
-        app.MapGet("/billing", async (
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.Ok(new { plan = "self-hosted", message = "Billing not applicable in self-hosted mode" });
-
-            var result = await billingService.GetBillingSummaryAsync(tenantId.ToString(), ct);
-            return result != null
-                ? Results.Ok(result)
-                : Results.NotFound(new { error = "not_found", message = "No billing info found" });
-        })
-        .WithName("DashboardGetBillingSummary")
-        .RequireAuthorization();
-
-        // GET /billing/history
-        app.MapGet("/billing/history", async (
-            int? limit,
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.Ok(Array.Empty<object>());
-
-            var result = await billingService.GetPaymentHistoryAsync(tenantId.ToString(), limit ?? 10, ct);
-            return Results.Ok(result);
-        })
-        .WithName("DashboardGetPaymentHistory")
-        .RequireAuthorization();
-
-        // POST /billing/checkout
-        app.MapPost("/billing/checkout", async (
-            [FromBody] CheckoutRequest request,
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
-
-            var result = await billingService.CreateCheckoutSessionAsync(new CreateCheckoutRequest
-            {
-                TenantId = tenantId.ToString(),
-                PlanName = request.PlanName,
-                SuccessUrl = request.SuccessUrl,
-                CancelUrl = request.CancelUrl
-            }, ct);
-
-            return !result.Success
-                ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
-                : Results.Ok(new { sessionId = result.SessionId, checkoutUrl = result.CheckoutUrl });
-        })
-        .WithName("DashboardCreateCheckoutSession")
-        .RequireAuthorization("Member");
-
-        // POST /billing/portal
-        app.MapPost("/billing/portal", async (
-            [FromBody] PortalRequest? request,
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
-
-            var result = await billingService.CreatePortalSessionAsync(new CreatePortalRequest
-            {
-                TenantId = tenantId.ToString(),
-                ReturnUrl = request?.ReturnUrl
-            }, ct);
-
-            return !result.Success
-                ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
-                : Results.Ok(new { portalUrl = result.PortalUrl });
-        })
-        .WithName("DashboardCreatePortalSession")
-        .RequireAuthorization("Member");
-
-        // POST /billing/cancel
-        app.MapPost("/billing/cancel", async (
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
-
-            var result = await billingService.CancelSubscriptionAsync(tenantId.ToString(), ct);
-            return !result.Success
-                ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
-                : Results.Ok(new { message = "Subscription will be cancelled at the end of the billing period" });
-        })
-        .WithName("DashboardCancelSubscription")
-        .RequireAuthorization("Owner");
-
-        // POST /billing/resume
-        app.MapPost("/billing/resume", async (
-            ClaimsPrincipal user,
-            [FromServices] IBillingService billingService,
-            CancellationToken ct) =>
-        {
-            var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
-            if (selfHostedMode)
-                return Results.BadRequest(new { error = "not_allowed", message = "Billing not available in self-hosted mode" });
-
-            var result = await billingService.ResumeSubscriptionAsync(tenantId.ToString(), ct);
-            return !result.Success
-                ? Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage })
-                : Results.Ok(new { message = "Subscription resumed" });
-        })
-        .WithName("DashboardResumeSubscription")
-        .RequireAuthorization("Owner");
-
-        // POST /webhook/stripe
-        app.MapPost("/webhook/stripe", async (
-            HttpRequest request,
-            [FromServices] IBillingService billingService,
-            [FromServices] ILogger<Program> logger,
-            CancellationToken ct) =>
-        {
-            var payload = await new StreamReader(request.Body).ReadToEndAsync(ct);
-            var signature = request.Headers["Stripe-Signature"].FirstOrDefault();
-
-            if (string.IsNullOrEmpty(signature))
-            {
-                logger.LogWarning("Stripe webhook received without signature");
-                return Results.BadRequest(new { error = "missing_signature" });
-            }
-
-            var result = await billingService.ProcessWebhookAsync(payload, signature, ct);
-
-            if (!result.Success && !result.AlreadyProcessed)
-            {
-                logger.LogError("Stripe webhook processing failed: {Error}", result.ErrorMessage);
-                return Results.BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
-            }
-
-            return Results.Ok(new { received = true, eventType = result.EventType, alreadyProcessed = result.AlreadyProcessed });
-        })
-        .WithName("StripeWebhook")
-        .AllowAnonymous();
-    }
-
     private static void MapSystemAdminEndpoints(WebApplication app, bool selfHostedMode)
     {
         // NOTE: /admin/tenants is defined in AdminEndpoints.cs - do not duplicate here
@@ -706,8 +550,6 @@ public static class DashboardExtensions
 
 // Request DTOs
 public sealed record DeleteTenantRequest(string ConfirmationPhrase);
-public sealed record CheckoutRequest(string PlanName, string? SuccessUrl = null, string? CancelUrl = null);
-public sealed record PortalRequest(string? ReturnUrl = null);
 public sealed record VerifyEmailRequest(string Token);
 public sealed record ResendVerificationRequest(string Email);
 public sealed record MagicLinkRequest(string Email);

@@ -90,11 +90,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var tenantId = TenantId;
         Log("CreateMemory", $"TenantContext.TenantId={_tenantContext.TenantId}, Parsed TenantId={tenantId}");
 
-        if (tenantId == Guid.Empty)
-        {
-            Log("CreateMemory", $"ERROR: TenantId is Guid.Empty!");
-            throw new InvalidOperationException($"TenantId is Guid.Empty. TenantContext.TenantId was: '{_tenantContext.TenantId}'");
-        }
+        // Note: Guid.Empty (00000000-...) is valid in SelfHosted mode
 
         const string sql = """
 
