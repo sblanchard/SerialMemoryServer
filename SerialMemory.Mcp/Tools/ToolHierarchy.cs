@@ -17,9 +17,12 @@ public static class ToolHierarchy
         ("safety", new("Safety & Integrity", "Detect contradictions, hallucinations, verify hashes, scan loops")),
         ("export", new("Export", "Export workspace, memories, graph, user profile, markdown vault")),
         ("reasoning", new("Engineering Reasoning", "Analyze graphs, visualize, multi-model reasoning")),
+        ("goals", new("Goals & Intent", "Set, list, and complete goals that persist across sessions")),
         ("session", new("Session Management", "Create/end sessions, instantiate context")),
         ("admin", new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed")),
-        ("workspace", new("Workspace & Snapshots", "Create/switch workspaces, create/load state snapshots"))
+        ("workspace", new("Workspace & Snapshots", "Create/switch workspaces, create/load state snapshots")),
+        ("capture", new("Auto-Capture", "Drain session captures, check capture buffer status")),
+        ("summarization", new("Summarization", "AI-powered session and context summarization"))
     ];
 
     public static readonly Dictionary<string, CategoryInfo> Categories =
@@ -69,6 +72,11 @@ public static class ToolHierarchy
         ["reasoning.engineering_visualize"] = "engineering_visualize",
         ["reasoning.engineering_reason"] = "engineering_reason",
 
+        // Goals
+        ["goals.goal_set"] = "goal_set",
+        ["goals.goal_list"] = "goal_list",
+        ["goals.goal_complete"] = "goal_complete",
+
         // Session
         ["session.initialise_conversation_session"] = "initialise_conversation_session",
         ["session.end_conversation_session"] = "end_conversation_session",
@@ -89,7 +97,15 @@ public static class ToolHierarchy
         ["workspace.workspace_switch"] = "workspace_switch",
         ["workspace.snapshot_create"] = "snapshot_create",
         ["workspace.snapshot_list"] = "snapshot_list",
-        ["workspace.snapshot_load"] = "snapshot_load"
+        ["workspace.snapshot_load"] = "snapshot_load",
+
+        // Auto-Capture
+        ["capture.drain_session_captures"] = "drain_session_captures",
+        ["capture.capture_status"] = "capture_status",
+
+        // Summarization
+        ["summarization.summarize_session"] = "summarize_session",
+        ["summarization.summarize_context"] = "summarize_context"
     };
 
     /// <summary>
@@ -104,12 +120,15 @@ public static class ToolHierarchy
             "safety" => ToolDefinitions.GetSafetyTools(),
             "export" => ToolDefinitions.GetExportTools(),
             "reasoning" => ToolDefinitions.GetReasoningTools(),
+            "goals" => ToolDefinitions.GetGoalTools(),
             "session" => FilterCoreToolsByName(coreTools,
                 "initialise_conversation_session", "end_conversation_session", "instantiate_context"),
             "admin" => FilterCoreToolsByName(coreTools,
                 "set_user_persona", "get_integrations", "import_from_core",
                 "crawl_relationships", "get_graph_statistics", "get_model_info", "reembed_memories"),
             "workspace" => ToolDefinitions.GetWorkspaceTools(),
+            "capture" => ToolDefinitions.GetCaptureTools(),
+            "summarization" => ToolDefinitions.GetSummarizationTools(),
             _ => []
         };
 
@@ -132,7 +151,7 @@ public static class ToolHierarchy
         new
         {
             name = "get_tools_in_category",
-            description = "Browse available SerialMemory tools by category. Call with no path for root categories. Categories: lifecycle, observability, safety, export, reasoning, session, admin, workspace.",
+            description = "Browse available SerialMemory tools by category. Call with no path for root categories. Categories: lifecycle, observability, safety, export, reasoning, goals, session, admin, workspace, capture, summarization.",
             inputSchema = new
             {
                 type = "object",

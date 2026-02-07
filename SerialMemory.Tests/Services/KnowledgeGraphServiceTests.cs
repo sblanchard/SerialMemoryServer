@@ -264,7 +264,7 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(queryEmbedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(memories);
 
         _storeMock
@@ -277,7 +277,7 @@ public class KnowledgeGraphServiceTests
         // Assert
         results.Should().HaveCount(2);
         _embeddingServiceMock.Verify(x => x.EmbedTextAsync(query, It.IsAny<CancellationToken>()), Times.Once);
-        _storeMock.Verify(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()), Times.Once);
+        _storeMock.Verify(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -291,7 +291,7 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(memories);
 
         _storeMock
@@ -303,7 +303,7 @@ public class KnowledgeGraphServiceTests
 
         // Assert
         results.Should().HaveCount(1);
-        _storeMock.Verify(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()), Times.Once);
+        _storeMock.Verify(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         _embeddingServiceMock.Verify(x => x.EmbedTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -321,11 +321,11 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(queryEmbedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { semanticMemory });
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { textMemory });
 
         _storeMock
@@ -337,8 +337,8 @@ public class KnowledgeGraphServiceTests
 
         // Assert
         results.Should().HaveCount(2);
-        _storeMock.Verify(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()), Times.Once);
-        _storeMock.Verify(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()), Times.Once);
+        _storeMock.Verify(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _storeMock.Verify(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -354,11 +354,11 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(queryEmbedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { sharedMemory });
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { sharedMemory }); // Same memory
 
         _storeMock
@@ -388,7 +388,7 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(queryEmbedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { memory });
 
         _storeMock
@@ -422,7 +422,7 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(queryEmbedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(queryEmbedding, 10, 0.7f, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { memory });
 
         _storeMock
@@ -450,7 +450,7 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByTextAsync(query, 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { memory });
 
         _storeMock
@@ -757,11 +757,11 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(embedding);
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByEmbeddingAsync(It.IsAny<float[]>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(It.IsAny<float[]>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory> { new() { Id = memoryId, Content = "John works at Microsoft" } });
 
         _storeMock
-            .Setup(x => x.SearchMemoriesByTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SearchMemoriesByTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Memory>());
 
         _storeMock

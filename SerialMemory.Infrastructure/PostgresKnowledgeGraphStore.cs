@@ -94,8 +94,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
 
-                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata)
-                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb)
+                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata, memory_type)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType)
                            """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
@@ -111,6 +111,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.Add(new NpgsqlParameter("@Source", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Source ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@MemoryType", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.MemoryType ?? "knowledge" });
 
         try
         {
@@ -189,19 +190,23 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         float[] queryEmbedding,
         int limit = 10,
         float threshold = 0.7f,
+        string? memoryType = null,
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = """
+        var sql = """
+                  SELECT
+                      id, content, created_at, updated_at, source, conversation_session_id, metadata, memory_type,
+                      1 - (embedding <=> @QueryEmbedding) as similarity
+                  FROM memories
+                  WHERE 1 - (embedding <=> @QueryEmbedding) > @Threshold
+                  """ +
+                  (memoryType != null ? " AND memory_type = @MemoryType" : "") +
+                  """
 
-                                       SELECT
-                                           id, content, created_at, updated_at, source, conversation_session_id, metadata,
-                                           1 - (embedding <=> @QueryEmbedding) as similarity
-                                       FROM memories
-                                       WHERE 1 - (embedding <=> @QueryEmbedding) > @Threshold
-                                       ORDER BY embedding <=> @QueryEmbedding
-                                       LIMIT @Limit
-                           """;
+                  ORDER BY embedding <=> @QueryEmbedding
+                  LIMIT @Limit
+                  """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
@@ -210,6 +215,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.AddWithValue("@QueryEmbedding", new Vector(queryEmbedding));
         cmd.Parameters.AddWithValue("@Threshold", threshold);
         cmd.Parameters.AddWithValue("@Limit", limit);
+        if (memoryType != null)
+            cmd.Parameters.AddWithValue("@MemoryType", memoryType);
 
         var results = new List<dynamic>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -224,7 +231,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
             dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
             dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
-            dict["similarity"] = reader.GetFloat(7);
+            dict["memory_type"] = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7);
+            dict["similarity"] = reader.GetFloat(8);
             results.Add(row);
         }
 
@@ -234,25 +242,29 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<List<Memory>> SearchMemoriesByTextAsync(
         string query,
         int limit = 10,
+        string? memoryType = null,
         CancellationToken cancellationToken = default)
     {
         // RLS policy will filter by tenant automatically
-        const string sql = """
+        var sql = """
+                  SELECT
+                      id, content, created_at, updated_at, source, conversation_session_id, metadata, memory_type,
+                      ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as rank
+                  FROM memories
+                  WHERE content_tsvector @@ plainto_tsquery('english', @Query)
+                  """ +
+                  (memoryType != null ? " AND memory_type = @MemoryType" : "") +
+                  """
 
-                                       SELECT
-                                           id, content, created_at, updated_at, source, conversation_session_id, metadata,
-                                           ts_rank(content_tsvector, plainto_tsquery('english', @Query)) as rank
-                                       FROM memories
-                                       WHERE content_tsvector @@ plainto_tsquery('english', @Query)
-                                       ORDER BY rank DESC
-                                       LIMIT @Limit
-                           """;
+                  ORDER BY rank DESC
+                  LIMIT @Limit
+                  """;
 
         await using var conn = await OpenConnectionAsync(cancellationToken);
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
-            new { Query = query, Limit = limit },
+            new { Query = query, Limit = limit, MemoryType = memoryType },
             cancellationToken: cancellationToken
         ));
 
@@ -567,6 +579,36 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return persona;
     }
 
+    public async Task<List<UserPersona>> GetActiveGoalsAsync(string userId = "default_user", CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT id, user_id, attribute_type, attribute_key, attribute_value, confidence, source_memory_id, updated_at
+            FROM user_personas
+            WHERE user_id = @UserId AND attribute_type = 'goal' AND confidence > 0
+            ORDER BY confidence DESC, updated_at DESC
+        """;
+
+        await using var conn = await OpenConnectionAsync(ct);
+
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { UserId = userId },
+            cancellationToken: ct
+        ));
+
+        return rows.Select(row => new UserPersona
+        {
+            Id = row.id,
+            UserId = row.user_id,
+            AttributeType = row.attribute_type,
+            AttributeKey = row.attribute_key,
+            AttributeValue = row.attribute_value,
+            Confidence = (float)row.confidence,
+            SourceMemoryId = row.source_memory_id,
+            UpdatedAt = row.updated_at
+        }).ToList();
+    }
+
     #endregion
 
     #region Conversation Session Operations
@@ -656,18 +698,20 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
         };
 
-        // Map search scores when available from query results
+        // Map search scores and memory_type when available from query results
         if (rowDict != null)
         {
             // For DapperRow, use dictionary access for optional properties
             memory.Similarity = rowDict.TryGetValue("similarity", out var sim) && sim != null ? Convert.ToSingle(sim) : 0f;
             memory.Rank = rowDict.TryGetValue("rank", out var rank) && rank != null ? Convert.ToSingle(rank) : 0f;
+            memory.MemoryType = rowDict.TryGetValue("memory_type", out var mt) && mt != null ? mt.ToString()! : "knowledge";
         }
         else
         {
             // For anonymous types or other dynamic objects, try direct property access with fallback
             try { memory.Similarity = (float)(row.similarity ?? 0f); } catch { memory.Similarity = 0f; }
             try { memory.Rank = (float)(row.rank ?? 0f); } catch { memory.Rank = 0f; }
+            try { memory.MemoryType = row.memory_type ?? "knowledge"; } catch { memory.MemoryType = "knowledge"; }
         }
 
         return memory;
@@ -959,6 +1003,48 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                 ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
                 : null
         }).ToList();
+    }
+
+    public async Task<List<Memory>> GetMemoriesByTypeAsync(string memoryType, int limit = 50, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text, memory_type
+            FROM memories
+            WHERE memory_type = @MemoryType
+            ORDER BY created_at DESC
+            LIMIT @Limit
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { MemoryType = memoryType, Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
+    public async Task<List<Memory>> GetMemoriesBySessionAsync(Guid sessionId, int limit = 100, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text, memory_type
+            FROM memories
+            WHERE conversation_session_id = @SessionId
+            ORDER BY created_at ASC
+            LIMIT @Limit
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { SessionId = sessionId, Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
     }
 
     #endregion

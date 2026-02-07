@@ -384,6 +384,55 @@ public static class ToolDefinitions
         }
     ];
 
+    public static object[] GetGoalTools() =>
+    [
+        new
+        {
+            name = "goal_set",
+            description = "Set or update a persistent goal that carries across sessions. Goals appear in instantiate_context output so agents always know current objectives.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    key = new { type = "string", description = "Short goal identifier (e.g., 'ship-v2', 'fix-auth-bug')" },
+                    description = new { type = "string", description = "Goal description with success criteria" },
+                    priority = new { type = "number", @default = 1.0, description = "Priority (0.1-1.0, higher = more important)" },
+                    user_id = new { type = "string", @default = "default_user", description = "User identifier" }
+                },
+                required = new[] { "key", "description" }
+            }
+        },
+        new
+        {
+            name = "goal_list",
+            description = "List all active goals sorted by priority. Completed goals (confidence=0) are excluded.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    user_id = new { type = "string", @default = "default_user", description = "User identifier" }
+                }
+            }
+        },
+        new
+        {
+            name = "goal_complete",
+            description = "Mark a goal as completed. Goal is preserved in history but excluded from active listings and context loading.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    key = new { type = "string", description = "Goal key to complete" },
+                    user_id = new { type = "string", @default = "default_user", description = "User identifier" }
+                },
+                required = new[] { "key" }
+            }
+        }
+    ];
+
     /// <summary>
     /// Shared context schema fragment for per-call context envelope.
     /// Added as optional property to tool schemas.
@@ -504,7 +553,7 @@ public static class ToolDefinitions
         new
         {
             name = "get_tools",
-            description = "Discover available SerialMemory tools by category. Returns tool schemas and descriptions. Categories: lifecycle, observability, safety, export, reasoning, admin, session, workspace.",
+            description = "Discover available SerialMemory tools by category. Returns tool schemas and descriptions. Categories: lifecycle, observability, safety, export, reasoning, goals, admin, session, workspace.",
             inputSchema = new
             {
                 type = "object",
@@ -528,6 +577,70 @@ public static class ToolDefinitions
                     context = ContextSchemaFragment
                 },
                 required = new[] { "tool_name" }
+            }
+        }
+    ];
+
+    public static object[] GetCaptureTools() =>
+    [
+        new
+        {
+            name = "drain_session_captures",
+            description = "Drain captured session activity (file edits, bash commands, errors) from JSONL logs into memories. Called automatically at session end, or manually to force drain.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    session_id = new { type = "string", description = "Session ID to drain (defaults to most recent active log)" },
+                    max_entries = new { type = "integer", @default = 500, description = "Maximum JSONL entries to process" },
+                    dry_run = new { type = "boolean", @default = false, description = "Preview what would be ingested without actually draining" }
+                }
+            }
+        },
+        new
+        {
+            name = "capture_status",
+            description = "Check the auto-capture buffer status — entry count, time span, error count — without draining.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new { }
+            }
+        }
+    ];
+
+    public static object[] GetSummarizationTools() =>
+    [
+        new
+        {
+            name = "summarize_session",
+            description = "Summarize all memories from a session using AI. Generates a concise session summary covering decisions, problems solved, patterns, and next steps. Requires LLM (OpenAI or Ollama).",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    session_id = new { type = "string", description = "Session ID to summarize (defaults to current session)" },
+                    include_auto_captures = new { type = "boolean", @default = true, description = "Include auto-capture memories in summarization" },
+                    max_memories = new { type = "integer", @default = 100, description = "Maximum memories to include in summarization" },
+                    store_summary = new { type = "boolean", @default = true, description = "Store the summary as a session_summary memory" }
+                }
+            }
+        },
+        new
+        {
+            name = "summarize_context",
+            description = "Summarize recent context using AI, useful before PreCompact to preserve session essence. Requires LLM (OpenAI or Ollama).",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    hours_back = new { type = "integer", @default = 4, description = "Hours of context to summarize" },
+                    max_memories = new { type = "integer", @default = 50, description = "Maximum memories to include" },
+                    store_summary = new { type = "boolean", @default = true, description = "Store as a session_summary memory" }
+                }
             }
         }
     ];

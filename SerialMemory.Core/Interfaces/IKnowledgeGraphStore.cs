@@ -12,8 +12,10 @@ public interface IKnowledgeGraphStore
     Task UpdateMemoryAsync(Memory memory, CancellationToken cancellationToken = default);
     Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default);
-    Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, CancellationToken cancellationToken = default);
-    Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, CancellationToken cancellationToken = default);
+    Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, string? memoryType = null, CancellationToken cancellationToken = default);
+    Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, string? memoryType = null, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesByTypeAsync(string memoryType, int limit = 50, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesBySessionAsync(Guid sessionId, int limit = 100, CancellationToken cancellationToken = default);
 
     // Entity operations
     Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default);
@@ -32,6 +34,9 @@ public interface IKnowledgeGraphStore
     // User persona operations
     Task SetUserPersonaAttributeAsync(UserPersona persona, CancellationToken cancellationToken = default);
     Task<Dictionary<string, Dictionary<string, object>>> GetUserPersonaAsync(string userId = "default_user", CancellationToken cancellationToken = default);
+
+    // Goal operations (stored in user_personas with attribute_type='goal')
+    Task<List<UserPersona>> GetActiveGoalsAsync(string userId = "default_user", CancellationToken ct = default);
 
     // Conversation session operations
     Task<Guid> CreateConversationSessionAsync(ConversationSession session, CancellationToken cancellationToken = default);

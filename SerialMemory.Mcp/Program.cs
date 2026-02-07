@@ -154,14 +154,16 @@ else
     DebugFileLogger.Log("MCP", $"Using Ollama for embeddings: {ollamaModel} (dim={ollamaEmbeddingDim})");
 }
 
-// Create entity extraction service (Ollama > HTTP > Pattern-based)
+// Create entity extraction service (OpenAI > Ollama > HTTP > Pattern-based)
+var openAiEntityModel = configuration["OPENAI_ENTITY_MODEL"] ?? Environment.GetEnvironmentVariable("OPENAI_ENTITY_MODEL");
 IEntityExtractionService entityService = EntityExtractionServiceFactory.Create(
+    openAiApiKey: openAiApiKey,
+    openAiEntityModel: openAiEntityModel,
     ollamaUrl: ollamaEntityUrl,
     ollamaModel: ollamaEntityModel,
     httpServiceUrl: extractionServiceUrl);
 
-logger.LogInformation("Entity extraction service: {Type} (model: {Model})",
-    entityService.GetType().Name, ollamaEntityModel);
+logger.LogInformation("Entity extraction service: {Type}", entityService.GetType().Name);
 
 var kgService = new KnowledgeGraphService(store, embeddingService, entityService);
 
@@ -292,6 +294,79 @@ foreach (var schema in ToolDefinitions.GetWorkspaceTools())
         "snapshot_load" => (args) => snapshotTools.HandleSnapshotLoad(args),
         _ => throw new InvalidOperationException($"Unknown workspace tool: {name}")
     });
+}
+
+// Register goal tools via gateway
+foreach (var schema in ToolDefinitions.GetGoalTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("goals", (string)name, schema, name switch
+    {
+        "goal_set" => (args) => HandleGoalSet(args),
+        "goal_list" => (args) => HandleGoalList(args),
+        "goal_complete" => (args) => HandleGoalComplete(args),
+        _ => throw new InvalidOperationException($"Unknown goal tool: {name}")
+    });
+}
+
+// Initialize auto-capture tools
+var autoCaptureTools = new AutoCaptureTools(kgService, logger);
+
+// Initialize LLM service for summarization (OpenAI preferred, Ollama fallback)
+ILlmService? llmService = null;
+SummarizationTools? summarizationTools = null;
+try
+{
+    if (!string.IsNullOrEmpty(openAiApiKey))
+    {
+        var chatModel = configuration["OPENAI_CHAT_MODEL"] ?? Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+        llmService = new OpenAiClient(
+            apiKey: openAiApiKey,
+            chatModel: chatModel,
+            embedModel: openAiEmbedModel,
+            embeddingDimension: 1536);
+        logger.LogInformation("LLM service initialized: OpenAI/{Model}", chatModel);
+    }
+    else
+    {
+        var ollamaChatModel = configuration["OLLAMA_CHAT_MODEL"] ?? Environment.GetEnvironmentVariable("OLLAMA_CHAT_MODEL") ?? "qwen2.5:7b";
+        llmService = new OllamaLlmService(ollamaUrl, ollamaChatModel);
+        logger.LogInformation("LLM service initialized: Ollama/{Model} at {Url}", ollamaChatModel, ollamaUrl);
+    }
+
+    summarizationTools = new SummarizationTools(kgService, llmService, logger);
+    logger.LogInformation("Summarization tools initialized with {Provider}", llmService.ProviderName);
+}
+catch (Exception ex)
+{
+    logger.LogWarning(ex, "Failed to initialize LLM/summarization - summarization will be disabled");
+}
+
+// Register auto-capture tools via gateway
+foreach (var schema in ToolDefinitions.GetCaptureTools())
+{
+    var name = ((dynamic)schema).name;
+    gateway.Register("capture", (string)name, schema, name switch
+    {
+        "drain_session_captures" => (args) => autoCaptureTools.HandleDrainSessionCaptures(args),
+        "capture_status" => (args) => autoCaptureTools.HandleCaptureStatus(args),
+        _ => throw new InvalidOperationException($"Unknown capture tool: {name}")
+    });
+}
+
+// Register summarization tools via gateway (if LLM available)
+if (summarizationTools != null)
+{
+    foreach (var schema in ToolDefinitions.GetSummarizationTools())
+    {
+        var name = ((dynamic)schema).name;
+        gateway.Register("summarization", (string)name, schema, name switch
+        {
+            "summarize_session" => (args) => summarizationTools.HandleSummarizeSession(args),
+            "summarize_context" => (args) => summarizationTools.HandleSummarizeContext(args),
+            _ => throw new InvalidOperationException($"Unknown summarization tool: {name}")
+        });
+    }
 }
 
 // Initialize usage service (non-blocking metering) - use authenticated tenant context
@@ -443,7 +518,8 @@ object[] BuildCoreTools() => new object[]
                         mode = new { type = "string", @enum = new[] { "semantic", "text", "hybrid" }, @default = "hybrid", description = "Search mode" },
                         limit = new { type = "integer", @default = 10, description = "Maximum results to return" },
                         threshold = new { type = "number", @default = 0.7, description = "Minimum similarity threshold (0.0-1.0)" },
-                        include_entities = new { type = "boolean", @default = true, description = "Include linked entities" }
+                        include_entities = new { type = "boolean", @default = true, description = "Include linked entities" },
+                        memory_type = new { type = "string", @enum = new[] { "error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture" }, description = "Filter by memory type (omit for all types)" }
                     },
                     required = new[] { "query" }
                 }
@@ -463,7 +539,8 @@ object[] BuildCoreTools() => new object[]
                         metadata = new { type = "object", description = "Additional metadata (tags, importance, etc.)" },
                         extract_entities = new { type = "boolean", @default = true, description = "Whether to extract entities and relationships" },
                         dedup_mode = new { type = "string", @enum = new[] { "warn", "skip", "append", "off" }, @default = "warn", description = "Dedup mode: warn (create+report), skip (reject if dup), append (merge into existing), off (no check)" },
-                        dedup_threshold = new { type = "number", @default = 0.85, description = "Similarity threshold for duplicate detection (0.0-1.0)" }
+                        dedup_threshold = new { type = "number", @default = 0.85, description = "Similarity threshold for duplicate detection (0.0-1.0)" },
+                        memory_type = new { type = "string", @enum = new[] { "error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture" }, @default = "knowledge", description = "Memory type for categorization and filtered retrieval" }
                     },
                     required = new[] { "content" }
                 }
@@ -992,6 +1069,11 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "get_tools" => UsageEventType.GetTools,
         "use_tool" => UsageEventType.UseTool,
 
+        // Goal operations
+        "goal_set" => UsageEventType.GoalSet,
+        "goal_list" => UsageEventType.GoalList,
+        "goal_complete" => UsageEventType.GoalComplete,
+
         // Workspace operations
         "workspace_create" => UsageEventType.WorkspaceCreate,
         "workspace_list" => UsageEventType.WorkspaceList,
@@ -1001,6 +1083,14 @@ void TrackToolUsage(string? toolName, int latencyMs, bool success, string? error
         "snapshot_create" => UsageEventType.SnapshotCreate,
         "snapshot_list" => UsageEventType.SnapshotList,
         "snapshot_load" => UsageEventType.SnapshotLoad,
+
+        // Auto-capture operations
+        "drain_session_captures" => UsageEventType.DrainSessionCaptures,
+        "capture_status" => UsageEventType.CaptureStatus,
+
+        // Summarization operations
+        "summarize_session" => UsageEventType.SummarizeSession,
+        "summarize_context" => UsageEventType.SummarizeContext,
 
         _ => null
     };
@@ -1039,6 +1129,7 @@ async Task<object> HandleMemorySearch(JsonNode? arguments)
     var limit = Math.Clamp(arguments?["limit"]?.GetValue<int>() ?? 10, 1, 100);
     var threshold = Math.Clamp(arguments?["threshold"]?.GetValue<float>() ?? 0.7f, 0f, 1f);
     var includeEntities = arguments?["include_entities"]?.GetValue<bool>() ?? true;
+    var memoryType = arguments?["memory_type"]?.GetValue<string>()?.Trim()?.ToLowerInvariant();
 
     var mode = modeStr.ToLowerInvariant() switch
     {
@@ -1047,7 +1138,7 @@ async Task<object> HandleMemorySearch(JsonNode? arguments)
         _ => SearchMode.Hybrid
     };
 
-    var results = await kgService.SearchMemoriesAsync(query, mode, limit, threshold, includeEntities);
+    var results = await kgService.SearchMemoriesAsync(query, mode, limit, threshold, includeEntities, memoryType);
 
     var text = $"Found {results.Count} memories:\n\n" +
         string.Join("\n\n", results.Select((r, i) =>
@@ -1076,6 +1167,11 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
     if (dedupMode is not ("warn" or "skip" or "append" or "off"))
         dedupMode = "warn";
 
+    var memoryTypeParam = arguments?["memory_type"]?.GetValue<string>()?.Trim()?.ToLowerInvariant();
+    string[] validMemoryTypes = ["error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture"];
+    if (memoryTypeParam != null && !validMemoryTypes.Contains(memoryTypeParam))
+        memoryTypeParam = "knowledge";
+
     Dictionary<string, object>? metadata = null;
     if (arguments?["metadata"] is JsonNode metadataNode)
     {
@@ -1089,7 +1185,8 @@ async Task<object> HandleMemoryIngest(JsonNode? arguments)
         metadata,
         extractEntities,
         dedupMode,
-        dedupThreshold);
+        dedupThreshold,
+        memoryTypeParam);
 
     // Set dedup metadata for usage tracking
     toolMetadataContext.Value = new Dictionary<string, object>
@@ -1174,11 +1271,45 @@ async Task<object> HandleInitialiseSession(JsonNode? arguments)
 async Task<object> HandleEndSession()
 {
     if (!currentSessionId.HasValue) return CreateTextResponse("No active conversation session to end.");
-    await kgService.EndConversationSessionAsync(currentSessionId.Value);
-    var oldSession = currentSessionId;
-    currentSessionId = null;
-    return CreateTextResponse($"Conversation session ended: {oldSession}");
+    try
+    {
+        var sessionId = currentSessionId.Value;
 
+        // Phase 1: Auto-drain captured session activity
+        try
+        {
+            await autoCaptureTools.DrainInternalAsync(sessionId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Auto-capture drain failed (non-fatal)");
+        }
+
+        // Phase 3: AI summarization (if LLM available)
+        try
+        {
+            if (summarizationTools != null)
+            {
+                await summarizationTools.SummarizeSessionInternalAsync(sessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Session summarization failed (non-fatal)");
+        }
+
+        // End the session
+        await kgService.EndConversationSessionAsync(sessionId);
+        var oldSession = currentSessionId;
+        currentSessionId = null;
+        return CreateTextResponse($"Conversation session ended: {oldSession}");
+    }
+    catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        logger.LogWarning("end_conversation_session skipped: {Message}", ex.MessageText);
+        currentSessionId = null;
+        return CreateErrorResponse("Session tracking schema not available. Session cleared locally.");
+    }
 }
 
 async Task<object> HandleMultiHopSearch(JsonNode? arguments)
@@ -1286,9 +1417,16 @@ async Task<object> HandleSetUserPersona(JsonNode? arguments)
     var confidence = Math.Clamp(arguments?["confidence"]?.GetValue<float>() ?? 1.0f, 0f, 1f);
     var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
 
-    await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, user);
-
-    return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
+    try
+    {
+        await kgService.SetUserPersonaAttributeAsync(attrType, attrKey, attrValue, confidence, user);
+        return CreateTextResponse($"User persona attribute set: {attrType}/{attrKey} = {attrValue} (confidence: {confidence:F2})");
+    }
+    catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        logger.LogWarning("set_user_persona skipped: {Message}", ex.MessageText);
+        return CreateErrorResponse("User persona schema not available. Run workspace scoping migration to enable this feature.");
+    }
 }
 
 async Task<object> HandleCrawlRelationships(JsonNode? arguments)
@@ -1677,6 +1815,45 @@ async Task<object> HandleInstantiateContext(JsonNode? arguments)
     text.AppendLine(context.SessionSummary);
     text.AppendLine();
 
+    // Load typed memory sections (Phase 2)
+    try
+    {
+        var fromUtc = DateTime.UtcNow.AddDays(-daysBack);
+        var toUtc = DateTime.UtcNow;
+
+        var typedSections = new (string type, string heading, int maxItems)[]
+        {
+            ("error", "Recent Errors", 5),
+            ("decision", "Active Decisions", 5),
+            ("pattern", "Known Patterns", 5),
+            ("session_summary", "Session Summaries", 3)
+        };
+
+        foreach (var (type, heading, maxItems) in typedSections)
+        {
+            try
+            {
+                var typed = await kgService.GetMemoriesByTypeAsync(type, maxItems);
+                if (typed.Count > 0)
+                {
+                    text.AppendLine($"## {heading}");
+                    text.AppendLine();
+                    foreach (var m in typed)
+                    {
+                        var preview = m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content;
+                        text.AppendLine($"- [{m.CreatedAt:yyyy-MM-dd}] {preview}");
+                    }
+                    text.AppendLine();
+                }
+            }
+            catch { /* Typed memory query failed - memory_type column may not exist yet */ }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogDebug(ex, "Could not load typed memory sections (memory_type column may not exist)");
+    }
+
     if (context.TopEntities.Count > 0)
     {
         text.AppendLine("## Key Entities");
@@ -1757,6 +1934,27 @@ async Task<object> HandleInstantiateContext(JsonNode? arguments)
         }
     }
 
+    // Load active goals and append to context
+    try
+    {
+        var goals = await kgService.GetActiveGoalsAsync();
+        if (goals.Count > 0)
+        {
+            text.AppendLine("## Active Goals");
+            text.AppendLine();
+            foreach (var goal in goals)
+            {
+                var priorityLabel = goal.Confidence >= 0.8f ? "HIGH" : goal.Confidence >= 0.5f ? "MEDIUM" : "LOW";
+                text.AppendLine($"- **{goal.AttributeKey}** [{priorityLabel}] — {goal.AttributeValue}");
+            }
+            text.AppendLine();
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogDebug(ex, "Could not load goals for context (user_personas table may not exist)");
+    }
+
     logger.LogInformation("Context instantiated: {MemoryCount} memories, {EntityCount} entities",
         context.MemoryCount, context.TopEntities.Count);
 
@@ -1826,9 +2024,12 @@ async Task<object> HandleExecuteTool(JsonNode? arguments)
     catch (Exception ex)
     {
         success = false;
-        errorMessage = ex.Message;
+        var msg = string.IsNullOrWhiteSpace(ex.Message)
+            ? $"Tool '{actualToolName}' failed unexpectedly. Check server logs for details."
+            : ex.Message;
+        errorMessage = msg;
         logger.LogError(ex, "Error executing tool {ToolName} via execute_tool", actualToolName);
-        return CreateErrorResponse(ex.Message);
+        return CreateErrorResponse(msg);
     }
     finally
     {
@@ -1877,8 +2078,96 @@ Task<object>? DispatchTool(string toolName, JsonNode? arguments) => toolName swi
     "engineering_analyze" => reasoningTools.HandleEngineeringAnalyze(arguments),
     "engineering_visualize" => reasoningTools.HandleEngineeringVisualize(arguments),
     "engineering_reason" => reasoningTools.HandleEngineeringReason(arguments),
+    // Goal tools
+    "goal_set" => HandleGoalSet(arguments),
+    "goal_list" => HandleGoalList(arguments),
+    "goal_complete" => HandleGoalComplete(arguments),
+    // Workspace tools
+    "workspace_create" => workspaceTools.HandleWorkspaceCreate(arguments),
+    "workspace_list" => workspaceTools.HandleWorkspaceList(arguments),
+    "workspace_switch" => workspaceTools.HandleWorkspaceSwitch(arguments),
+    "snapshot_create" => snapshotTools.HandleSnapshotCreate(arguments),
+    "snapshot_list" => snapshotTools.HandleSnapshotList(arguments),
+    "snapshot_load" => snapshotTools.HandleSnapshotLoad(arguments),
+    // Auto-capture tools
+    "drain_session_captures" => autoCaptureTools.HandleDrainSessionCaptures(arguments),
+    "capture_status" => autoCaptureTools.HandleCaptureStatus(arguments),
+    // Summarization tools
+    "summarize_session" => summarizationTools?.HandleSummarizeSession(arguments) ?? Task.FromResult<object>(CreateTextResponse("No LLM configured for summarization.")),
+    "summarize_context" => summarizationTools?.HandleSummarizeContext(arguments) ?? Task.FromResult<object>(CreateTextResponse("No LLM configured for summarization.")),
     _ => null
 };
+
+async Task<object> HandleGoalSet(JsonNode? arguments)
+{
+    var key = arguments?["key"]?.GetValue<string>()?.Trim();
+    var description = arguments?["description"]?.GetValue<string>()?.Trim();
+    if (string.IsNullOrEmpty(key))
+        throw new ArgumentException("key is required");
+    if (string.IsNullOrEmpty(description))
+        throw new ArgumentException("description is required");
+
+    var priority = Math.Clamp(arguments?["priority"]?.GetValue<float>() ?? 1.0f, 0.1f, 1f);
+    var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
+
+    try
+    {
+        await kgService.SetGoalAsync(key, description, priority, user);
+        return CreateTextResponse($"Goal set: **{key}** (priority: {priority:F1})\n{description}");
+    }
+    catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        logger.LogWarning("goal_set skipped: {Message}", ex.MessageText);
+        return CreateErrorResponse("User persona schema not available. Run workspace scoping migration to enable goals.");
+    }
+}
+
+async Task<object> HandleGoalList(JsonNode? arguments)
+{
+    var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
+
+    try
+    {
+        var goals = await kgService.GetActiveGoalsAsync(user);
+
+        if (goals.Count == 0)
+            return CreateTextResponse("No active goals. Use `goal_set` to create one.");
+
+        var text = $"## Active Goals ({goals.Count})\n\n";
+        foreach (var goal in goals)
+        {
+            var priorityLabel = goal.Confidence >= 0.8f ? "HIGH" : goal.Confidence >= 0.5f ? "MEDIUM" : "LOW";
+            text += $"- **{goal.AttributeKey}** [{priorityLabel}] — {goal.AttributeValue}\n";
+            text += $"  *Updated: {goal.UpdatedAt:yyyy-MM-dd HH:mm}*\n";
+        }
+        return CreateTextResponse(text);
+    }
+    catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        logger.LogWarning("goal_list skipped: {Message}", ex.MessageText);
+        return CreateErrorResponse("User persona schema not available. Run workspace scoping migration to enable goals.");
+    }
+}
+
+async Task<object> HandleGoalComplete(JsonNode? arguments)
+{
+    var key = arguments?["key"]?.GetValue<string>()?.Trim();
+    if (string.IsNullOrEmpty(key))
+        throw new ArgumentException("key is required");
+
+    var user = arguments?["user_id"]?.GetValue<string>()?.Trim() ?? "default_user";
+
+    try
+    {
+        await kgService.CompleteGoalAsync(key, user);
+        return CreateTextResponse($"Goal completed: **{key}**");
+    }
+    catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        logger.LogWarning("goal_complete skipped: {Message}", ex.MessageText);
+        return CreateErrorResponse("User persona schema not available. Run workspace scoping migration to enable goals.");
+    }
+}
 
 object CreateTextResponse(string text)
 {

@@ -303,11 +303,17 @@ public class InstrumentedKnowledgeGraphStore(
     public Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default)
         => inner.GetRecentMemoriesAsync(limit, cancellationToken);
 
-    public Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, CancellationToken cancellationToken = default)
-        => inner.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold, cancellationToken);
+    public Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, string? memoryType = null, CancellationToken cancellationToken = default)
+        => inner.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold, memoryType, cancellationToken);
 
-    public Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, CancellationToken cancellationToken = default)
-        => inner.SearchMemoriesByTextAsync(query, limit, cancellationToken);
+    public Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, string? memoryType = null, CancellationToken cancellationToken = default)
+        => inner.SearchMemoriesByTextAsync(query, limit, memoryType, cancellationToken);
+
+    public Task<List<Memory>> GetMemoriesByTypeAsync(string memoryType, int limit = 50, CancellationToken cancellationToken = default)
+        => inner.GetMemoriesByTypeAsync(memoryType, limit, cancellationToken);
+
+    public Task<List<Memory>> GetMemoriesBySessionAsync(Guid sessionId, int limit = 100, CancellationToken cancellationToken = default)
+        => inner.GetMemoriesBySessionAsync(sessionId, limit, cancellationToken);
 
     public Task<Entity?> GetEntityByIdAsync(Guid id, CancellationToken cancellationToken = default)
         => inner.GetEntityByIdAsync(id, cancellationToken);
@@ -329,6 +335,9 @@ public class InstrumentedKnowledgeGraphStore(
 
     public Task<Dictionary<string, Dictionary<string, object>>> GetUserPersonaAsync(string userId = "default_user", CancellationToken cancellationToken = default)
         => inner.GetUserPersonaAsync(userId, cancellationToken);
+
+    public Task<List<UserPersona>> GetActiveGoalsAsync(string userId = "default_user", CancellationToken ct = default)
+        => inner.GetActiveGoalsAsync(userId, ct);
 
     public Task<Guid> CreateConversationSessionAsync(ConversationSession session, CancellationToken cancellationToken = default)
         => inner.CreateConversationSessionAsync(session, cancellationToken);

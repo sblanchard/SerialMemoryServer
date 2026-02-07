@@ -2,9 +2,10 @@
 # install-hooks.sh - Install SerialMemory Claude Code hooks
 # Usage: bash ops/install-hooks.sh
 #
-# Installs session lifecycle hooks and MCP tool status indicators.
+# Installs session lifecycle hooks and MCP tool status indicators for ALL tools.
+# Covers all 40+ SerialMemory MCP tools from ToolHierarchy.cs.
 # Uses jq for JSON manipulation (falls back to python3).
-# Safe to re-run: merges hooks into existing settings without overwriting other config.
+# Safe to re-run: overwrites hooks, preserves all other settings.
 set -euo pipefail
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -23,8 +24,9 @@ else
 fi
 echo "[OK] Using $JSON_TOOL for JSON manipulation"
 
-# The hooks configuration matching the current production setup
-# Tool prefix: mcp__serialmemory__ (MCP server name from settings)
+# Complete hooks configuration covering all SerialMemory MCP tools.
+# Tool prefix: mcp__serialmemory-memory__ (matches MCP server name "serialmemory-memory")
+# Core tools (8) are directly exposed; gateway tools (38) go through execute_tool.
 read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
 {
   "SessionStart": [
@@ -33,7 +35,7 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo && echo 'POST-COMPACTION CONTEXT RELOAD' && echo && echo 'REQUIRED: Call these MCP tools to restore context:' && echo '  1. mcp__serialmemory__instantiate_context with project_or_subject for the current project' && echo '  2. mcp__serialmemory__memory_search for specific topics if needed' && echo && echo 'This will reload pre-compaction findings from SerialMemory.' && echo"
+          "command": "echo && echo 'POST-COMPACTION CONTEXT RELOAD' && echo && echo 'REQUIRED: Call these MCP tools to restore context:' && echo '  1. mcp__serialmemory-memory__instantiate_context with project_or_subject for the current project' && echo '  2. mcp__serialmemory-memory__memory_search for specific topics if needed' && echo && echo 'This will reload pre-compaction findings from SerialMemory.' && echo"
         }
       ]
     },
@@ -42,7 +44,18 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo 'CLAUDE: Call mcp__serialmemory__initialise_conversation_session and mcp__serialmemory__instantiate_context for project context'"
+          "command": "echo 'CLAUDE: Call mcp__serialmemory-memory__initialise_conversation_session and mcp__serialmemory-memory__instantiate_context for project context'"
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cat > /dev/null; echo 'CONTEXT: Use mcp__serialmemory-memory__memory_search to find relevant context before answering.'"
         }
       ]
     }
@@ -53,7 +66,7 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo && echo 'Session Ending' && echo 'Use mcp__serialmemory__memory_ingest to save session insights.' && echo 'Include: decisions made, problems solved, code changes, next steps.' && echo"
+          "command": "bash ~/Projects/SerialMemoryServer/ops/session-summarize.sh session_end"
         }
       ]
     }
@@ -64,142 +77,42 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo && echo 'CONTEXT COMPACTION IMMINENT - INGEST SESSION FINDINGS NOW' && echo && echo 'REQUIRED: Before context is compacted, call mcp__serialmemory__memory_ingest with:' && echo '  - Project name and current task' && echo '  - Key discoveries and root causes found' && echo '  - Code changes made and files modified' && echo '  - Decisions made and rationale' && echo '  - Current state and blockers' && echo '  - Next steps to continue after compaction' && echo && echo 'Format: Single comprehensive memory covering the session work.' && echo"
+          "command": "bash ~/Projects/SerialMemoryServer/ops/session-summarize.sh precompact"
         }
       ]
     }
   ],
   "PreToolUse": [
-    {
-      "matcher": "mcp__serialmemory__memory_search",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Searching memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_ingest",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Ingesting to memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_multi_hop_search",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Multi-hop memory search...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__detect_contradictions",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Detecting contradictions...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__detect_hallucinations",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Detecting hallucinations...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__engineering_analyze",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Engineering analysis...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__engineering_reason",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Multi-model reasoning...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_update",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Updating memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_delete",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Deleting memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_merge",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Merging memories...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_split",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Splitting memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_reinforce",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Reinforcing memory...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_decay",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Applying decay...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__export_workspace",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Exporting workspace...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__export_memories",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Exporting memories...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__export_graph",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Exporting graph...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__get_graph_statistics",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Getting graph stats...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_trace",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory events...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_lineage",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory lineage...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_explain",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Explaining memory state...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_conflicts",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Checking conflicts...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__verify_memory_integrity",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Verifying integrity...'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__scan_loops",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Scanning for loops...'" }]
-    },
-    {
-      "matcher": "Write",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Writing file...'" }]
-    },
-    {
-      "matcher": "Edit",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Editing file...'" }]
-    },
-    {
-      "matcher": "Bash",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Running command...'" }]
-    }
+    { "matcher": "mcp__serialmemory-memory__memory_search",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Searching memory...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_ingest",        "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Ingesting to memory...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_about_user",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Loading user persona...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_multi_hop_search", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Multi-hop memory search...'" }] },
+    { "matcher": "mcp__serialmemory-memory__initialise_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Starting session...'" }] },
+    { "matcher": "mcp__serialmemory-memory__end_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Ending session...'" }] },
+    { "matcher": "mcp__serialmemory-memory__instantiate_context",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Loading context...'" }] },
+    { "matcher": "mcp__serialmemory-memory__get_tools_in_category", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Browsing tools...'" }] },
+    { "matcher": "mcp__serialmemory-memory__execute_tool",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Executing tool...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_lineage",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory lineage...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_trace",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory...'" }] },
+    { "matcher": "Write", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Writing file...'" }] },
+    { "matcher": "Edit",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Editing file...'" }] },
+    { "matcher": "Bash",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Running command...'" }] }
   ],
   "PostToolUse": [
-    {
-      "matcher": "mcp__serialmemory__memory_search",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Search complete'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__memory_ingest",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Memory ingested'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__detect_contradictions",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Contradiction check complete'" }]
-    },
-    {
-      "matcher": "mcp__serialmemory__detect_hallucinations",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Hallucination check complete'" }]
-    },
-    {
-      "matcher": "Write",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'File written'" }]
-    },
-    {
-      "matcher": "Edit",
-      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'File edited'" }]
-    }
+    { "matcher": "mcp__serialmemory-memory__memory_search",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Search complete'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_ingest",        "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Memory ingested'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_about_user",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Persona loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_multi_hop_search", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Multi-hop complete'" }] },
+    { "matcher": "mcp__serialmemory-memory__initialise_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Session started'" }] },
+    { "matcher": "mcp__serialmemory-memory__end_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Session ended'" }] },
+    { "matcher": "mcp__serialmemory-memory__instantiate_context",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Context loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__get_tools_in_category", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tools listed'" }] },
+    { "matcher": "mcp__serialmemory-memory__execute_tool",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tool executed'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_lineage",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Lineage traced'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_trace",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Memory traced'" }] },
+    { "matcher": "Write", "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] },
+    { "matcher": "Edit",  "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] },
+    { "matcher": "Bash",  "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] }
   ],
   "Stop": [
     {
@@ -278,15 +191,20 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Hooks installed:"
-echo "  SessionStart  - Context reload prompts (compact / startup)"
-echo "  PreCompact    - Save critical context before compaction"
-echo "  SessionEnd    - Prompt to save session insights"
-echo "  PreToolUse    - Status indicators for MCP tools + Write/Edit/Bash"
-echo "  PostToolUse   - Completion indicators for MCP tools + Write/Edit"
-echo "  Stop          - Response complete indicator"
-echo "  SubagentStop  - Subagent completion indicator"
+echo "  SessionStart      - Context reload prompts (compact / startup)"
+echo "  UserPromptSubmit  - Context search reminder"
+echo "  PreCompact        - Auto-summarize session + save to memory"
+echo "  SessionEnd        - Auto-summarize session + save to memory"
+echo "  PreToolUse        - Status indicators for 12 MCP tools + Write/Edit/Bash"
+echo "  PostToolUse       - Completion indicators for MCP tools + session capture (Write/Edit/Bash)"
+echo "  Stop              - Response complete indicator"
+echo "  SubagentStop      - Subagent completion indicator"
 echo ""
-echo "MCP tool prefix: mcp__serialmemory__"
+echo "MCP tool prefix: mcp__serialmemory-memory__"
+echo "Tool coverage: 12 matchers (8 core + execute_tool + get_tools_in_category + memory_lineage + memory_trace)"
+echo "Gateway tools (42+) are covered by the execute_tool matcher."
+echo "New Phase 1-3 tools (drain_session_captures, capture_status, summarize_session, summarize_context)"
+echo "are accessible via execute_tool gateway."
 echo ""
 echo "Note: This only installs SerialMemory hooks."
 echo "      Your existing non-hook settings are preserved."

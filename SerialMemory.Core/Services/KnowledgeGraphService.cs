@@ -29,6 +29,7 @@ public class KnowledgeGraphService(
         bool extractEntities = true,
         string dedupMode = "warn",
         float dedupThreshold = 0.85f,
+        string? memoryType = null,
         CancellationToken cancellationToken = default)
     {
         // Generate embedding
@@ -39,7 +40,7 @@ public class KnowledgeGraphService(
         if (dedupMode is not "off")
         {
             var candidates = await _store.SearchMemoriesByEmbeddingAsync(
-                embedding, limit: 3, threshold: dedupThreshold, cancellationToken);
+                embedding, limit: 3, threshold: dedupThreshold, cancellationToken: cancellationToken);
 
             if (candidates.Count > 0)
             {
@@ -101,6 +102,11 @@ public class KnowledgeGraphService(
             }
         }
 
+        // Resolve memory type: explicit param > metadata > default
+        var resolvedMemoryType = memoryType
+            ?? (metadata?.TryGetValue("memory_type", out var mtVal) == true ? mtVal?.ToString() : null)
+            ?? "knowledge";
+
         // Create memory
         var memory = new Memory
         {
@@ -108,7 +114,8 @@ public class KnowledgeGraphService(
             Embedding = embedding,
             Source = source,
             ConversationSessionId = sessionId,
-            Metadata = metadata
+            Metadata = metadata,
+            MemoryType = resolvedMemoryType
         };
 
         var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
@@ -247,6 +254,7 @@ public class KnowledgeGraphService(
         int limit = 10,
         float threshold = 0.7f,
         bool includeEntities = true,
+        string? memoryType = null,
         CancellationToken cancellationToken = default)
     {
         var results = new List<MemorySearchResult>();
@@ -254,7 +262,7 @@ public class KnowledgeGraphService(
         if (mode == SearchMode.Semantic || mode == SearchMode.Hybrid)
         {
             var queryEmbedding = await _embeddingService.EmbedTextAsync(query, cancellationToken);
-            var semanticResults = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold, cancellationToken);
+            var semanticResults = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold, memoryType, cancellationToken);
 
             foreach (var memory in semanticResults)
             {
@@ -285,7 +293,7 @@ public class KnowledgeGraphService(
 
         if (mode == SearchMode.Text || mode == SearchMode.Hybrid)
         {
-            var textResults = await _store.SearchMemoriesByTextAsync(query, limit, cancellationToken);
+            var textResults = await _store.SearchMemoriesByTextAsync(query, limit, memoryType, cancellationToken);
 
             foreach (var memory in textResults)
             {
@@ -349,7 +357,7 @@ public class KnowledgeGraphService(
             maxResultsPerHop,
             0.5f,
             true,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         foreach (var memory in initialResults)
         {
@@ -460,7 +468,7 @@ public class KnowledgeGraphService(
             if (allMemoriesInRange.Count == 0)
             {
                 // No recent memories, but search older ones for context
-                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold: 0.5f, cancellationToken);
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold: 0.5f, cancellationToken: cancellationToken);
                 memories = olderMemories.Where(m => m.CreatedAt < fromUtc).ToList();
             }
             else
@@ -488,7 +496,7 @@ public class KnowledgeGraphService(
 
                 // Also fetch similar OLDER memories for context (up to 30% of limit)
                 var contextLimit = Math.Max(3, limit / 3);
-                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, contextLimit * 2, threshold: 0.5f, cancellationToken);
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, contextLimit * 2, threshold: 0.5f, cancellationToken: cancellationToken);
                 var olderContextMemories = olderMemories
                     .Where(m => m.CreatedAt < fromUtc) // Only older than date range
                     .Take(contextLimit)
@@ -706,6 +714,65 @@ public class KnowledgeGraphService(
         };
 
         await _store.SetUserPersonaAttributeAsync(persona, cancellationToken);
+    }
+
+    /// <summary>
+    /// Get active goals (stored as user_personas with attribute_type='goal' and confidence > 0)
+    /// </summary>
+    public async Task<List<UserPersona>> GetActiveGoalsAsync(
+        string userId = "default_user",
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetActiveGoalsAsync(userId, cancellationToken);
+    }
+
+    public async Task<List<Memory>> GetMemoriesByTypeAsync(
+        string memoryType,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetMemoriesByTypeAsync(memoryType, limit, cancellationToken);
+    }
+
+    public async Task<List<Memory>> GetMemoriesBySessionAsync(
+        Guid sessionId,
+        int limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetMemoriesBySessionAsync(sessionId, limit, cancellationToken);
+    }
+
+    public async Task<List<Memory>> GetMemoriesByDateRangeAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        int limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
+    }
+
+    /// <summary>
+    /// Set a goal (stored as user persona with attribute_type='goal', confidence=priority)
+    /// </summary>
+    public async Task SetGoalAsync(
+        string key,
+        string description,
+        float priority = 1.0f,
+        string userId = "default_user",
+        CancellationToken cancellationToken = default)
+    {
+        await SetUserPersonaAttributeAsync("goal", key, description, priority, userId, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Complete a goal (sets confidence=0 and marks value as completed, preserving history)
+    /// </summary>
+    public async Task CompleteGoalAsync(
+        string key,
+        string userId = "default_user",
+        CancellationToken cancellationToken = default)
+    {
+        await SetUserPersonaAttributeAsync("goal", key, "[COMPLETED]", 0f, userId, cancellationToken: cancellationToken);
     }
 
     #endregion

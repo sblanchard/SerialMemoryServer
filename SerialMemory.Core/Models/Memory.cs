@@ -13,6 +13,7 @@ public class Memory
     public string? Source { get; set; } // Where memory came from (e.g., "claude-desktop")
     public Guid? ConversationSessionId { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
+    public string MemoryType { get; set; } = "knowledge"; // error, decision, pattern, learning, knowledge, session_summary, auto_capture
 
     // Search result scores (populated by search queries, not stored in DB)
     public float Similarity { get; set; } // Cosine similarity from semantic search (0.0 to 1.0)

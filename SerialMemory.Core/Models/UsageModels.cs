@@ -72,6 +72,11 @@ public enum UsageEventType
     GetTools,
     UseTool,
 
+    // Goal operations
+    GoalSet,
+    GoalList,
+    GoalComplete,
+
     // Workspace operations
     WorkspaceCreate,
     WorkspaceList,
@@ -81,6 +86,14 @@ public enum UsageEventType
     SnapshotCreate,
     SnapshotList,
     SnapshotLoad,
+
+    // Auto-capture operations
+    DrainSessionCaptures,
+    CaptureStatus,
+
+    // Summarization operations
+    SummarizeSession,
+    SummarizeContext,
 
     // LLM operations
     LlmChat,
@@ -163,6 +176,11 @@ public static class UsageCreditCosts
         [UsageEventType.GetTools] = 0.0m,                // Free - just discovery
         [UsageEventType.UseTool] = 0.0m,                 // Free - usage tracked on inner tool
 
+        // Goal operations
+        [UsageEventType.GoalSet] = 0.1m,               // Simple upsert
+        [UsageEventType.GoalList] = 0.05m,              // Simple read
+        [UsageEventType.GoalComplete] = 0.1m,           // Simple update
+
         // Workspace operations
         [UsageEventType.WorkspaceCreate] = 0.1m,         // Simple write
         [UsageEventType.WorkspaceList] = 0.0m,           // Free - just info
@@ -172,6 +190,14 @@ public static class UsageCreditCosts
         [UsageEventType.SnapshotCreate] = 0.25m,         // State gathering + write
         [UsageEventType.SnapshotList] = 0.0m,            // Free - just info
         [UsageEventType.SnapshotLoad] = 0.1m,            // Simple read
+
+        // Auto-capture operations
+        [UsageEventType.DrainSessionCaptures] = 2.0m,   // Batch ingest from JSONL
+        [UsageEventType.CaptureStatus] = 0.0m,          // Free - just info
+
+        // Summarization operations
+        [UsageEventType.SummarizeSession] = 3.0m,       // LLM summarization
+        [UsageEventType.SummarizeContext] = 3.0m,        // LLM summarization
 
         // LLM operations
         [UsageEventType.LlmChat] = 2.0m,                // Chat completion
@@ -229,12 +255,19 @@ public static class UsageCreditCosts
         UsageEventType.EngineeringReason => "engineering_reason",
         UsageEventType.GetTools => "get_tools",
         UsageEventType.UseTool => "use_tool",
+        UsageEventType.GoalSet => "goal_set",
+        UsageEventType.GoalList => "goal_list",
+        UsageEventType.GoalComplete => "goal_complete",
         UsageEventType.WorkspaceCreate => "workspace_create",
         UsageEventType.WorkspaceList => "workspace_list",
         UsageEventType.WorkspaceSwitch => "workspace_switch",
         UsageEventType.SnapshotCreate => "snapshot_create",
         UsageEventType.SnapshotList => "snapshot_list",
         UsageEventType.SnapshotLoad => "snapshot_load",
+        UsageEventType.DrainSessionCaptures => "drain_session_captures",
+        UsageEventType.CaptureStatus => "capture_status",
+        UsageEventType.SummarizeSession => "summarize_session",
+        UsageEventType.SummarizeContext => "summarize_context",
         UsageEventType.LlmChat => "llm_chat",
         UsageEventType.Embedding => "embedding",
         UsageEventType.EntityExtraction => "entity_extraction",
@@ -281,11 +314,18 @@ public static class UsageCreditCosts
         "engineering_analyze" => UsageEventType.EngineeringAnalyze,
         "engineering_visualize" => UsageEventType.EngineeringVisualize,
         "engineering_reason" => UsageEventType.EngineeringReason,
+        "drain_session_captures" => UsageEventType.DrainSessionCaptures,
+        "capture_status" => UsageEventType.CaptureStatus,
+        "summarize_session" => UsageEventType.SummarizeSession,
+        "summarize_context" => UsageEventType.SummarizeContext,
         "llm_chat" => UsageEventType.LlmChat,
         "embedding" => UsageEventType.Embedding,
         "entity_extraction" => UsageEventType.EntityExtraction,
         "get_tools" => UsageEventType.GetTools,
         "use_tool" => UsageEventType.UseTool,
+        "goal_set" => UsageEventType.GoalSet,
+        "goal_list" => UsageEventType.GoalList,
+        "goal_complete" => UsageEventType.GoalComplete,
         "workspace_create" => UsageEventType.WorkspaceCreate,
         "workspace_list" => UsageEventType.WorkspaceList,
         "workspace_switch" => UsageEventType.WorkspaceSwitch,
