@@ -68,22 +68,10 @@ public sealed class RequiresPowerModeAttribute : Attribute, IAsyncAuthorizationF
             return;
         }
 
-        // In SelfHosted mode, only owners can access power mode
+        // In SelfHosted mode, allow all access
         if (deploymentContext?.IsSelfHosted == true)
         {
-            if (tenantContext?.IsOwner != true)
-            {
-                context.Result = new ObjectResult(new
-                {
-                    error = "OwnerRequired",
-                    message = "Power mode endpoints are only available to workspace owners."
-                })
-                {
-                    StatusCode = StatusCodes.Status403Forbidden
-                };
-                return;
-            }
-            // Owner in self-hosted mode - allowed
+            // Self-hosted mode: full access for everyone
             return;
         }
 
@@ -273,19 +261,12 @@ public sealed class PowerModeAccessMiddleware
                 return;
             }
 
-            // In SelfHosted mode, only owners can access power mode
+            // In SelfHosted mode, allow all access
             if (deploymentContext?.IsSelfHosted == true)
             {
-                if (tenantContext?.IsOwner != true)
-                {
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        error = "OwnerRequired",
-                        message = "Power mode endpoints are only available to workspace owners."
-                    });
-                    return;
-                }
+                // Self-hosted mode: full access for everyone
+                await _next(context);
+                return;
             }
             else
             {
