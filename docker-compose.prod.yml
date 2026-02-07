@@ -253,7 +253,7 @@ services:
       - web_admin_keys:/app/keys
     depends_on:
       api:
-        condition: service_healthy
+        condition: service_started
     networks:
       - internal
       - external
