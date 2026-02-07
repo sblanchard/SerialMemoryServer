@@ -525,7 +525,7 @@ public static class DashboardExtensions
         // GET /billing
         app.MapGet("/billing", async (
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -544,7 +544,7 @@ public static class DashboardExtensions
         app.MapGet("/billing/history", async (
             int? limit,
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -561,7 +561,7 @@ public static class DashboardExtensions
         app.MapPost("/billing/checkout", async (
             [FromBody] CheckoutRequest request,
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -587,7 +587,7 @@ public static class DashboardExtensions
         app.MapPost("/billing/portal", async (
             [FromBody] PortalRequest? request,
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -610,7 +610,7 @@ public static class DashboardExtensions
         // POST /billing/cancel
         app.MapPost("/billing/cancel", async (
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -628,7 +628,7 @@ public static class DashboardExtensions
         // POST /billing/resume
         app.MapPost("/billing/resume", async (
             ClaimsPrincipal user,
-            IBillingService billingService,
+            [FromServices] IBillingService billingService,
             CancellationToken ct) =>
         {
             var (tenantId, _, _) = GetTenantContext(user, selfHostedMode);
@@ -646,8 +646,8 @@ public static class DashboardExtensions
         // POST /webhook/stripe
         app.MapPost("/webhook/stripe", async (
             HttpRequest request,
-            IBillingService billingService,
-            ILogger<Program> logger,
+            [FromServices] IBillingService billingService,
+            [FromServices] ILogger<Program> logger,
             CancellationToken ct) =>
         {
             var payload = await new StreamReader(request.Body).ReadToEndAsync(ct);
