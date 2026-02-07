@@ -101,7 +101,7 @@ public static class ToolAnalyticsEndpoints
                 WHERE tenant_id = @TenantId
                     AND created_at > NOW() - make_interval(days => @Days)
                 """,
-                new { TenantId = tenantId, Days = periodDays });
+                new { TenantId = tenantId.ToString(), Days = periodDays });
 
             return Results.Ok(stats ?? new ToolStatsDto());
         })
@@ -140,7 +140,7 @@ public static class ToolAnalyticsEndpoints
                 ORDER BY calls DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Days = periodDays, Limit = Math.Clamp(limit ?? 10, 1, 50) });
+                new { TenantId = tenantId.ToString(), Days = periodDays, Limit = Math.Clamp(limit ?? 10, 1, 50) });
 
             // Enrich with category info
             var result = tools.Select(t => new
@@ -182,7 +182,7 @@ public static class ToolAnalyticsEndpoints
                     AND created_at > NOW() - make_interval(days => @Days)
                 GROUP BY tool_name
                 """,
-                new { TenantId = tenantId, Days = periodDays });
+                new { TenantId = tenantId.ToString(), Days = periodDays });
 
             // Aggregate by category
             var categories = toolCounts
@@ -231,7 +231,7 @@ public static class ToolAnalyticsEndpoints
                 ORDER BY created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 50, 1, 200) });
+                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 50, 1, 200) });
 
             return Results.Ok(new { events = events.ToList() });
         })
