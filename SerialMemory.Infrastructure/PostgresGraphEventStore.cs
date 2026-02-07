@@ -36,7 +36,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 previous_state, new_state, confidence,
                 triggered_by, memory_id, session_id, occurred_at, metadata
             ) VALUES (
-                @EventId, @EventType,
+                @EventId, @EventType::graph_event_type,
                 @NodeId, @NodeName, @NodeType,
                 @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                 @SourceNodeName, @TargetNodeName,
@@ -90,7 +90,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                         previous_state, new_state, confidence,
                         triggered_by, memory_id, session_id, occurred_at, metadata
                     ) VALUES (
-                        @EventId, @EventType,
+                        @EventId, @EventType::graph_event_type,
                         @NodeId, @NodeName, @NodeType,
                         @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                         @SourceNodeName, @TargetNodeName,
