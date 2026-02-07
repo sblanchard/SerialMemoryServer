@@ -39,7 +39,7 @@ public static class ExportEndpoints
                     (SELECT MAX(created_at) FROM exports WHERE tenant_id = @TenantId AND status = 'completed') AS last_export_at,
                     (SELECT COUNT(*) FROM exports WHERE tenant_id = @TenantId) AS total_exports
                 """,
-                new { TenantId = tenantId.ToString() });
+                new { TenantId = tenantId });
 
             return Results.Ok(stats ?? new ExportStatsDto());
         })
@@ -72,7 +72,7 @@ public static class ExportEndpoints
             // Check no export already running
             var running = await conn.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM exports WHERE tenant_id = @TenantId AND status IN ('pending', 'running')",
-                new { TenantId = tenantId.ToString() });
+                new { TenantId = tenantId });
 
             if (running > 0)
                 return Results.Conflict(new { error = "export_in_progress", message = "An export is already running" });
@@ -94,12 +94,12 @@ public static class ExportEndpoints
                 INSERT INTO exports (id, tenant_id, format, status, options, created_at)
                 VALUES (@Id, @TenantId, @Format, 'pending', @Options::jsonb, NOW())
                 """,
-                new { Id = exportId, TenantId = tenantId.ToString(), request.Format, Options = options });
+                new { Id = exportId, TenantId = tenantId, request.Format, Options = options });
 
             // Guard against excessively large inline exports
             var memoryCount = await conn.ExecuteScalarAsync<long>(
                 "SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND is_active = true",
-                new { TenantId = tenantId.ToString() });
+                new { TenantId = tenantId });
 
             if (memoryCount > 100_000)
                 return Results.UnprocessableEntity(new { error = "dataset_too_large", message = "Dataset exceeds 100k memories. Use the background export API instead." });
@@ -183,7 +183,7 @@ public static class ExportEndpoints
                 ORDER BY created_at DESC
                 LIMIT @Limit
                 """,
-                new { TenantId = tenantId.ToString(), Limit = Math.Clamp(limit ?? 20, 1, 100) });
+                new { TenantId = tenantId, Limit = Math.Clamp(limit ?? 20, 1, 100) });
 
             return Results.Ok(new { exports = exports.ToList() });
         })
@@ -207,7 +207,7 @@ public static class ExportEndpoints
 
             var export = await conn.QueryFirstOrDefaultAsync<ExportFileDto>(
                 "SELECT file_path, format FROM exports WHERE id = @Id AND tenant_id = @TenantId AND status = 'completed'",
-                new { Id = id, TenantId = tenantId.ToString() });
+                new { Id = id, TenantId = tenantId });
 
             if (export == null || string.IsNullOrEmpty(export.file_path))
                 return Results.NotFound(new { error = "not_found", message = "Export not found or file missing" });
@@ -247,7 +247,7 @@ public static class ExportEndpoints
             ORDER BY created_at DESC
             LIMIT 50000
             """,
-            new { TenantId = tenantId.ToString(), MinConfidence = request.MinConfidence });
+            new { TenantId = tenantId, MinConfidence = request.MinConfidence });
 
         object? entities = null;
         object? relationships = null;
@@ -256,11 +256,11 @@ public static class ExportEndpoints
         {
             entities = await conn.QueryAsync<dynamic>(
                 "SELECT id, name, entity_type, canonical_name, created_at FROM entities WHERE tenant_id = @TenantId ORDER BY name LIMIT 50000",
-                new { TenantId = tenantId.ToString() });
+                new { TenantId = tenantId });
 
             relationships = await conn.QueryAsync<dynamic>(
                 "SELECT id, source_entity_id, target_entity_id, relationship_type, confidence, created_at FROM entity_relationships WHERE tenant_id = @TenantId LIMIT 50000",
-                new { TenantId = tenantId.ToString() });
+                new { TenantId = tenantId });
         }
 
         return new
