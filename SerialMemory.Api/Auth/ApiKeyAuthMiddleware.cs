@@ -175,11 +175,15 @@ public sealed class ApiKeyAuthMiddleware
         // Get default workspace for tenant
         var workspaceId = await GetDefaultWorkspaceAsync(validationResult.TenantId, apiKeyService, context.RequestAborted);
 
-        // Set tenant context
+        // Get user role from tenant_users table
+        var userRole = await apiKeyService.GetUserRoleAsync(validationResult.TenantId, validationResult.CreatedBy, context.RequestAborted);
+
+        // Set tenant context with user role
         tenantContext.SetContext(
             tenantId: validationResult.TenantId.ToString(),
             workspaceId: workspaceId,
             userId: validationResult.CreatedBy,
+            userRole: userRole,
             sessionId: null,
             isLabMode: isLabMode,
             scopes: validationResult.Scopes);

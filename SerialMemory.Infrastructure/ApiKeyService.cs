@@ -733,4 +733,15 @@ public sealed class ApiKeyService : IApiKeyService
         public DateTimeOffset cycle_start { get; set; }
         public DateTimeOffset cycle_end { get; set; }
     }
+
+    public async Task<string?> GetUserRoleAsync(Guid tenantId, string userId, CancellationToken cancellationToken = default)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+
+        var role = await conn.QueryFirstOrDefaultAsync<string>(
+            "SELECT role FROM tenant_users WHERE tenant_id = @TenantId AND user_id = @UserId",
+            new { TenantId = tenantId, UserId = userId });
+
+        return role;
+    }
 }

@@ -63,6 +63,14 @@ public interface IApiKeyService
         Guid tenantId,
         string workspaceId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the user's role in a tenant.
+    /// </summary>
+    Task<string?> GetUserRoleAsync(
+        Guid tenantId,
+        string userId,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
