@@ -14,10 +14,21 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     /// <summary>
-    /// Returns the event type as a string matching the PostgreSQL enum values.
-    /// The enum uses PascalCase: 'NodeCreated', 'NodeUpdated', etc.
+    /// Returns the event type as a snake_case string matching the PostgreSQL CHECK constraint.
+    /// The production DB uses: 'node_created', 'node_updated', etc.
     /// </summary>
-    private static string ToDbEventType(GraphEventType eventType) => eventType.ToString();
+    private static string ToDbEventType(GraphEventType eventType) => eventType switch
+    {
+        GraphEventType.NodeCreated => "node_created",
+        GraphEventType.NodeUpdated => "node_updated",
+        GraphEventType.NodeDeleted => "node_deleted",
+        GraphEventType.EdgeCreated => "edge_created",
+        GraphEventType.EdgeUpdated => "edge_updated",
+        GraphEventType.EdgeDeleted => "edge_deleted",
+        GraphEventType.NodeMerged => "node_merged",
+        GraphEventType.EdgeStrengthened => "edge_strengthened",
+        _ => eventType.ToString().ToLowerInvariant()
+    };
 
     private NpgsqlConnection CreateConnection() => new(connectionString);
 
@@ -36,7 +47,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                 previous_state, new_state, confidence,
                 triggered_by, memory_id, session_id, occurred_at, metadata
             ) VALUES (
-                @EventId, @EventType::graph_event_type,
+                @EventId, @EventType,
                 @NodeId, @NodeName, @NodeType,
                 @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                 @SourceNodeName, @TargetNodeName,
@@ -90,7 +101,7 @@ public class PostgresGraphEventStore(string connectionString) : IGraphEventStore
                         previous_state, new_state, confidence,
                         triggered_by, memory_id, session_id, occurred_at, metadata
                     ) VALUES (
-                        @EventId, @EventType::graph_event_type,
+                        @EventId, @EventType,
                         @NodeId, @NodeName, @NodeType,
                         @EdgeId, @EdgeType, @SourceNodeId, @TargetNodeId,
                         @SourceNodeName, @TargetNodeName,

@@ -298,25 +298,31 @@ public sealed class UsageService : IUsageService, IDisposable
             // Use INSERT with ON CONFLICT to handle duplicates gracefully
             // This is slightly less efficient than COPY but prevents duplicate key errors
             const string insertSql = """
-                INSERT INTO usage_events (id, tenant_id, workspace_id, billing_cycle_id, tool_name,
-                                          credits_used, created_at, memory_id, user_id, session_id,
+                INSERT INTO usage_events (id, tenant_id, workspace_id, billing_cycle_id,
+                                          event_type, tool_name, credits_consumed, credits_used,
+                                          event_timestamp, created_at, memory_id, user_id, session_id,
                                           latency_ms, success, error_message, metadata)
-                VALUES (@Id, @TenantId, @WorkspaceId, @BillingCycleId, @ToolName,
-                        @CreditsUsed, @CreatedAt, @MemoryId, @UserId, @SessionId,
+                VALUES (@Id, @TenantId, @WorkspaceId, @BillingCycleId,
+                        @EventType::usage_event_type, @ToolName, @CreditsConsumed, @CreditsUsed,
+                        @EventTimestamp, @CreatedAt, @MemoryId, @UserId, @SessionId,
                         @LatencyMs, @Success, @ErrorMessage, @Metadata::jsonb)
                 ON CONFLICT (id) DO NOTHING
                 """;
 
             foreach (var evt in events)
             {
+                var snakeCase = UsageCreditCosts.ToSnakeCase(evt.EventType);
                 await conn.ExecuteAsync(insertSql, new
                 {
                     evt.Id,
                     evt.TenantId,
                     evt.WorkspaceId,
                     evt.BillingCycleId,
-                    ToolName = UsageCreditCosts.ToSnakeCase(evt.EventType),
+                    EventType = snakeCase,
+                    ToolName = snakeCase,
+                    evt.CreditsConsumed,
                     CreditsUsed = evt.CreditsConsumed,
+                    evt.EventTimestamp,
                     CreatedAt = evt.EventTimestamp,
                     evt.MemoryId,
                     evt.UserId,

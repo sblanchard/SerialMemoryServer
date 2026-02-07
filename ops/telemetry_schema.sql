@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS graph_events (
     event_type TEXT NOT NULL CHECK (event_type IN (
         'node_created', 'node_updated', 'node_deleted',
         'edge_created', 'edge_updated', 'edge_deleted',
-        'batch_import', 'relationship_discovered'
+        'batch_import', 'relationship_discovered',
+        'node_merged', 'edge_strengthened'
     )),
     node_id UUID,
     edge_id UUID,
