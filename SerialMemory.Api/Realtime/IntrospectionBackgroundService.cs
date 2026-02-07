@@ -437,15 +437,15 @@ public sealed class IntrospectionBackgroundService : BackgroundService
             ORDER BY occurred_at DESC
             LIMIT 20;
 
-            -- Stats from entities and relationships (handle both PascalCase enum and snake_case legacy)
+            -- Stats from entities and relationships (PascalCase matches graph_event_type enum)
             SELECT
                 (SELECT COUNT(*) FROM entities) AS total_nodes,
                 (SELECT COUNT(*) FROM entity_relationships) AS total_edges,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeCreated', 'node_created') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeUpdated', 'node_updated') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('NodeDeleted', 'node_deleted') AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('EdgeCreated', 'edge_created') AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_created_24h,
-                (SELECT COUNT(*) FROM graph_events WHERE event_type IN ('EdgeDeleted', 'edge_deleted') AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeCreated' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeUpdated' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_updated_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'NodeDeleted' AND occurred_at > NOW() - INTERVAL '24 hours') AS nodes_deleted_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeCreated' AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_created_24h,
+                (SELECT COUNT(*) FROM graph_events WHERE event_type = 'EdgeDeleted' AND occurred_at > NOW() - INTERVAL '24 hours') AS edges_deleted_24h;
         ";
 
         await using var multi = await conn.QueryMultipleAsync(sql);
