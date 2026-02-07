@@ -60,6 +60,16 @@
         "title": "SerialTree: Show Code Findings"
       },
       {
+        "command": "serialtree.orchestrateAgents",
+        "title": "SerialTree: Orchestrate Agents",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "serialtree.exploreCodebase",
+        "title": "SerialTree: Explore Codebase",
+        "icon": "$(telescope)"
+      },
+      {
         "command": "serialtree.refreshActivity",
         "title": "Refresh",
         "icon": "$(refresh)"
@@ -107,6 +117,16 @@
         "key": "ctrl+shift+c",
         "mac": "cmd+shift+c",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "serialtree.orchestrateAgents",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "serialtree.exploreCodebase",
+        "key": "ctrl+shift+alt+e",
+        "mac": "cmd+shift+alt+e"
       }
     ],
     "viewsContainers": {
@@ -244,6 +264,41 @@
           "type": "boolean",
           "default": true,
           "description": "Show activity feed sidebar on startup"
+        },
+        "serialtree.agentPoolSize": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Maximum concurrent agent terminals"
+        },
+        "serialtree.agentTimeout": {
+          "type": "number",
+          "default": 300000,
+          "description": "Agent timeout in milliseconds (default: 5 minutes)"
+        },
+        "serialtree.agentScope": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["src/**/*.ts", "**/*.cs"],
+          "description": "Default glob patterns for agent analysis scope"
+        },
+        "serialtree.claudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "description": "Claude CLI command or path to executable"
+        },
+        "serialtree.explorerMaxModules": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 12,
+          "description": "Maximum number of top-level modules for codebase exploration"
+        },
+        "serialtree.explorerTimeout": {
+          "type": "number",
+          "default": 600000,
+          "description": "Explorer agent timeout in milliseconds (default: 10 minutes)"
         }
       }
     }

@@ -159,19 +159,31 @@ function MemoryList({ memories, title }: {
     );
   }
 
+  const handleClick = (memory: SearchResult) => {
+    vscode.postMessage({ type: 'openMemory', memory });
+  };
+
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8, color: 'var(--vscode-descriptionForeground)', textTransform: 'uppercase' }}>
         {title} ({memories.length})
       </div>
       {memories.map(memory => (
-        <div key={memory.id} style={{
-          padding: '8px 10px',
-          marginBottom: 6,
-          background: 'var(--vscode-list-hoverBackground)',
-          borderRadius: 4,
-          borderLeft: '3px solid var(--vscode-focusBorder)',
-        }}>
+        <div
+          key={memory.id}
+          onClick={() => handleClick(memory)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter') { handleClick(memory); } }}
+          style={{
+            padding: '8px 10px',
+            marginBottom: 6,
+            background: 'var(--vscode-list-hoverBackground)',
+            borderRadius: 4,
+            borderLeft: '3px solid var(--vscode-focusBorder)',
+            cursor: 'pointer',
+          }}
+        >
           <div style={{ fontSize: 12, marginBottom: 4, lineHeight: 1.4 }}>
             {truncate(memory.content, 120)}
           </div>

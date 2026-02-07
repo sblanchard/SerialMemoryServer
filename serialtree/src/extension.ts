@@ -4,6 +4,7 @@ import { ApiClient } from './services/ApiClient';
 import { JournalWatcher } from './services/JournalWatcher';
 import { ClaudeCodeBridge } from './services/ClaudeCodeBridge';
 import { CodeAnalyzer } from './services/CodeAnalyzer';
+import { AgentOrchestrator } from './services/AgentOrchestrator';
 import { ActivityProvider } from './providers/ActivityProvider';
 import { FindingsProvider } from './providers/FindingsProvider';
 import { SearchViewProvider } from './providers/SearchViewProvider';
@@ -12,6 +13,8 @@ import { ingestSelection } from './commands/ingestSelection';
 import { analyzeWorkspace } from './commands/analyzeWorkspace';
 import { sendToClaudeCode } from './commands/sendToClaudeCode';
 import { summarizeSession } from './commands/summarizeSession';
+import { orchestrateAgents } from './commands/orchestrateAgents';
+import { exploreCodebase } from './commands/exploreCodebase';
 import { EXTENSION_ID, CMD, VIEW, CONFIG } from './constants';
 import type { CodeFinding } from './types/memory';
 
@@ -27,6 +30,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const journalWatcher = new JournalWatcher();
   const claudeBridge = new ClaudeCodeBridge();
   const codeAnalyzer = new CodeAnalyzer(mcpClient);
+  const agentOrchestrator = new AgentOrchestrator(mcpClient, apiClient, outputChannel);
 
   // Forward MCP logs to output channel
   mcpClient.on('log', (msg: string) => outputChannel.appendLine(`[MCP] ${msg}`));
@@ -120,6 +124,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         findingsProvider.dismissFinding(item.finding);
       }
     }),
+
+    vscode.commands.registerCommand(CMD.ORCHESTRATE_AGENTS, () =>
+      orchestrateAgents(agentOrchestrator, findingsProvider),
+    ),
+
+    vscode.commands.registerCommand(CMD.EXPLORE_CODEBASE, () =>
+      exploreCodebase(agentOrchestrator),
+    ),
   );
 
   // --- Auto-analyze on open ---
@@ -135,6 +147,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { dispose: () => graphProvider.dispose() },
     { dispose: () => activityProvider.dispose() },
     { dispose: () => findingsProvider.dispose() },
+    { dispose: () => agentOrchestrator.dispose() },
     outputChannel,
   );
 

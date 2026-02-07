@@ -38,6 +38,9 @@ export class SearchViewProvider implements vscode.WebviewViewProvider {
         case 'loadRecent':
           await this.handleLoadRecent();
           break;
+        case 'openMemory':
+          await this.handleOpenMemory(message.memory);
+          break;
       }
     });
 
@@ -84,6 +87,47 @@ export class SearchViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async handleOpenMemory(memory: MemoryPayload): Promise<void> {
+    if (!memory) {
+      return;
+    }
+
+    const entities = (memory.entities ?? []).map((e: { name?: string; type?: string } | string) =>
+      typeof e === 'string' ? e : `${e.name} (${e.type ?? 'unknown'})`,
+    );
+
+    const lines = [
+      `# Memory: ${memory.id}`,
+      '',
+      `**Created:** ${memory.createdAt}`,
+    ];
+
+    if (memory.memoryType) {
+      lines.push(`**Type:** ${memory.memoryType}`);
+    }
+
+    if (memory.source) {
+      lines.push(`**Source:** ${memory.source}`);
+    }
+
+    if (memory.similarity !== undefined && memory.similarity > 0) {
+      lines.push(`**Similarity:** ${Math.round(memory.similarity * 100)}%`);
+    }
+
+    if (entities.length > 0) {
+      lines.push(`**Entities:** ${entities.join(', ')}`);
+    }
+
+    lines.push('', '---', '', memory.content);
+
+    const doc = await vscode.workspace.openTextDocument({
+      content: lines.join('\n'),
+      language: 'markdown',
+    });
+
+    await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
   private postMessage(message: Record<string, unknown>): void {
     this.view?.webview.postMessage(message);
   }
@@ -121,10 +165,21 @@ export class SearchViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
+interface MemoryPayload {
+  readonly id: string;
+  readonly content: string;
+  readonly createdAt: string;
+  readonly similarity?: number;
+  readonly entities?: ReadonlyArray<{ name?: string; type?: string } | string>;
+  readonly memoryType?: string;
+  readonly source?: string;
+}
+
 interface WebviewMessage {
   type: string;
   query: string;
   mode: 'semantic' | 'text' | 'hybrid';
+  memory: MemoryPayload;
 }
 
 function getNonce(): string {

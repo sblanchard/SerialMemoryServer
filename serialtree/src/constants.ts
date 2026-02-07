@@ -15,6 +15,8 @@ export const CMD = {
   FINDING_SEND_TO_CLAUDE: `${EXTENSION_ID}.findingSendToClaude`,
   FINDING_OPEN_FILE: `${EXTENSION_ID}.findingOpenFile`,
   FINDING_DISMISS: `${EXTENSION_ID}.findingDismiss`,
+  ORCHESTRATE_AGENTS: `${EXTENSION_ID}.orchestrateAgents`,
+  EXPLORE_CODEBASE: `${EXTENSION_ID}.exploreCodebase`,
 } as const;
 
 // View IDs
@@ -36,6 +38,12 @@ export const CONFIG = {
   MAX_FILE_LENGTH: 'maxFileLength',
   SESSION_LOG_DIR: 'sessionLogDir',
   SHOW_ACTIVITY_ON_START: 'showActivityOnStart',
+  AGENT_POOL_SIZE: 'agentPoolSize',
+  AGENT_TIMEOUT: 'agentTimeout',
+  AGENT_SCOPE: 'agentScope',
+  CLAUDE_COMMAND: 'claudeCommand',
+  EXPLORER_MAX_MODULES: 'explorerMaxModules',
+  EXPLORER_TIMEOUT: 'explorerTimeout',
 } as const;
 
 // Defaults
@@ -47,6 +55,14 @@ export const DEFAULTS = {
   MAX_FILE_LENGTH: 800,
   SESSION_LOG_DIR: '~/.cc-serialmemory/sessions',
   ANALYSIS_SCOPE: ['src/**/*.ts', '**/*.cs'],
+  AGENT_POOL_SIZE: 3,
+  AGENT_TIMEOUT: 300_000,
+  AGENT_SCOPE: ['src/**/*.ts', '**/*.cs'],
+  CLAUDE_COMMAND: 'claude',
+  AGENT_POLL_INTERVAL: 10_000,
+  EXPLORER_MAX_MODULES: 7,
+  EXPLORER_TIMEOUT: 600_000,
+  EXPLORER_SUB_TIMEOUT: 300_000,
 } as const;
 
 // Memory types for QuickPick
