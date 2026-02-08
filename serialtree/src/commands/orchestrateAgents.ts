@@ -57,31 +57,38 @@ export async function orchestrateAgents(
   const config = vscode.workspace.getConfiguration(EXTENSION_ID);
   const scope = config.get<string[]>(CONFIG.AGENT_SCOPE) ?? DEFAULTS.AGENT_SCOPE;
 
-  const result = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `SerialTree: Running ${roles.length} agent(s)...`,
-      cancellable: true,
-    },
-    async (progress, token) => {
-      const updateProgress = setInterval(() => {
-        if (orchestrator.isRunning) {
-          progress.report({ message: 'Agents analyzing codebase...' });
+  let result;
+  try {
+    result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `SerialTree: Running ${roles.length} agent(s)...`,
+        cancellable: true,
+      },
+      async (progress, token) => {
+        const updateProgress = setInterval(() => {
+          if (orchestrator.isRunning) {
+            progress.report({ message: 'Agents analyzing codebase...' });
+          }
+        }, 5000);
+
+        token.onCancellationRequested(() => {
+          clearInterval(updateProgress);
+          orchestrator.cancelRun();
+        });
+
+        try {
+          return await orchestrator.orchestrateAnalysis(roles, scope, { customPrompt });
+        } finally {
+          clearInterval(updateProgress);
         }
-      }, 5000);
-
-      token.onCancellationRequested(() => {
-        clearInterval(updateProgress);
-        orchestrator.cancelRun();
-      });
-
-      try {
-        return await orchestrator.orchestrateAnalysis(roles, scope, { customPrompt });
-      } finally {
-        clearInterval(updateProgress);
-      }
-    },
-  );
+      },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`SerialTree Agents: ${message}`);
+    return;
+  }
 
   if (!result) {
     return;

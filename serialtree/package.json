@@ -93,6 +93,11 @@
         "command": "serialtree.findingDismiss",
         "title": "Dismiss",
         "icon": "$(close)"
+      },
+      {
+        "command": "serialtree.showCanvas",
+        "title": "SerialTree: Show Spatial Canvas",
+        "icon": "$(layout)"
       }
     ],
     "keybindings": [
@@ -127,6 +132,11 @@
         "command": "serialtree.exploreCodebase",
         "key": "ctrl+shift+alt+e",
         "mac": "cmd+shift+alt+e"
+      },
+      {
+        "command": "serialtree.showCanvas",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
       }
     ],
     "viewsContainers": {
@@ -140,6 +150,11 @@
     },
     "views": {
       "serialtree": [
+        {
+          "id": "serialtree.actions",
+          "name": "Quick Actions",
+          "type": "tree"
+        },
         {
           "id": "serialtree.searchView",
           "name": "Memory Search",
@@ -157,6 +172,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "serialtree.actions",
+        "contents": "Open the spatial canvas to visualize your knowledge graph.\n[$(layout) Open Spatial Canvas](command:serialtree.showCanvas)\nOr open the 3D graph view.\n[$(graph) Open 3D Graph](command:serialtree.showGraph)\nRun AI agents to review your code.\n[$(hubot) Orchestrate Agents](command:serialtree.orchestrateAgents)\n[$(telescope) Explore Codebase](command:serialtree.exploreCodebase)\n[$(beaker) Analyze Workspace](command:serialtree.analyzeWorkspace)"
+      }
+    ],
     "menus": {
       "editor/context": [
         {
@@ -172,19 +193,44 @@
       ],
       "view/title": [
         {
+          "command": "serialtree.showCanvas",
+          "when": "view == serialtree.actions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serialtree.showGraph",
+          "when": "view == serialtree.actions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "serialtree.orchestrateAgents",
+          "when": "view == serialtree.actions",
+          "group": "navigation@3"
+        },
+        {
           "command": "serialtree.refreshActivity",
           "when": "view == serialtree.activity",
           "group": "navigation"
         },
         {
+          "command": "serialtree.showCanvas",
+          "when": "view == serialtree.activity",
+          "group": "navigation@2"
+        },
+        {
           "command": "serialtree.analyzeWorkspace",
           "when": "view == serialtree.findings",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "serialtree.refreshFindings",
           "when": "view == serialtree.findings",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "serialtree.showCanvas",
+          "when": "view == serialtree.findings",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -299,6 +345,24 @@
           "type": "number",
           "default": 600000,
           "description": "Explorer agent timeout in milliseconds (default: 10 minutes)"
+        },
+        "serialtree.canvasLayout": {
+          "type": "string",
+          "enum": ["dagre", "force", "grid", "radial"],
+          "default": "grid",
+          "description": "Default layout algorithm for the spatial canvas"
+        },
+        "serialtree.canvasShowMinimap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show minimap in the spatial canvas"
+        },
+        "serialtree.canvasMaxNodes": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "maximum": 2000,
+          "description": "Maximum number of nodes to display on the spatial canvas"
         }
       }
     }
@@ -312,7 +376,8 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "@vscode/webview-ui-toolkit": "^1.4.0"
+    "@vscode/webview-ui-toolkit": "^1.4.0",
+    "@xyflow/react": "^12.10.0"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.0",

@@ -17,12 +17,15 @@ export const CMD = {
   FINDING_DISMISS: `${EXTENSION_ID}.findingDismiss`,
   ORCHESTRATE_AGENTS: `${EXTENSION_ID}.orchestrateAgents`,
   EXPLORE_CODEBASE: `${EXTENSION_ID}.exploreCodebase`,
+  SHOW_CANVAS: `${EXTENSION_ID}.showCanvas`,
 } as const;
 
 // View IDs
 export const VIEW = {
+  ACTIONS: `${EXTENSION_ID}.actions`,
   ACTIVITY: `${EXTENSION_ID}.activity`,
   FINDINGS: `${EXTENSION_ID}.findings`,
+  CANVAS: `${EXTENSION_ID}.canvas`,
 } as const;
 
 // Config keys
@@ -44,6 +47,9 @@ export const CONFIG = {
   CLAUDE_COMMAND: 'claudeCommand',
   EXPLORER_MAX_MODULES: 'explorerMaxModules',
   EXPLORER_TIMEOUT: 'explorerTimeout',
+  CANVAS_LAYOUT: 'canvasLayout',
+  CANVAS_SHOW_MINIMAP: 'canvasShowMinimap',
+  CANVAS_MAX_NODES: 'canvasMaxNodes',
 } as const;
 
 // Defaults
@@ -63,6 +69,9 @@ export const DEFAULTS = {
   EXPLORER_MAX_MODULES: 7,
   EXPLORER_TIMEOUT: 600_000,
   EXPLORER_SUB_TIMEOUT: 300_000,
+  CANVAS_LAYOUT: 'grid' as const,
+  CANVAS_SHOW_MINIMAP: true,
+  CANVAS_MAX_NODES: 500,
 } as const;
 
 // Memory types for QuickPick

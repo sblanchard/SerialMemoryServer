@@ -9,6 +9,7 @@ import { ActivityProvider } from './providers/ActivityProvider';
 import { FindingsProvider } from './providers/FindingsProvider';
 import { SearchViewProvider } from './providers/SearchViewProvider';
 import { GraphViewProvider } from './providers/GraphViewProvider';
+import { CanvasViewProvider } from './providers/CanvasViewProvider';
 import { ingestSelection } from './commands/ingestSelection';
 import { analyzeWorkspace } from './commands/analyzeWorkspace';
 import { sendToClaudeCode } from './commands/sendToClaudeCode';
@@ -52,7 +53,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const activityProvider = new ActivityProvider(journalWatcher);
   const findingsProvider = new FindingsProvider();
 
+  // Empty provider for Quick Actions — shows viewsWelcome buttons
+  const emptyTreeProvider: vscode.TreeDataProvider<never> = {
+    getTreeItem: () => new vscode.TreeItem(''),
+    getChildren: () => [],
+  };
+
   context.subscriptions.push(
+    vscode.window.registerTreeDataProvider(VIEW.ACTIONS, emptyTreeProvider),
     vscode.window.registerTreeDataProvider(VIEW.ACTIVITY, activityProvider),
     vscode.window.registerTreeDataProvider(VIEW.FINDINGS, findingsProvider),
   );
@@ -60,6 +68,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // --- Webview Providers ---
   const searchProvider = new SearchViewProvider(context.extensionUri, mcpClient, apiClient);
   const graphProvider = new GraphViewProvider(context.extensionUri, mcpClient, apiClient);
+  const canvasProvider = new CanvasViewProvider(
+    context.extensionUri,
+    mcpClient,
+    apiClient,
+    agentOrchestrator,
+    journalWatcher,
+    findingsProvider,
+    claudeBridge,
+  );
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SearchViewProvider.viewType, searchProvider),
@@ -132,6 +149,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand(CMD.EXPLORE_CODEBASE, () =>
       exploreCodebase(agentOrchestrator),
     ),
+
+    vscode.commands.registerCommand(CMD.SHOW_CANVAS, () => canvasProvider.show()),
   );
 
   // --- Auto-analyze on open ---
@@ -145,6 +164,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { dispose: () => mcpClient.dispose() },
     { dispose: () => journalWatcher.dispose() },
     { dispose: () => graphProvider.dispose() },
+    { dispose: () => canvasProvider.dispose() },
     { dispose: () => activityProvider.dispose() },
     { dispose: () => findingsProvider.dispose() },
     { dispose: () => agentOrchestrator.dispose() },

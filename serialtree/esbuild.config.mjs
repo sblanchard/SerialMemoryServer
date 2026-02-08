@@ -53,8 +53,26 @@ const searchWebviewConfig = {
   },
 };
 
+// Canvas webview bundle (browser, IIFE)
+const canvasWebviewConfig = {
+  entryPoints: ['webview/canvas/canvas.tsx'],
+  bundle: true,
+  outfile: 'dist/webview/canvas.js',
+  format: 'iife',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: !isProduction,
+  minify: isProduction,
+  treeShaking: true,
+  jsx: 'automatic',
+  loader: { '.tsx': 'tsx', '.ts': 'ts', '.css': 'css' },
+  define: {
+    'process.env.NODE_ENV': isProduction ? '"production"' : '"development"',
+  },
+};
+
 async function build() {
-  const configs = [extensionConfig, graphWebviewConfig, searchWebviewConfig];
+  const configs = [extensionConfig, graphWebviewConfig, searchWebviewConfig, canvasWebviewConfig];
 
   if (isWatch) {
     const contexts = await Promise.all(

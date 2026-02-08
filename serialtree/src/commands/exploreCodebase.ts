@@ -59,42 +59,49 @@ export async function exploreCodebase(orchestrator: AgentOrchestrator): Promise<
 
   const scope = config.get<string[]>(CONFIG.AGENT_SCOPE) ?? DEFAULTS.AGENT_SCOPE;
 
-  const result = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'SerialTree: Exploring codebase...',
-      cancellable: true,
-    },
-    async (progress, token) => {
-      const phaseMessages = selectedDepth.decompose
-        ? ['Phase 1: Explorer mapping modules...', 'Phase 2: Sub-agents decomposing modules...']
-        : ['Explorer mapping modules...'];
+  let result;
+  try {
+    result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'SerialTree: Exploring codebase...',
+        cancellable: true,
+      },
+      async (progress, token) => {
+        const phaseMessages = selectedDepth.decompose
+          ? ['Phase 1: Explorer mapping modules...', 'Phase 2: Sub-agents decomposing modules...']
+          : ['Explorer mapping modules...'];
 
-      let phaseIndex = 0;
-      progress.report({ message: phaseMessages[0] });
+        let phaseIndex = 0;
+        progress.report({ message: phaseMessages[0] });
 
-      const progressTimer = setInterval(() => {
-        if (orchestrator.isRunning && selectedDepth.decompose && phaseIndex === 0) {
-          phaseIndex = 1;
-          progress.report({ message: phaseMessages[1] });
-        }
-      }, 15_000);
+        const progressTimer = setInterval(() => {
+          if (orchestrator.isRunning && selectedDepth.decompose && phaseIndex === 0) {
+            phaseIndex = 1;
+            progress.report({ message: phaseMessages[1] });
+          }
+        }, 15_000);
 
-      token.onCancellationRequested(() => {
-        clearInterval(progressTimer);
-        orchestrator.cancelRun();
-      });
-
-      try {
-        return await orchestrator.orchestrateExploration(scope, {
-          maxModules: selectedCount.value,
-          decompose: selectedDepth.decompose,
+        token.onCancellationRequested(() => {
+          clearInterval(progressTimer);
+          orchestrator.cancelRun();
         });
-      } finally {
-        clearInterval(progressTimer);
-      }
-    },
-  );
+
+        try {
+          return await orchestrator.orchestrateExploration(scope, {
+            maxModules: selectedCount.value,
+            decompose: selectedDepth.decompose,
+          });
+        } finally {
+          clearInterval(progressTimer);
+        }
+      },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`SerialTree Explore: ${message}`);
+    return;
+  }
 
   if (!result) {
     return;
