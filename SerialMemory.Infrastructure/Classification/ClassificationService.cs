@@ -43,12 +43,13 @@ public sealed class ClassificationService(
         try
         {
             var (systemPrompt, userPrompt) = GetPromptsForLayer(layer, content, previousLayerContent);
+            var maxTokens = GetMaxTokensForLayer(layer);
 
             var response = await llmService.ChatAsync(
                 userMessage: userPrompt,
                 systemPrompt: systemPrompt,
                 temperature: 0.3f,
-                maxTokens: 2000,
+                maxTokens: maxTokens,
                 cancellationToken: cancellationToken);
 
             sw.Stop();
@@ -654,6 +655,20 @@ public sealed class ClassificationService(
     }
 
     /// <summary>
+    /// Returns the max token budget for the given layer.
+    /// L3/L4 produce larger structured output (facts, entities, relationships).
+    /// </summary>
+    private static int GetMaxTokensForLayer(MemoryLayerType layer) => layer switch
+    {
+        MemoryLayerType.L0_RAW => 1000,
+        MemoryLayerType.L1_CONTEXT => 1000,
+        MemoryLayerType.L2_SUMMARY => 1500,
+        MemoryLayerType.L3_KNOWLEDGE => 4000,
+        MemoryLayerType.L4_HEURISTIC => 3000,
+        _ => 2000
+    };
+
+    /// <summary>
     /// Extracts JSON from a response that may contain markdown or other text.
     /// </summary>
     private static string? ExtractJson(string text)
@@ -682,6 +697,103 @@ public sealed class ClassificationService(
         if (end <= start)
             return null;
 
-        return text[start..(end + 1)];
+        var candidate = text[start..(end + 1)];
+
+        // Try parsing as-is first
+        try
+        {
+            using var doc = JsonDocument.Parse(candidate);
+            return candidate;
+        }
+        catch (JsonException)
+        {
+            // JSON may be truncated — attempt repair
+        }
+
+        // Attempt to repair truncated JSON from the full text after start
+        var repaired = TryRepairTruncatedJson(text[start..]);
+        return repaired;
+    }
+
+    /// <summary>
+    /// Attempts to repair truncated JSON by closing unclosed brackets and braces.
+    /// Handles strings, escaped characters, and nested structures.
+    /// </summary>
+    private static string? TryRepairTruncatedJson(string json)
+    {
+        var stack = new Stack<char>();
+        var inString = false;
+        var escaped = false;
+
+        for (var i = 0; i < json.Length; i++)
+        {
+            var c = json[i];
+
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                continue;
+            }
+
+            if (inString)
+                continue;
+
+            switch (c)
+            {
+                case '{':
+                    stack.Push('}');
+                    break;
+                case '[':
+                    stack.Push(']');
+                    break;
+                case '}':
+                case ']':
+                    if (stack.Count > 0 && stack.Peek() == c)
+                        stack.Pop();
+                    break;
+            }
+        }
+
+        if (stack.Count == 0)
+            return null; // Already balanced but still invalid — not a truncation issue
+
+        // Trim trailing incomplete values (e.g., truncated string or partial number)
+        var trimmed = json.TrimEnd();
+
+        // If we ended mid-string, close the string
+        if (inString)
+            trimmed += "\"";
+
+        // Remove trailing comma or colon that would make closing invalid
+        var lastChar = trimmed.Length > 0 ? trimmed[^1] : '\0';
+        if (lastChar == ',' || lastChar == ':')
+            trimmed = trimmed[..^1];
+
+        // Close all open brackets/braces in reverse order
+        while (stack.Count > 0)
+            trimmed += stack.Pop();
+
+        // Validate the repaired JSON
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return trimmed;
+        }
+        catch (JsonException)
+        {
+            return null; // Repair didn't produce valid JSON
+        }
     }
 }
