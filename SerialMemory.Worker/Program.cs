@@ -63,9 +63,12 @@ if (!string.IsNullOrEmpty(openAiApiKey))
     var openAiEmbedModel = builder.Configuration["OPENAI_EMBED_MODEL"]
         ?? Environment.GetEnvironmentVariable("OPENAI_EMBED_MODEL")
         ?? "text-embedding-3-small";
+    var openAiChatModel = builder.Configuration["OPENAI_MODEL"]
+        ?? Environment.GetEnvironmentVariable("OPENAI_MODEL")
+        ?? "gpt-4.1-mini";
     var openAiClient = new OpenAiClient(
         apiKey: openAiApiKey,
-        chatModel: "gpt-5-nano-2025-08-07",
+        chatModel: openAiChatModel,
         embedModel: openAiEmbedModel,
         embeddingDimension: 1536);
     builder.Services.AddSingleton(openAiClient); // Register OpenAiClient directly for MemorySummarizationService
@@ -162,6 +165,12 @@ builder.Services.AddSingleton<IL2EmbeddingService>(sp =>
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<L2EmbeddingService>()));
 
 // ========================================================================
+// CLASSIFICATION CONFIG (dwell times for cognitive maturation)
+// ========================================================================
+
+builder.Services.AddSingleton(ClassificationConfig.Default);
+
+// ========================================================================
 // MEMORY BACKFILL SERVICE (for historical memory processing)
 // ========================================================================
 
@@ -171,6 +180,7 @@ builder.Services.AddSingleton<IMemoryBackfillService>(sp =>
         sp.GetRequiredService<IClassificationService>(),
         sp.GetRequiredService<IEventWriter>(),
         sp.GetRequiredService<IL2EmbeddingService>(),
+        sp.GetRequiredService<ClassificationConfig>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryBackfillService>()));
 
 // ========================================================================
@@ -227,6 +237,7 @@ builder.Services.AddHostedService<MemoryClassificationWorker>(sp =>
         sp.GetRequiredService<IClassificationService>(),
         sp.GetRequiredService<IEventWriter>(),
         sp.GetRequiredService<IL2EmbeddingService>(),
+        sp.GetRequiredService<ClassificationConfig>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryClassificationWorker>()));
 
 // 5. Historical Memory Processor - detects and processes all unprocessed historical memories

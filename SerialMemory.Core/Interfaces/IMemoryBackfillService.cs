@@ -111,6 +111,13 @@ public sealed record UnprocessedMemory
     public int RetryCount { get; init; }
     public string? LastError { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>
+    /// Timestamp of the most recently created layer. Null when no layers exist yet.
+    /// Used for dwell-time filtering — memories whose highest layer was created
+    /// too recently are still dwelling and should not be returned for processing.
+    /// </summary>
+    public DateTimeOffset? HighestLayerCreatedAt { get; init; }
 }
 
 /// <summary>

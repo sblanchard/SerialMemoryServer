@@ -11,21 +11,14 @@ namespace SerialMemory.EventSourcing.Store;
 /// Uses internal admin role for RLS bypass during worker operations.
 /// Broadcasts events via SignalR after successful persistence.
 /// </summary>
-public sealed class EventWriter : IEventWriter
+public sealed class EventWriter(
+    NpgsqlDataSource dataSource,
+    ILogger<EventWriter> logger,
+    ILiveEventEmitter? eventEmitter = null) : IEventWriter
 {
-    private readonly NpgsqlDataSource _dataSource;
-    private readonly ILiveEventEmitter? _eventEmitter;
-    private readonly ILogger<EventWriter> _logger;
-
-    public EventWriter(
-        NpgsqlDataSource dataSource,
-        ILogger<EventWriter> logger,
-        ILiveEventEmitter? eventEmitter = null)
-    {
-        _dataSource = dataSource;
-        _logger = logger;
-        _eventEmitter = eventEmitter;
-    }
+    private readonly NpgsqlDataSource _dataSource = dataSource;
+    private readonly ILiveEventEmitter? _eventEmitter = eventEmitter;
+    private readonly ILogger<EventWriter> _logger = logger;
 
     /// <summary>
     /// Emits a memory event to both memory_events and event_log tables.

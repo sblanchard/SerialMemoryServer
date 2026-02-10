@@ -372,12 +372,12 @@ public sealed class ClassificationService(
                 nodes.Add(new KnowledgeNode
                 {
                     NodeType = "fact",
-                    Subject = fact.TryGetProperty("subject", out var s) ? s.GetString() ?? "" : "",
-                    Predicate = fact.TryGetProperty("predicate", out var p) ? p.GetString() : null,
-                    Object = fact.TryGetProperty("object", out var o) ? o.GetString() : null,
-                    Confidence = fact.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.8m,
-                    Evidence = fact.TryGetProperty("evidence", out var e) ? e.GetString() : null,
-                    Metadata = JsonSerializer.Serialize(new { type = fact.TryGetProperty("type", out var t) ? t.GetString() : "assertion" })
+                    Subject = fact.TryGetProperty("subject", out var s) ? SafeGetString(s) ?? "" : "",
+                    Predicate = fact.TryGetProperty("predicate", out var p) ? SafeGetString(p) : null,
+                    Object = fact.TryGetProperty("object", out var o) ? SafeGetString(o) : null,
+                    Confidence = fact.TryGetProperty("confidence", out var c) ? SafeGetDecimal(c, 0.8m) : 0.8m,
+                    Evidence = fact.TryGetProperty("evidence", out var e) ? SafeGetString(e) : null,
+                    Metadata = JsonSerializer.Serialize(new { type = fact.TryGetProperty("type", out var t) ? SafeGetString(t) : "assertion" })
                 });
             }
         }
@@ -390,11 +390,11 @@ public sealed class ClassificationService(
                 nodes.Add(new KnowledgeNode
                 {
                     NodeType = "entity",
-                    Subject = entity.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    Subject = entity.TryGetProperty("name", out var n) ? SafeGetString(n) ?? "" : "",
                     Predicate = "is_a",
-                    Object = entity.TryGetProperty("type", out var t) ? t.GetString() : "Unknown",
+                    Object = entity.TryGetProperty("type", out var t) ? SafeGetString(t) : "Unknown",
                     Confidence = 0.9m,
-                    Evidence = entity.TryGetProperty("description", out var d) ? d.GetString() : null
+                    Evidence = entity.TryGetProperty("description", out var d) ? SafeGetString(d) : null
                 });
             }
         }
@@ -407,10 +407,10 @@ public sealed class ClassificationService(
                 nodes.Add(new KnowledgeNode
                 {
                     NodeType = "relationship",
-                    Subject = rel.TryGetProperty("source", out var src) ? src.GetString() ?? "" : "",
-                    Predicate = rel.TryGetProperty("relation_type", out var rt) ? rt.GetString() : "related_to",
-                    Object = rel.TryGetProperty("target", out var tgt) ? tgt.GetString() : null,
-                    Confidence = rel.TryGetProperty("confidence", out var c) ? c.GetDecimal() : 0.85m
+                    Subject = rel.TryGetProperty("source", out var src) ? SafeGetString(src) ?? "" : "",
+                    Predicate = rel.TryGetProperty("relation_type", out var rt) ? SafeGetString(rt) : "related_to",
+                    Object = rel.TryGetProperty("target", out var tgt) ? SafeGetString(tgt) : null,
+                    Confidence = rel.TryGetProperty("confidence", out var c) ? SafeGetDecimal(c, 0.85m) : 0.85m
                 });
             }
         }
@@ -625,6 +625,32 @@ public sealed class ClassificationService(
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Safely gets a string from a JsonElement, handling non-string types.
+    /// </summary>
+    private static string? SafeGetString(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            _ => element.GetRawText().Trim('"')
+        };
+    }
+
+    /// <summary>
+    /// Safely gets a decimal from a JsonElement, handling non-numeric types.
+    /// </summary>
+    private static decimal SafeGetDecimal(JsonElement element, decimal fallback)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number => element.GetDecimal(),
+            JsonValueKind.String when decimal.TryParse(element.GetString(), out var d) => d,
+            _ => fallback
+        };
     }
 
     /// <summary>

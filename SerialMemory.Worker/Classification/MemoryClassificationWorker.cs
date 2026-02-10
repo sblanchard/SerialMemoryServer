@@ -2,19 +2,22 @@ using System.Diagnostics;
 using Dapper;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Infrastructure.Classification;
 
 namespace SerialMemory.Worker.Classification;
 
 /// <summary>
 /// Background worker that processes memories through L0-L4 classification layers.
-/// Uses internal admin role for RLS bypass during processing.
-/// After L2 completes, indexes the L2 embedding for RAG retrieval.
+/// Implements cognitive maturation: memories dwell at each layer for a configured
+/// duration before advancing, giving contradiction detection time to resolve conflicts.
+/// Only ONE layer is processed per cycle per memory.
 /// </summary>
 public sealed class MemoryClassificationWorker(
     NpgsqlDataSource dataSource,
     IClassificationService classificationService,
     IEventWriter eventWriter,
     IL2EmbeddingService l2EmbeddingService,
+    ClassificationConfig dwellConfig,
     ILogger<MemoryClassificationWorker> logger)
     : BackgroundService
 {
@@ -25,9 +28,17 @@ public sealed class MemoryClassificationWorker(
     private const int ErrorBackoffMs = 5000;
     private static readonly TimeSpan LockDuration = TimeSpan.FromMinutes(5);
 
+    private static readonly string[] LayerOrder = ["L0_RAW", "L1_CONTEXT", "L2_SUMMARY", "L3_KNOWLEDGE", "L4_HEURISTIC"];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("Memory Classification Worker {WorkerId} starting", _workerId);
+        logger.LogInformation(
+            "Memory Classification Worker {WorkerId} starting (dwell: L1={L1}d, L2={L2}d, L3={L3}d, cutoff={Cutoff})",
+            _workerId,
+            dwellConfig.DwellTimeL1.TotalDays,
+            dwellConfig.DwellTimeL2.TotalDays,
+            dwellConfig.DwellTimeL3.TotalDays,
+            dwellConfig.DwellCutoffDate);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -37,7 +48,6 @@ public sealed class MemoryClassificationWorker(
 
                 if (processed == 0)
                 {
-                    // No work found, wait before polling again
                     await Task.Delay(PollingIntervalMs, stoppingToken);
                 }
             }
@@ -59,7 +69,6 @@ public sealed class MemoryClassificationWorker(
     {
         await using var conn = await OpenInternalConnectionAsync(ct);
 
-        // Acquire a batch of memories to process
         var batch = (await conn.QueryAsync<QueueItem>(
             "SELECT * FROM acquire_classification_batch(@WorkerId, @BatchSize, @LockDuration::interval)",
             new
@@ -85,7 +94,6 @@ public sealed class MemoryClassificationWorker(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to process memory {MemoryId}", item.memory_id);
-                // Error already logged to DB in ProcessMemoryAsync
             }
         }
 
@@ -97,12 +105,10 @@ public sealed class MemoryClassificationWorker(
         logger.LogDebug("Processing memory {MemoryId} for tenant {TenantId}, current stage: {Stage}",
             item.memory_id, item.tenant_id, item.current_stage);
 
-        // Set tenant context for this operation
         await conn.ExecuteAsync(
             "SELECT set_config('app.tenant_id', @TenantId, false)",
             new { TenantId = item.tenant_id.ToString() });
 
-        // Load the memory content
         var memory = await conn.QueryFirstOrDefaultAsync<MemoryRecord>(
             "SELECT id, content, metadata, created_at FROM memories WHERE id = @Id",
             new { Id = item.memory_id });
@@ -116,48 +122,213 @@ public sealed class MemoryClassificationWorker(
             return;
         }
 
-        // Process each layer in sequence
-        var layers = new[]
+        // Find the next layer to process
+        var existingLayers = await GetExistingLayerTimesAsync(conn, item.memory_id);
+        var nextLayer = FindNextLayer(existingLayers);
+
+        if (nextLayer == null)
         {
-            MemoryLayer.L0_RAW,
-            MemoryLayer.L1_CONTEXT,
-            MemoryLayer.L2_SUMMARY,
-            MemoryLayer.L3_KNOWLEDGE,
-            MemoryLayer.L4_HEURISTIC
-        };
+            logger.LogInformation("Memory {MemoryId} fully classified (all layers exist)", item.memory_id);
+            return;
+        }
 
-        foreach (var layer in layers)
+        // Check dwell time: is the previous layer old enough?
+        var previousLayer = ClassificationConfig.GetPreviousLayer(nextLayer);
+        if (previousLayer != null && existingLayers.TryGetValue(previousLayer, out var prevCreatedAt))
         {
-            if (ct.IsCancellationRequested) break;
+            var dwellRequired = dwellConfig.GetDwellTime(previousLayer);
+            var isDwellExempt = memory.created_at < dwellConfig.DwellCutoffDate;
 
-            // Skip layers already processed
-            if (ShouldSkipLayer(item.current_stage, layer))
-                continue;
-
-            try
+            if (dwellRequired > TimeSpan.Zero && !isDwellExempt)
             {
-                await ProcessLayerAsync(conn, item, memory, layer, ct);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to classify {Layer} for memory {MemoryId}",
-                    layer, item.memory_id);
+                var elapsed = DateTimeOffset.UtcNow - prevCreatedAt;
+                if (elapsed < dwellRequired)
+                {
+                    var remaining = dwellRequired - elapsed;
+                    logger.LogDebug(
+                        "Memory {MemoryId} dwelling at {Layer} ({Elapsed:F1}h / {Required:F1}h, {Remaining:F1}h remaining)",
+                        item.memory_id, previousLayer, elapsed.TotalHours, dwellRequired.TotalHours, remaining.TotalHours);
 
-                await conn.ExecuteAsync(
-                    "SELECT fail_layer_classification(@MemoryId, @Layer::memory_layer_type, @Error)",
-                    new
-                    {
-                        MemoryId = item.memory_id,
-                        Layer = layer.ToString(),
-                        Error = ex.Message
-                    });
-
-                // Stop processing this memory on error
-                return;
+                    // Release the lock - this memory isn't ready yet
+                    await conn.ExecuteAsync(
+                        """
+                        UPDATE memory_processing_queue
+                        SET status = 'PENDING', locked_by = NULL, locked_until = NULL
+                        WHERE memory_id = @MemoryId
+                        """,
+                        new { MemoryId = item.memory_id });
+                    return;
+                }
             }
         }
 
-        logger.LogInformation("Completed classification for memory {MemoryId}", item.memory_id);
+        // Process exactly ONE layer
+        var layer = Enum.Parse<MemoryLayer>(nextLayer);
+        try
+        {
+            await ProcessLayerAsync(conn, item, memory, layer, ct);
+            logger.LogInformation("Completed {Layer} for memory {MemoryId} (next layer will dwell)",
+                layer, item.memory_id);
+
+            // After L2, the embedding is indexed — run targeted contradiction check
+            if (layer == MemoryLayer.L2_SUMMARY)
+            {
+                await RunTargetedConflictCheckAsync(conn, item.tenant_id, item.memory_id, ct);
+            }
+
+            // Release lock so memory re-enters queue for next layer
+            // (it will be picked up again after dwell time passes)
+            if (layer != MemoryLayer.L4_HEURISTIC)
+            {
+                await conn.ExecuteAsync(
+                    """
+                    UPDATE memory_processing_queue
+                    SET status = 'PENDING', locked_by = NULL, locked_until = NULL
+                    WHERE memory_id = @MemoryId
+                    """,
+                    new { MemoryId = item.memory_id });
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to classify {Layer} for memory {MemoryId}", layer, item.memory_id);
+
+            await conn.ExecuteAsync(
+                "SELECT fail_layer_classification(@MemoryId, @Layer::memory_layer_type, @Error)",
+                new
+                {
+                    MemoryId = item.memory_id,
+                    Layer = layer.ToString(),
+                    Error = ex.Message
+                });
+        }
+    }
+
+    /// <summary>
+    /// Runs a lightweight contradiction check for a single memory using pgvector KNN.
+    /// Finds the top N semantically similar active memories and logs any new conflicts.
+    /// </summary>
+    private async Task RunTargetedConflictCheckAsync(
+        NpgsqlConnection conn, Guid tenantId, Guid memoryId, CancellationToken ct)
+    {
+        const int maxNeighbors = 5;
+        const float similarityThreshold = 0.85f;
+
+        try
+        {
+            var conflicts = await conn.QueryAsync<ConflictCandidate>(
+                """
+                SELECT
+                    m.id AS neighbor_id,
+                    1 - (m.embedding <=> target.embedding) AS similarity
+                FROM memories m
+                CROSS JOIN (SELECT embedding FROM memories WHERE id = @MemoryId) target
+                WHERE m.id != @MemoryId
+                  AND m.tenant_id = @TenantId
+                  AND m.is_active = true
+                  AND m.embedding IS NOT NULL
+                  AND target.embedding IS NOT NULL
+                  AND 1 - (m.embedding <=> target.embedding) >= @Threshold
+                ORDER BY m.embedding <=> target.embedding
+                LIMIT @MaxNeighbors
+                """,
+                new
+                {
+                    MemoryId = memoryId,
+                    TenantId = tenantId,
+                    Threshold = similarityThreshold,
+                    MaxNeighbors = maxNeighbors
+                });
+
+            foreach (var c in conflicts)
+            {
+                // Check if this conflict already exists (either direction)
+                var exists = await conn.ExecuteScalarAsync<bool>(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1 FROM conflict_log
+                        WHERE tenant_id = @TenantId
+                          AND ((memory_a_id = @MemoryAId AND memory_b_id = @MemoryBId)
+                               OR (memory_a_id = @MemoryBId AND memory_b_id = @MemoryAId))
+                    )
+                    """,
+                    new { TenantId = tenantId, MemoryAId = memoryId, MemoryBId = c.neighbor_id });
+
+                if (exists)
+                    continue;
+
+                var conflictType = c.similarity >= 0.95f ? "duplicate" : "contradiction";
+                var severity = c.similarity >= 0.95f ? 0.9f : Math.Min(c.similarity * 1.2f, 1.0f);
+
+                await conn.ExecuteAsync(
+                    """
+                    INSERT INTO conflict_log (
+                        id, tenant_id, memory_a_id, memory_b_id, similarity_score,
+                        conflict_type, severity, status, description, detected_at
+                    ) VALUES (
+                        @Id, @TenantId, @MemoryAId, @MemoryBId, @Similarity,
+                        @ConflictType, @Severity, 'unresolved', @Description, NOW()
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    new
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = tenantId,
+                        MemoryAId = memoryId,
+                        MemoryBId = c.neighbor_id,
+                        Similarity = c.similarity,
+                        ConflictType = conflictType,
+                        Severity = severity,
+                        Description = $"High semantic similarity ({c.similarity:P0}) detected during classification"
+                    });
+
+                await eventWriter.EmitConflictDetectedAsync(
+                    tenantId, memoryId, c.neighbor_id,
+                    (decimal)c.similarity, conflictType,
+                    $"Detected during L2 classification (similarity: {c.similarity:P1})",
+                    _workerId, ct);
+
+                logger.LogInformation(
+                    "Conflict detected: memory {MemoryId} vs {NeighborId} (similarity: {Similarity:P1}, type: {Type})",
+                    memoryId, c.neighbor_id, c.similarity, conflictType);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: log and continue — don't block classification pipeline
+            logger.LogWarning(ex, "Targeted conflict check failed for memory {MemoryId}", memoryId);
+        }
+    }
+
+    /// <summary>
+    /// Gets existing layers and their creation timestamps for dwell time checks.
+    /// </summary>
+    private static async Task<Dictionary<string, DateTimeOffset>> GetExistingLayerTimesAsync(
+        NpgsqlConnection conn, Guid memoryId)
+    {
+        var layers = await conn.QueryAsync<(string layer, DateTimeOffset created_at)>(
+            """
+            SELECT layer::text, created_at
+            FROM memory_layers
+            WHERE memory_id = @MemoryId AND is_current = TRUE
+            """,
+            new { MemoryId = memoryId });
+
+        return layers.ToDictionary(l => l.layer, l => l.created_at);
+    }
+
+    /// <summary>
+    /// Finds the next layer that needs to be created (first missing layer in order).
+    /// </summary>
+    private static string? FindNextLayer(Dictionary<string, DateTimeOffset> existingLayers)
+    {
+        foreach (var layer in LayerOrder)
+        {
+            if (!existingLayers.ContainsKey(layer))
+                return layer;
+        }
+        return null; // All layers exist
     }
 
     private async Task ProcessLayerAsync(
@@ -171,7 +342,6 @@ public sealed class MemoryClassificationWorker(
 
         var sw = Stopwatch.StartNew();
 
-        // Log layer start event
         await conn.ExecuteAsync(
             """
             INSERT INTO memory_classification_events (memory_id, tenant_id, event_type, layer)
@@ -179,10 +349,8 @@ public sealed class MemoryClassificationWorker(
             """,
             new { MemoryId = memory.id, TenantId = item.tenant_id, Layer = layer.ToString() });
 
-        // Get previous layer content for context
         var previousLayerContent = await GetPreviousLayerContentAsync(conn, memory.id, layer);
 
-        // Classify using the classification service
         var result = await classificationService.ClassifyAsync(
             memory.content,
             layer,
@@ -191,7 +359,6 @@ public sealed class MemoryClassificationWorker(
 
         sw.Stop();
 
-        // Store the layer result
         var layerId = await conn.ExecuteScalarAsync<Guid>(
             """
             SELECT complete_layer_classification(
@@ -209,7 +376,6 @@ public sealed class MemoryClassificationWorker(
                 Confidence = result.Confidence
             });
 
-        // *** EMIT LayerGenerated EVENT ***
         var eventId = await eventWriter.EmitLayerGeneratedAsync(
             item.tenant_id,
             memory.id,
@@ -221,7 +387,6 @@ public sealed class MemoryClassificationWorker(
             _workerId,
             ct);
 
-        // *** CREATE TIMELINE SNAPSHOT ***
         await eventWriter.CreateTimelineSnapshotAsync(
             item.tenant_id,
             memory.id,
@@ -233,7 +398,6 @@ public sealed class MemoryClassificationWorker(
             new { layer_id = layerId, model = result.ModelName },
             ct);
 
-        // For L2, index the embedding for RAG retrieval
         if (layer == MemoryLayer.L2_SUMMARY)
         {
             try
@@ -243,12 +407,10 @@ public sealed class MemoryClassificationWorker(
             }
             catch (Exception ex)
             {
-                // Don't fail classification if L2 embedding fails - it can be reindexed later
                 logger.LogWarning(ex, "Failed to index L2 embedding for memory {MemoryId}", memory.id);
             }
         }
 
-        // For L3/L4, extract knowledge graph nodes
         if (layer is MemoryLayer.L3_KNOWLEDGE or MemoryLayer.L4_HEURISTIC)
         {
             await ExtractKnowledgeNodesAsync(conn, memory.id, item.tenant_id, layerId, layer, result, ct);
@@ -325,7 +487,6 @@ public sealed class MemoryClassificationWorker(
                     Metadata = node.Metadata
                 });
 
-            // *** EMIT KnowledgeNodeAdded EVENT ***
             await eventWriter.EmitMemoryEventAsync(
                 tenantId,
                 memoryId,
@@ -348,27 +509,6 @@ public sealed class MemoryClassificationWorker(
             result.KnowledgeNodes.Count, memoryId);
     }
 
-    private static bool ShouldSkipLayer(string currentStage, MemoryLayer targetLayer)
-    {
-        var stageOrder = new Dictionary<string, int>
-        {
-            ["L0_RAW"] = 0,
-            ["L1_CONTEXT"] = 1,
-            ["L2_SUMMARY"] = 2,
-            ["L3_KNOWLEDGE"] = 3,
-            ["L4_HEURISTIC"] = 4
-        };
-
-        var currentOrder = stageOrder.GetValueOrDefault(currentStage, -1);
-        var targetOrder = stageOrder.GetValueOrDefault(targetLayer.ToString(), 0);
-
-        // Skip if we've already processed this layer
-        return targetOrder <= currentOrder && currentOrder >= 0;
-    }
-
-    /// <summary>
-    /// Opens a connection with internal admin role for RLS bypass.
-    /// </summary>
     private async Task<NpgsqlConnection> OpenInternalConnectionAsync(CancellationToken ct)
     {
         var conn = await dataSource.OpenConnectionAsync(ct);
@@ -393,6 +533,12 @@ public sealed class MemoryClassificationWorker(
         public string content { get; set; } = "";
         public string? metadata { get; set; }
         public DateTimeOffset created_at { get; set; }
+    }
+
+    private sealed class ConflictCandidate
+    {
+        public Guid neighbor_id { get; set; }
+        public float similarity { get; set; }
     }
 
     #endregion
