@@ -3,26 +3,26 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen?logo=github)](https://github.com/serialmemory/serialmemory/actions)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen?logo=github)](https://github.com/sblanchard/SerialMemoryServer/actions)
 [![.NET Version](https://img.shields.io/badge/.NET-10+-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql)](https://www.postgresql.org)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com)
 [![Code Coverage](https://img.shields.io/badge/coverage-82%25-brightgreen?logo=codecov)](./docs/)
-[![Activity](https://img.shields.io/badge/maintenance-active-green?logo=github)](https://github.com/serialmemory/serialmemory)
+[![Activity](https://img.shields.io/badge/maintenance-active-green?logo=github)](https://github.com/sblanchard/SerialMemoryServer)
 
 [![Semantic Search](https://img.shields.io/badge/Semantic%20Search-pgvector-FF6B6B?logo=postgresql&logoColor=white)](./docs/01-overview.md)
 [![Knowledge Graph](https://img.shields.io/badge/Knowledge%20Graph-Multi%20Hop-4ECDC4?logo=neo4j&logoColor=white)](./docs/01-overview.md)
 [![MCP Protocol](https://img.shields.io/badge/MCP%20Protocol-Enabled-9B59B6?logo=aiohttp&logoColor=white)](./docs/02-quickstart-claude-mcp.md)
 [![Multi-Tenant](https://img.shields.io/badge/Multi%20Tenant-Secure-27AE60?logo=security&logoColor=white)](./docs/07-self-hosting.md)
 
-[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/serialmemory/serialmemory)
-[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-000000?logo=apple&logoColor=white)](https://github.com/serialmemory/serialmemory)
-[![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/serialmemory/serialmemory)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/sblanchard/SerialMemoryServer)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-000000?logo=apple&logoColor=white)](https://github.com/sblanchard/SerialMemoryServer)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/sblanchard/SerialMemoryServer)
 
-[![Issues](https://img.shields.io/github/issues/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/issues)
-[![Pull Requests](https://img.shields.io/github/issues-pr/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/pulls)
-[![Stars](https://img.shields.io/github/stars/serialmemory/serialmemory?logo=github&style=flat&label=Stars)](https://github.com/serialmemory/serialmemory)
-[![Contributors](https://img.shields.io/github/contributors/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/graphs/contributors)
+[![Issues](https://img.shields.io/github/issues/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/pulls)
+[![Stars](https://img.shields.io/github/stars/sblanchard/SerialMemoryServer?logo=github&style=flat&label=Stars)](https://github.com/sblanchard/SerialMemoryServer)
+[![Contributors](https://img.shields.io/github/contributors/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/graphs/contributors)
 
 </div>
 
@@ -88,8 +88,8 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 
 ```bash
 # Clone the repository
-git clone https://github.com/serialmemory/serialmemory.git
-cd serialmemory
+git clone https://github.com/sblanchard/SerialMemoryServer.git
+cd SerialMemoryServer
 
 # Start infrastructure (PostgreSQL, Redis, RabbitMQ)
 docker compose up -d
@@ -360,7 +360,7 @@ SerialMemory is released under the **MIT License**. See [LICENSE](./LICENSE) for
 
 ## 🆘 Support & Community
 
-- **GitHub Issues**: [Report bugs and request features](https://github.com/serialmemory/serialmemory/issues)
+- **GitHub Issues**: [Report bugs and request features](https://github.com/sblanchard/SerialMemoryServer/issues)
 - **Documentation**: [Full docs](./docs/)
 - **Examples**: [Ready-to-run examples](./examples/)
 
