@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Json;
 using SerialMemory.Core.Models;
 
 namespace SerialMemory.Mcp.Tools;
@@ -219,13 +220,7 @@ public sealed class EngineeringReasoningTools(
                 }
             };
 
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true
-            };
-
-            return CreateJsonResponse(JsonSerializer.Serialize(jsonResult, jsonOptions));
+            return CreateJsonResponse(JsonSerializer.Serialize(jsonResult, SerialMemoryJsonOptions.Indented));
         }
         catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703")
         {

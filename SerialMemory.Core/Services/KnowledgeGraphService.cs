@@ -119,6 +119,14 @@ public class KnowledgeGraphService(
             MemoryType = resolvedMemoryType
         };
 
+        // Extract entities/relationships in parallel with entity extraction (before UoW)
+        Task<(List<ExtractedEntity>, List<ExtractedRelationship>)>? extractionTask = null;
+        if (extractEntities)
+            extractionTask = _entityExtractionService.ExtractAllAsync(content, cancellationToken);
+
+        // Unit-of-work: reuse one connection (with RLS set once) for all store writes
+        await using var uow = await _store.BeginUnitOfWorkAsync(cancellationToken);
+
         var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
 
         var result = new MemoryIngestResult
@@ -133,10 +141,10 @@ public class KnowledgeGraphService(
             SimilarMemories = similarMemories
         };
 
-        if (!extractEntities) return result;
+        if (extractionTask == null) return result;
 
-        // Extract entities and relationships
-        var (extractedEntities, extractedRelationships) = await _entityExtractionService.ExtractAllAsync(content, cancellationToken);
+        // Await entity extraction (may already be done if extraction was faster than CreateMemory)
+        var (extractedEntities, extractedRelationships) = await extractionTask;
 
         // Batch-create all entities in a single roundtrip
         var entitiesToCreate = extractedEntities.Select(e => new Entity
@@ -285,7 +293,12 @@ public class KnowledgeGraphService(
             }
         }
 
-        if (mode == SearchMode.Text || mode == SearchMode.Hybrid)
+        // In hybrid mode, skip text search if semantic already found enough high-quality results
+        var skipTextSearch = mode == SearchMode.Hybrid
+            && results.Count >= limit
+            && results.All(r => r.Similarity > 0.6f);
+
+        if ((mode == SearchMode.Text || mode == SearchMode.Hybrid) && !skipTextSearch)
         {
             var textResults = await _store.SearchMemoriesByTextAsync(query, limit, memoryType, cancellationToken);
 
@@ -444,13 +457,12 @@ public class KnowledgeGraphService(
                 }
             }
 
-            // Batch-load any entities not available from navigation properties
-            // (This is rare since GetRelationshipsForEntitiesAsync JOINs entity names)
-            // For now, fall back to individual lookups for any missing entities
-            foreach (var entityId in newEntityIds)
+            // Batch-load missing entities in one query instead of N+1 individual lookups
+            if (newEntityIds.Count > 0)
             {
-                var connectedEntity = await _store.GetEntityByIdAsync(entityId, cancellationToken);
-                if (connectedEntity != null)
+                var fetchedEntities = await _store.GetEntitiesByIdsAsync(newEntityIds, cancellationToken);
+
+                foreach (var connectedEntity in fetchedEntities)
                 {
                     result.Entities.Add(new EntityInfo
                     {
@@ -839,95 +851,129 @@ public class KnowledgeGraphService(
             Errors = []
         };
 
-        var entityNameToId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        // 1. Batch-create all entities in one roundtrip
+        var entitiesToCreate = coreData.Entities.Select(ce => new Entity
+        {
+            Name = ce.Name,
+            EntityType = ce.EntityType ?? "CONCEPT",
+            CanonicalName = ce.Name.ToLowerInvariant(),
+            Metadata = new Dictionary<string, object>
+            {
+                ["imported_from"] = "core",
+                ["original_observations"] = ce.Observations ?? []
+            }
+        }).ToList();
 
-        // Import entities
+        Dictionary<string, Guid> entityNameToId;
+        try
+        {
+            entityNameToId = await _store.CreateEntitiesBatchAsync(entitiesToCreate, cancellationToken);
+            result.EntitiesImported = entityNameToId.Count;
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add($"Failed to batch-create entities: {ex.Message}");
+            entityNameToId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        // 2. Batch-embed and create observation memories
+        // Collect all observations with their entity context
+        var observationTexts = new List<(string Text, string EntityName, Guid EntityId)>();
         foreach (var coreEntity in coreData.Entities)
         {
-            try
+            if (coreEntity.Observations == null || !entityNameToId.TryGetValue(coreEntity.Name, out var entityId))
+                continue;
+
+            foreach (var observation in coreEntity.Observations)
             {
-                var entity = new Entity
-                {
-                    Name = coreEntity.Name,
-                    EntityType = coreEntity.EntityType ?? "CONCEPT",
-                    CanonicalName = coreEntity.Name.ToLowerInvariant(),
-                    Metadata = new Dictionary<string, object>
-                    {
-                        ["imported_from"] = "core",
-                        ["original_observations"] = coreEntity.Observations ?? []
-                    }
-                };
-
-                var entityId = await _store.CreateEntityAsync(entity, cancellationToken);
-                entityNameToId[coreEntity.Name] = entityId;
-                result.EntitiesImported++;
-
-                // Import observations as memories linked to this entity
-                if (coreEntity.Observations != null)
-                {
-                    foreach (var observation in coreEntity.Observations)
-                    {
-                        var ingestResult = await IngestMemoryAsync(
-                            $"{coreEntity.Name}: {observation}",
-                            source,
-                            null,
-                            new Dictionary<string, object>
-                            {
-                                ["type"] = "observation",
-                                ["entity"] = coreEntity.Name,
-                                ["imported_from"] = "core"
-                            },
-                            false, // Don't re-extract entities
-                            dedupMode: "off",
-                            cancellationToken: cancellationToken);
-
-                        await _store.LinkMemoryToEntityAsync(ingestResult.MemoryId, entityId, 1.0f, cancellationToken);
-                        result.ObservationsImported++;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                result.Errors.Add($"Failed to import entity '{coreEntity.Name}': {ex.Message}");
+                observationTexts.Add(($"{coreEntity.Name}: {observation}", coreEntity.Name, entityId));
             }
         }
 
-        // Import relations
-        foreach (var coreRelation in coreData.Relations)
+        // Batch-embed in chunks of 50
+        const int embedBatchSize = 50;
+        await using var uow = await _store.BeginUnitOfWorkAsync(cancellationToken);
+
+        for (var i = 0; i < observationTexts.Count; i += embedBatchSize)
         {
+            var batch = observationTexts.Skip(i).Take(embedBatchSize).ToList();
+            var texts = batch.Select(o => o.Text).ToList();
+
             try
             {
-                if (!entityNameToId.TryGetValue(coreRelation.From, out var sourceId))
-                {
-                    result.Errors.Add($"Source entity '{coreRelation.From}' not found for relation");
-                    continue;
-                }
+                var embeddings = await _embeddingService.EmbedBatchAsync(texts, cancellationToken);
 
-                if (!entityNameToId.TryGetValue(coreRelation.To, out var targetId))
+                for (var j = 0; j < batch.Count; j++)
                 {
-                    result.Errors.Add($"Target entity '{coreRelation.To}' not found for relation");
-                    continue;
-                }
-
-                var relationship = new EntityRelationship
-                {
-                    SourceEntityId = sourceId,
-                    TargetEntityId = targetId,
-                    RelationshipType = coreRelation.RelationType.ToUpperInvariant().Replace(" ", "_"),
-                    Confidence = 1.0f,
-                    Metadata = new Dictionary<string, object>
+                    try
                     {
-                        ["imported_from"] = "core"
-                    }
-                };
+                        var memory = new Memory
+                        {
+                            Content = batch[j].Text,
+                            Embedding = embeddings[j],
+                            Source = source,
+                            Metadata = new Dictionary<string, object>
+                            {
+                                ["type"] = "observation",
+                                ["entity"] = batch[j].EntityName,
+                                ["imported_from"] = "core"
+                            },
+                            MemoryType = "knowledge"
+                        };
 
-                await _store.CreateRelationshipAsync(relationship, cancellationToken);
-                result.RelationsImported++;
+                        var memoryId = await _store.CreateMemoryAsync(memory, cancellationToken);
+                        await _store.LinkMemoryToEntityAsync(memoryId, batch[j].EntityId, 1.0f, cancellationToken);
+                        result.ObservationsImported++;
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Errors.Add($"Failed to import observation for '{batch[j].EntityName}': {ex.Message}");
+                    }
+                }
             }
             catch (Exception ex)
             {
-                result.Errors.Add($"Failed to import relation '{coreRelation.From}' -> '{coreRelation.To}': {ex.Message}");
+                result.Errors.Add($"Failed to batch-embed observations (batch {i / embedBatchSize}): {ex.Message}");
             }
+        }
+
+        // 3. Batch-create all relationships in one roundtrip
+        var relationshipsToCreate = new List<EntityRelationship>();
+        foreach (var coreRelation in coreData.Relations)
+        {
+            if (!entityNameToId.TryGetValue(coreRelation.From, out var sourceId))
+            {
+                result.Errors.Add($"Source entity '{coreRelation.From}' not found for relation");
+                continue;
+            }
+
+            if (!entityNameToId.TryGetValue(coreRelation.To, out var targetId))
+            {
+                result.Errors.Add($"Target entity '{coreRelation.To}' not found for relation");
+                continue;
+            }
+
+            relationshipsToCreate.Add(new EntityRelationship
+            {
+                SourceEntityId = sourceId,
+                TargetEntityId = targetId,
+                RelationshipType = coreRelation.RelationType.ToUpperInvariant().Replace(" ", "_"),
+                Confidence = 1.0f,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["imported_from"] = "core"
+                }
+            });
+        }
+
+        try
+        {
+            await _store.CreateRelationshipsBatchAsync(relationshipsToCreate, cancellationToken);
+            result.RelationsImported = relationshipsToCreate.Count;
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add($"Failed to batch-create relationships: {ex.Message}");
         }
 
         return result;

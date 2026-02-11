@@ -75,7 +75,8 @@ public static class DashboardExtensions
     /// </summary>
     public static IServiceCollection AddDashboardServices(this IServiceCollection services, IConfiguration configuration, string connectionString)
     {
-        var jwtSecret = configuration["JWT_SECRET"] ?? Environment.GetEnvironmentVariable("JWT_SECRET") ?? "dev-secret-32chars!!";
+        var jwtSecret = configuration["JWT_SECRET"] ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+            ?? throw new InvalidOperationException("JWT_SECRET is required. Set it via configuration or environment variable.");
         var jwtIssuer = configuration["JWT_ISSUER"] ?? Environment.GetEnvironmentVariable("JWT_ISSUER") ?? "serialmemory";
         var jwtAudience = configuration["JWT_AUDIENCE"] ?? Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? "serialmemory-api";
 

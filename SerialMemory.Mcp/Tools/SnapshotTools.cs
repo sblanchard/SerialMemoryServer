@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Json;
 using SerialMemory.Core.Models;
 
 namespace SerialMemory.Mcp.Tools;
@@ -158,7 +159,7 @@ public sealed class SnapshotTools
             if (state.CustomMetadata is { Count: > 0 })
             {
                 text += $"\n\n**Custom Metadata:**\n```json\n" +
-                    JsonSerializer.Serialize(state.CustomMetadata, new JsonSerializerOptions { WriteIndented = true }) +
+                    JsonSerializer.Serialize(state.CustomMetadata, SerialMemoryJsonOptions.Indented) +
                     "\n```";
             }
 

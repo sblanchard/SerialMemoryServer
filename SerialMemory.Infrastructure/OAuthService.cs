@@ -305,9 +305,13 @@ public sealed class OAuthService : IDisposable
                 return null;
             }
 
-            var expectedChallenge = authCode.code_challenge_method == "S256"
-                ? Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)))
-                : codeVerifier;
+            if (authCode.code_challenge_method != "S256")
+            {
+                _logger.LogWarning("OAuth ExchangeCode failed: unsupported code_challenge_method '{Method}' for {ClientId}", authCode.code_challenge_method, clientId);
+                return null;
+            }
+
+            var expectedChallenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
 
             if (expectedChallenge != authCode.code_challenge)
             {

@@ -21,14 +21,12 @@ public sealed class MemorySafetyTools
 
     public MemorySafetyTools(
         IEventStore eventStore,
-        string connectionString,
+        NpgsqlDataSource dataSource,
         ILogger logger)
     {
         _eventStore = eventStore;
         _logger = logger;
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        builder.UseVector();
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
     }
 
     public async Task<object> HandleDetectContradictions(JsonNode? arguments)

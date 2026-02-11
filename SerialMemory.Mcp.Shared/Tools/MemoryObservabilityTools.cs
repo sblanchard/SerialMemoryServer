@@ -13,10 +13,10 @@ namespace SerialMemory.Mcp.Shared.Tools;
 /// </summary>
 public sealed class MemoryObservabilityTools(
     IEventStore eventStore,
-    string connectionString,
+    NpgsqlDataSource dataSource,
     ILogger logger)
 {
-    private readonly NpgsqlDataSource _dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();
+    private readonly NpgsqlDataSource _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
 
     public async Task<object> HandleMemoryTrace(JsonNode? arguments)
     {

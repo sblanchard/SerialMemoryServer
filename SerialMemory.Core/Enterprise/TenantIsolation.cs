@@ -325,9 +325,17 @@ public static class TenantSqlFilter
         return new { TenantId = context.TenantId };
     }
 
+    private static readonly System.Text.RegularExpressions.Regex IdentifierRegex =
+        new(@"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     /// <summary>Generate PostgreSQL RLS policy SQL.</summary>
     public static string GenerateRlsPolicy(string tableName, string tenantColumn = "tenant_id")
     {
+        if (!IdentifierRegex.IsMatch(tableName))
+            throw new ArgumentException($"Invalid table name: '{tableName}'", nameof(tableName));
+        if (!IdentifierRegex.IsMatch(tenantColumn))
+            throw new ArgumentException($"Invalid column name: '{tenantColumn}'", nameof(tenantColumn));
+
         return $"""
             -- Enable RLS on {tableName}
             ALTER TABLE {tableName} ENABLE ROW LEVEL SECURITY;
@@ -365,38 +373,46 @@ public sealed class TenantEncryption
         return hmac.ComputeHash(Encoding.UTF8.GetBytes($"tenant:{tenantId}"));
     }
 
-    /// <summary>Encrypt data for specific tenant.</summary>
+    /// <summary>Encrypt data for specific tenant using AES-256-GCM (authenticated encryption).</summary>
     public byte[] Encrypt(string tenantId, byte[] plaintext)
     {
         var key = DeriveKey(tenantId);
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.GenerateIV();
+        var nonce = new byte[12]; // AES-GCM standard nonce size
+        RandomNumberGenerator.Fill(nonce);
+        var tag = new byte[16]; // AES-GCM standard tag size
+        var ciphertext = new byte[plaintext.Length];
 
-        using var encryptor = aes.CreateEncryptor();
-        var ciphertext = encryptor.TransformFinalBlock(plaintext, 0, plaintext.Length);
+        using var aesGcm = new AesGcm(key, 16);
+        aesGcm.Encrypt(nonce, plaintext, ciphertext, tag);
 
-        // Prepend IV to ciphertext
-        var result = new byte[aes.IV.Length + ciphertext.Length];
-        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-        Buffer.BlockCopy(ciphertext, 0, result, aes.IV.Length, ciphertext.Length);
+        // Format: [nonce(12) + tag(16) + ciphertext]
+        var result = new byte[nonce.Length + tag.Length + ciphertext.Length];
+        Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
+        Buffer.BlockCopy(tag, 0, result, nonce.Length, tag.Length);
+        Buffer.BlockCopy(ciphertext, 0, result, nonce.Length + tag.Length, ciphertext.Length);
         return result;
     }
 
-    /// <summary>Decrypt data for specific tenant.</summary>
-    public byte[] Decrypt(string tenantId, byte[] ciphertext)
+    /// <summary>Decrypt data for specific tenant using AES-256-GCM (authenticated encryption).</summary>
+    public byte[] Decrypt(string tenantId, byte[] encrypted)
     {
+        if (encrypted.Length < 28) // 12 (nonce) + 16 (tag) minimum
+            throw new ArgumentException("Ciphertext too short", nameof(encrypted));
+
         var key = DeriveKey(tenantId);
-        using var aes = Aes.Create();
-        aes.Key = key;
 
-        // Extract IV from beginning of ciphertext
-        var iv = new byte[16];
-        Buffer.BlockCopy(ciphertext, 0, iv, 0, 16);
-        aes.IV = iv;
+        // Extract nonce, tag, and ciphertext
+        var nonce = new byte[12];
+        var tag = new byte[16];
+        var ciphertext = new byte[encrypted.Length - 28];
+        Buffer.BlockCopy(encrypted, 0, nonce, 0, 12);
+        Buffer.BlockCopy(encrypted, 12, tag, 0, 16);
+        Buffer.BlockCopy(encrypted, 28, ciphertext, 0, ciphertext.Length);
 
-        using var decryptor = aes.CreateDecryptor();
-        return decryptor.TransformFinalBlock(ciphertext, 16, ciphertext.Length - 16);
+        var plaintext = new byte[ciphertext.Length];
+        using var aesGcm = new AesGcm(key, 16);
+        aesGcm.Decrypt(nonce, ciphertext, tag, plaintext);
+        return plaintext;
     }
 }
 

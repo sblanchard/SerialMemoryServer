@@ -25,14 +25,12 @@ public sealed class MemorySafetyTools
     public MemorySafetyTools(
         IEventStore eventStore,
         IEmbeddingService embeddingService,
-        string connectionString,
+        NpgsqlDataSource dataSource,
         ILogger logger)
     {
         _eventStore = eventStore;
         _embeddingService = embeddingService;
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        builder.UseVector();
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _logger = logger;
     }
 
@@ -106,25 +104,26 @@ public sealed class MemorySafetyTools
         }
         else
         {
-            // Batch contradiction detection for all active memories
+            // Batch contradiction detection using KNN self-join (O(n log n) via pgvector index)
             var memoryPairs = await conn.QueryAsync<dynamic>(@"
-                WITH memory_pairs AS (
-                    SELECT
-                        a.memory_id AS memory_a_id,
-                        b.memory_id AS memory_b_id,
-                        a.content AS content_a,
-                        b.content AS content_b,
-                        1 - (a.embedding <=> b.embedding) AS similarity
-                    FROM memory_projections a
-                    CROSS JOIN memory_projections b
-                    WHERE a.memory_id < b.memory_id
-                      AND a.is_active = TRUE
-                      AND b.is_active = TRUE
-                      AND a.embedding IS NOT NULL
-                      AND b.embedding IS NOT NULL
-                )
-                SELECT * FROM memory_pairs
-                WHERE similarity >= @Threshold
+                SELECT a.memory_id AS memory_a_id,
+                       b.memory_id AS memory_b_id,
+                       a.content AS content_a,
+                       b.content AS content_b,
+                       1 - (a.embedding <=> b.embedding) AS similarity
+                FROM memory_projections a
+                CROSS JOIN LATERAL (
+                    SELECT memory_id, content, embedding
+                    FROM memory_projections
+                    WHERE memory_id > a.memory_id
+                      AND is_active = TRUE
+                      AND embedding IS NOT NULL
+                    ORDER BY embedding <=> a.embedding
+                    LIMIT 5
+                ) b
+                WHERE a.is_active = TRUE
+                  AND a.embedding IS NOT NULL
+                  AND 1 - (a.embedding <=> b.embedding) >= @Threshold
                 ORDER BY similarity DESC
                 LIMIT @Limit",
                 new { Threshold = threshold, Limit = limit });

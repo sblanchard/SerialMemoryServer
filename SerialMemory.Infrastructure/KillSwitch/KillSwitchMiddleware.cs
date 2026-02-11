@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using SerialMemory.Core.Interfaces;
+using SerialMemory.Core.Json;
 
 namespace SerialMemory.Infrastructure.KillSwitch;
 
@@ -164,7 +165,7 @@ public sealed class KillSwitchMiddleware(RequestDelegate next, ILogger<KillSwitc
         await JsonSerializer.SerializeAsync(
             context.Response.Body,
             response,
-            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            SerialMemoryJsonOptions.Default);
     }
 
     private sealed class KillSwitchErrorResponse

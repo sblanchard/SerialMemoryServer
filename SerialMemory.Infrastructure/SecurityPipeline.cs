@@ -268,7 +268,7 @@ public class SecurityPipeline(
                 {
                     parents = System.Text.Json.JsonSerializer.Deserialize<Guid[]>(json);
                 }
-                catch { /* ignore parse errors */ }
+                catch (System.Text.Json.JsonException) { /* ignore malformed parent IDs */ }
             }
 
             if (parents != null)

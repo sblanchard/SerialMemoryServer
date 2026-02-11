@@ -61,9 +61,9 @@ public static class SelfHostedEndpoints
                     SERIALMEMORY_DEPLOYMENT_MODE = Environment.GetEnvironmentVariable("SERIALMEMORY_DEPLOYMENT_MODE") ?? "PublicSaaS",
                     SERIALMEMORY_ENABLE_QUOTAS = Environment.GetEnvironmentVariable("SERIALMEMORY_ENABLE_QUOTAS") ?? "false",
                     SERIALMEMORY_DISABLE_POWER_MODE = Environment.GetEnvironmentVariable("SERIALMEMORY_DISABLE_POWER_MODE") ?? "false",
-                    POSTGRES_HOST = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost",
-                    POSTGRES_DB = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "contextdb",
-                    OLLAMA_URL = Environment.GetEnvironmentVariable("OLLAMA_URL") ?? "http://localhost:11434"
+                    POSTGRES_HOST = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("POSTGRES_HOST")) ? "configured" : "default",
+                    POSTGRES_DB = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("POSTGRES_DB")) ? "configured" : "default",
+                    OLLAMA_URL = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OLLAMA_URL")) ? "configured" : "default"
                 },
                 features = new
                 {
@@ -343,7 +343,7 @@ public static class SelfHostedEndpoints
                 envVars = new
                 {
                     SELF_HOST_METRICS_MODE = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_MODE") ?? "(not set, defaults to 'auto')",
-                    SELF_HOST_PROMETHEUS_URL = Environment.GetEnvironmentVariable("SELF_HOST_PROMETHEUS_URL") ?? "(not set)",
+                    SELF_HOST_PROMETHEUS_URL = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SELF_HOST_PROMETHEUS_URL")) ? "configured" : "(not set)",
                     SELF_HOST_METRICS_TIMEOUT_SECONDS = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_TIMEOUT_SECONDS") ?? "(not set, defaults to 5)",
                     SELF_HOST_METRICS_CACHE_SECONDS = Environment.GetEnvironmentVariable("SELF_HOST_METRICS_CACHE_SECONDS") ?? "(not set, defaults to 30)"
                 },

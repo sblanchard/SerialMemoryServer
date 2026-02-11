@@ -6,6 +6,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Pgvector;
+using SerialMemory.Core.Json;
 using SerialMemory.EventSourcing.Events;
 using SerialMemory.EventSourcing.Store;
 
@@ -28,11 +29,7 @@ public sealed class MemoryProjection : IProjection
         builder.UseVector();
         _dataSource = builder.Build();
         _logger = logger;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Converters = { new JsonStringEnumConverter() }
-        };
+        _jsonOptions = SerialMemoryJsonOptions.WithEnums;
     }
 
     public async Task ApplyAsync(StoredEvent storedEvent, CancellationToken cancellationToken = default)

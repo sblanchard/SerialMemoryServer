@@ -3,7 +3,6 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Telemetry;
-using SerialMemory.EventSourcing.CQRS;
 using SerialMemory.EventSourcing.Maintenance;
 using SerialMemory.EventSourcing.Projections;
 using SerialMemory.EventSourcing.Retrieval;
@@ -108,25 +107,6 @@ builder.Services.AddSingleton<IRetrievalEngine>(sp =>
         sp.GetRequiredService<IEmbeddingService>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<CompositeRetrievalEngine>()));
 
-// Command handlers for maintenance operations
-builder.Services.AddSingleton<ICommandHandler<ApplyDecayCommand>>(sp =>
-    new ApplyDecayCommandHandler(
-        sp.GetRequiredService<IEventStore>(),
-        sp.GetRequiredService<IEventStreamPublisher>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ApplyDecayCommandHandler>()));
-
-builder.Services.AddSingleton<ICommandHandler<ArchiveMemoryCommand>>(sp =>
-    new ArchiveMemoryCommandHandler(
-        sp.GetRequiredService<IEventStore>(),
-        sp.GetRequiredService<IEventStreamPublisher>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ArchiveMemoryCommandHandler>()));
-
-builder.Services.AddSingleton<ICommandHandler<ReinforceMemoryCommand>>(sp =>
-    new ReinforceMemoryCommandHandler(
-        sp.GetRequiredService<IEventStore>(),
-        sp.GetRequiredService<IEventStreamPublisher>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<ReinforceMemoryCommandHandler>()));
-
 // Projections
 builder.Services.AddSingleton<IProjection>(sp =>
     new MemoryProjection(
@@ -204,13 +184,11 @@ if (!string.IsNullOrEmpty(openAiApiKey))
 // ========================================================================
 
 // 1. Memory Maintenance Worker - handles decay, archiving, reinforcement
+//    Uses batch SQL operations directly (bypasses per-item event sourcing for performance).
 builder.Services.AddHostedService<MemoryMaintenanceWorker>(sp =>
     new MemoryMaintenanceWorker(
         pgConnectionString,
         sp.GetRequiredService<IRetrievalEngine>(),
-        sp.GetRequiredService<ICommandHandler<ApplyDecayCommand>>(),
-        sp.GetRequiredService<ICommandHandler<ArchiveMemoryCommand>>(),
-        sp.GetRequiredService<ICommandHandler<ReinforceMemoryCommand>>(),
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryMaintenanceWorker>()));
 
 // 2. Projection Host - processes events and updates read models

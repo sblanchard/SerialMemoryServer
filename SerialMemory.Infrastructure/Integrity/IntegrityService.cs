@@ -68,7 +68,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         // Get memory data
         var memory = await conn.QueryFirstOrDefaultAsync<MemoryRow>(@"
@@ -135,7 +135,7 @@ public sealed class IntegrityService(
 
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+        await conn.SetTenantContextAsync(tenantId);
 
         // Record verification run
         await conn.ExecuteAsync(@"
@@ -263,7 +263,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var proofJson = await conn.ExecuteScalarAsync<string?>(@"
             SELECT proof_bundle FROM memories WHERE id = @MemoryId",
@@ -279,7 +279,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         // Get memory data
         var memory = await conn.QueryFirstOrDefaultAsync<MemoryRow>(@"
@@ -328,7 +328,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         await conn.ExecuteAsync(@"
             UPDATE memories
@@ -344,7 +344,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var algorithm = await conn.ExecuteScalarAsync<string?>(@"
             SELECT hash_algorithm FROM tenant_privacy_settings WHERE tenant_id = @TenantId",
@@ -357,7 +357,7 @@ public sealed class IntegrityService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var previousHash = await conn.ExecuteScalarAsync<string?>(@"
             SELECT chain_hash FROM memories

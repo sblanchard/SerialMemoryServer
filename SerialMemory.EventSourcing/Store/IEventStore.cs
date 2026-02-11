@@ -63,6 +63,25 @@ public interface IEventStore
     IAsyncEnumerable<StoredEvent> SubscribeAsync(
         long fromGlobalSequence,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Read events for multiple streams in a single query.
+    /// Returns a dictionary mapping each stream ID to its ordered list of events.
+    /// </summary>
+    Task<Dictionary<Guid, IReadOnlyList<IMemoryEvent>>> ReadStreamsAsync(
+        IEnumerable<Guid> streamIds,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Append events across multiple streams in a single batch operation.
+    /// Uses one connection, one transaction, and a single multi-row INSERT.
+    /// Maintains stream-level version checking with FOR UPDATE per stream.
+    /// </summary>
+    /// <param name="batches">List of (StreamId, Events) pairs to append</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task AppendBatchEventsAsync(
+        IReadOnlyList<(Guid StreamId, IReadOnlyList<IMemoryEvent> Events)> batches,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
