@@ -67,19 +67,13 @@ public sealed class TenantDbConnectionFactory : ITenantDbConnectionFactory
         {
             await connection.OpenAsync(cancellationToken);
 
-            // CRITICAL: Set tenant context BEFORE any queries
-            // This enables RLS policies to filter by tenant
-            _logger.LogDebug("Setting tenant context via set_tenant_context({TenantId})", tenantId);
-            await connection.ExecuteAsync(
-                "SELECT set_tenant_context(@TenantId)",
-                new { TenantId = tenantId });
-
-            // Set workspace context for workspace-scoped RLS
+            // CRITICAL: Set tenant + workspace context in a SINGLE roundtrip
+            // This enables RLS policies to filter by tenant and workspace
             var workspaceId = _tenantContext.WorkspaceId;
-            _logger.LogDebug("Setting workspace context via set_workspace_context({WorkspaceId})", workspaceId);
+            _logger.LogDebug("Setting RLS context: tenant={TenantId}, workspace={WorkspaceId}", tenantId, workspaceId);
             await connection.ExecuteAsync(
-                "SELECT set_workspace_context(@WorkspaceId)",
-                new { WorkspaceId = workspaceId });
+                "SELECT set_tenant_context(@TenantId); SELECT set_workspace_context(@WorkspaceId)",
+                new { TenantId = tenantId, WorkspaceId = workspaceId });
 
             _logger.LogDebug("Connection opened with tenant={TenantId}, workspace={WorkspaceId}", tenantId, workspaceId);
             return connection;

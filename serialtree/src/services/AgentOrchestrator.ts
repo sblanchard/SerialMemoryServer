@@ -119,6 +119,11 @@ export class AgentOrchestrator {
       `[Orchestrator] Run ${runId} complete: ${findings.length} findings in ${duration}ms`,
     );
 
+    // Launch interactive Claude session with findings
+    if (findings.length > 0) {
+      await this.launchFindingsSession(runId, findings, rolesToSpawn);
+    }
+
     await this.cleanupRun();
 
     return {
@@ -388,7 +393,9 @@ export class AgentOrchestrator {
     });
 
     terminal.show(true);
-    terminal.sendText(`${claudeCommand} --dangerously-skip-permissions -p "$(cat '${promptFile}')"`);
+    // Interactive mode — full TUI with real-time tool usage visible.
+    // Pass prompt as positional argument via $(cat) for interactive session.
+    terminal.sendText(`${claudeCommand} --dangerously-skip-permissions "$(cat '${promptFile}')"`);
 
     this.outputChannel.appendLine(`[Orchestrator] Spawned agent: ${role} (terminal: ${terminalName})`);
 
@@ -494,6 +501,51 @@ export class AgentOrchestrator {
       this.activeRun = { ...this.activeRun, completedRoles: newCompleted };
       this.outputChannel.appendLine(`[Orchestrator] Terminal closed for agent: ${agent.role} (${agent.id})`);
     }
+  }
+
+  private async launchFindingsSession(
+    runId: string,
+    findings: readonly AgentFinding[],
+    roles: readonly AgentRole[],
+  ): Promise<void> {
+    const config = vscode.workspace.getConfiguration(EXTENSION_ID);
+    const claudeCommand = config.get<string>(CONFIG.CLAUDE_COMMAND) ?? DEFAULTS.CLAUDE_COMMAND;
+    const workspacePath = this.getWorkspacePath();
+
+    // Build a findings summary prompt
+    const findingsText = findings.map((f, i) => {
+      const fileLine = f.file ? `\nFile: ${f.file}${f.line ? `:${f.line}` : ''}` : '';
+      return `${i + 1}. [${f.severity.toUpperCase()}] [${f.role}] ${f.title}${fileLine}\n   ${f.description}${f.suggestion ? `\n   Suggestion: ${f.suggestion}` : ''}`;
+    }).join('\n\n');
+
+    const prompt = `SerialTree Agent Analysis Complete (Run: ${runId})
+Agents: ${roles.join(', ')}
+Total Findings: ${findings.length}
+
+${findingsText}
+
+---
+These findings were discovered by SerialTree agents analyzing this codebase.
+All findings are also stored in SerialMemory under run ID "${runId}".
+
+start implementing fixes for all problems`;
+
+    // Write findings to a prompt file for safe shell handling
+    const promptFile = await writePromptFile(runId, 'findings-session', prompt);
+
+    const terminal = vscode.window.createTerminal({
+      name: `SerialTree: Findings (${runId})`,
+      cwd: workspacePath,
+      iconPath: new vscode.ThemeIcon('checklist'),
+    });
+
+    terminal.show(false);
+    // Launch interactive Claude session — pass prompt via $(cat) for interactive TUI mode
+    terminal.sendText(`${claudeCommand} --dangerously-skip-permissions "$(cat '${promptFile}')"`);
+
+    this.outputChannel.appendLine(
+      `[Orchestrator] Launched findings session with ${findings.length} findings`,
+    );
   }
 
   private async cleanupRun(): Promise<void> {

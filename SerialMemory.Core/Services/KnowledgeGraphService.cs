@@ -67,7 +67,8 @@ public class KnowledgeGraphService(
                 if (dedupMode == "append")
                 {
                     var merged = best.Content + "\n---\n" + content;
-                    var mergedEmbedding = await _embeddingService.EmbedTextAsync(merged, cancellationToken);
+                    // Reuse the new content's embedding instead of re-embedding the entire merged text.
+                    // This avoids a second embedding API call. Any drift is corrected by reembed_memories.
 
                     // Preserve existing metadata/session — only override if caller provided new values
                     var mergedMetadata = best.Metadata ?? new Dictionary<string, object>();
@@ -81,7 +82,7 @@ public class KnowledgeGraphService(
                     {
                         Id = best.Id,
                         Content = merged,
-                        Embedding = mergedEmbedding,
+                        Embedding = embedding,
                         Source = source ?? best.Source,
                         ConversationSessionId = sessionId ?? best.ConversationSessionId,
                         Metadata = mergedMetadata
@@ -137,59 +138,60 @@ public class KnowledgeGraphService(
         // Extract entities and relationships
         var (extractedEntities, extractedRelationships) = await _entityExtractionService.ExtractAllAsync(content, cancellationToken);
 
-        // Store entities and link to memory
-        var entityIdMap = new Dictionary<string, Guid>(); // Map entity text to ID
+        // Batch-create all entities in a single roundtrip
+        var entitiesToCreate = extractedEntities.Select(e => new Entity
+        {
+            Name = e.Text,
+            EntityType = e.Label,
+            CanonicalName = e.Text.ToLowerInvariant(),
+            FirstSeenMemoryId = memoryId,
+            Metadata = new Dictionary<string, object>
+            {
+                ["confidence"] = e.Confidence,
+                ["start"] = e.Start,
+                ["end"] = e.End
+            }
+        }).ToList();
 
+        var entityIdMap = await _store.CreateEntitiesBatchAsync(entitiesToCreate, cancellationToken);
+
+        // Batch-link all entities to memory in a single roundtrip
+        var entityRelevances = new Dictionary<Guid, float>();
         foreach (var extracted in extractedEntities)
         {
-            var entity = new Entity
+            if (entityIdMap.TryGetValue(extracted.Text, out var entityId))
             {
-                Name = extracted.Text,
-                EntityType = extracted.Label,
-                CanonicalName = extracted.Text.ToLowerInvariant(),
-                FirstSeenMemoryId = memoryId,
-                Metadata = new Dictionary<string, object>
+                entityRelevances[entityId] = extracted.Confidence;
+                result.Entities.Add(new EntityInfo
                 {
-                    ["confidence"] = extracted.Confidence,
-                    ["start"] = extracted.Start,
-                    ["end"] = extracted.End
-                }
-            };
-
-            var entityId = await _store.CreateEntityAsync(entity, cancellationToken);
-            entityIdMap[extracted.Text] = entityId;
-
-            await _store.LinkMemoryToEntityAsync(memoryId, entityId, extracted.Confidence, cancellationToken);
-
-            result.Entities.Add(new EntityInfo
-            {
-                Id = entityId,
-                Name = extracted.Text,
-                Type = extracted.Label,
-                Confidence = extracted.Confidence
-            });
-            result.EntitiesCreated++;
+                    Id = entityId,
+                    Name = extracted.Text,
+                    Type = extracted.Label,
+                    Confidence = extracted.Confidence
+                });
+                result.EntitiesCreated++;
+            }
         }
+        await _store.LinkMemoryToEntitiesBatchAsync(memoryId, entityRelevances, cancellationToken);
 
-        // Store relationships
+        // Batch-create all relationships in a single roundtrip
+        var relationshipsToCreate = new List<EntityRelationship>();
         foreach (var extracted in extractedRelationships)
         {
             if (!entityIdMap.TryGetValue(extracted.SourceEntity, out var sourceId) ||
                 !entityIdMap.TryGetValue(extracted.TargetEntity, out var targetId))
             {
-                continue; // Skip if entities not found
+                continue;
             }
 
-            var relationship = new EntityRelationship
+            relationshipsToCreate.Add(new EntityRelationship
             {
                 SourceEntityId = sourceId,
                 TargetEntityId = targetId,
                 RelationshipType = extracted.RelationType,
                 Confidence = extracted.Confidence,
                 FirstSeenMemoryId = memoryId
-            };
-
-            await _store.CreateRelationshipAsync(relationship, cancellationToken);
+            });
 
             result.Relationships.Add(new RelationshipInfo
             {
@@ -202,6 +204,7 @@ public class KnowledgeGraphService(
             });
             result.RelationshipsCreated++;
         }
+        await _store.CreateRelationshipsBatchAsync(relationshipsToCreate, cancellationToken);
 
         return result;
     }

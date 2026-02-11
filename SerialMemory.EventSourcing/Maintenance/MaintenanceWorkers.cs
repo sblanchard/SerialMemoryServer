@@ -217,40 +217,61 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
 
     private async Task<int> DetectDuplicatesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Find potential duplicates using vector similarity
-        var duplicates = await conn.QueryAsync<dynamic>(new CommandDefinition(@"
-            SELECT
-                a.memory_id AS memory_a_id,
-                b.memory_id AS memory_b_id,
-                1 - (a.embedding <=> b.embedding) AS similarity
-            FROM memory_projections a
-            JOIN memory_projections b ON a.memory_id < b.memory_id
-            WHERE a.is_active = TRUE
-                AND b.is_active = TRUE
-                AND 1 - (a.embedding <=> b.embedding) > @Threshold
-            LIMIT 100",
-            new { Threshold = _config.DuplicateSimilarityThreshold },
+        // Use KNN search per recent memory instead of O(n^2) cartesian cross-join.
+        // Sample recent active memories and find their nearest neighbors via pgvector index.
+        var recentMemories = await conn.QueryAsync<(Guid MemoryId, string Embedding)>(new CommandDefinition(@"
+            SELECT memory_id, embedding::text
+            FROM memory_projections
+            WHERE is_active = TRUE AND embedding IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 200",
             cancellationToken: cancellationToken));
 
-        var duplicatesList = duplicates.ToList();
+        var duplicateCount = 0;
+        var seen = new HashSet<(Guid, Guid)>();
 
-        // Log potential duplicates as maintenance tasks
-        foreach (var dup in duplicatesList)
+        foreach (var memory in recentMemories)
         {
-            await conn.ExecuteAsync(new CommandDefinition(@"
-                INSERT INTO maintenance_tasks (task_id, task_type, status, priority, memory_ids, scheduled_for, metadata)
-                VALUES (@TaskId, 'merge_duplicates', 'pending', 2, @MemoryIds, NOW(), @Metadata::jsonb)
-                ON CONFLICT DO NOTHING",
-                new
-                {
-                    TaskId = Guid.CreateVersion7(),
-                    MemoryIds = new[] { (Guid)dup.memory_a_id, (Guid)dup.memory_b_id },
-                    Metadata = JsonSerializer.Serialize(new { similarity = (float)dup.similarity })
-                },
+            // Find nearest neighbors for this memory using the pgvector index
+            var neighbors = await conn.QueryAsync<(Guid MemoryId, float Similarity)>(new CommandDefinition(@"
+                SELECT memory_id, 1 - (embedding <=> (SELECT embedding FROM memory_projections WHERE memory_id = @SourceId)) AS similarity
+                FROM memory_projections
+                WHERE is_active = TRUE
+                    AND memory_id != @SourceId
+                    AND embedding IS NOT NULL
+                ORDER BY embedding <=> (SELECT embedding FROM memory_projections WHERE memory_id = @SourceId)
+                LIMIT 5",
+                new { SourceId = memory.MemoryId },
                 cancellationToken: cancellationToken));
+
+            foreach (var neighbor in neighbors)
+            {
+                if (neighbor.Similarity < _config.DuplicateSimilarityThreshold) continue;
+
+                // Normalize pair ordering to avoid duplicate task entries
+                var pair = memory.MemoryId < neighbor.MemoryId
+                    ? (memory.MemoryId, neighbor.MemoryId)
+                    : (neighbor.MemoryId, memory.MemoryId);
+
+                if (!seen.Add(pair)) continue;
+
+                await conn.ExecuteAsync(new CommandDefinition(@"
+                    INSERT INTO maintenance_tasks (task_id, task_type, status, priority, memory_ids, scheduled_for, metadata)
+                    VALUES (@TaskId, 'merge_duplicates', 'pending', 2, @MemoryIds, NOW(), @Metadata::jsonb)
+                    ON CONFLICT DO NOTHING",
+                    new
+                    {
+                        TaskId = Guid.CreateVersion7(),
+                        MemoryIds = new[] { pair.Item1, pair.Item2 },
+                        Metadata = JsonSerializer.Serialize(new { similarity = neighbor.Similarity })
+                    },
+                    cancellationToken: cancellationToken));
+
+                duplicateCount++;
+            }
         }
 
-        return duplicatesList.Count;
+        return duplicateCount;
     }
 
     private async Task<int> DetectContradictionsAsync(NpgsqlConnection conn, CancellationToken cancellationToken)

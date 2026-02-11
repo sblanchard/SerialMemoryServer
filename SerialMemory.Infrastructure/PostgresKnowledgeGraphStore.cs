@@ -913,6 +913,166 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     #endregion
 
+    #region Batch Create Operations
+
+    public async Task<Dictionary<string, Guid>> CreateEntitiesBatchAsync(List<Entity> entities, CancellationToken cancellationToken = default)
+    {
+        if (entities.Count == 0)
+            return new Dictionary<string, Guid>();
+
+        var tenantId = TenantId;
+        var result = new Dictionary<string, Guid>(StringComparer.Ordinal);
+
+        // Build multi-row INSERT with ON CONFLICT RETURNING
+        var sql = """
+            INSERT INTO entities (id, tenant_id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
+            SELECT * FROM UNNEST(@Ids, @TenantIds, @Names, @EntityTypes, @CanonicalNames, @FirstSeenMemoryIds, @Metadatas)
+            ON CONFLICT (tenant_id, name, entity_type) DO UPDATE SET
+                canonical_name = COALESCE(EXCLUDED.canonical_name, entities.canonical_name),
+                metadata = COALESCE(EXCLUDED.metadata, entities.metadata)
+            RETURNING id, name
+            """;
+
+        var ids = entities.Select(_ => Guid.CreateVersion7()).ToArray();
+        var tenantIds = entities.Select(_ => tenantId).ToArray();
+        var names = entities.Select(e => e.Name).ToArray();
+        var entityTypes = entities.Select(e => e.EntityType).ToArray();
+        var canonicalNames = entities.Select(e => e.CanonicalName).ToArray();
+        var firstSeenMemoryIds = entities.Select(e => e.FirstSeenMemoryId).ToArray();
+        var metadatas = entities.Select(e =>
+            e.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(e.Metadata) : (string?)null).ToArray();
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@Ids", ids);
+        cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
+        cmd.Parameters.AddWithValue("@Names", names);
+        cmd.Parameters.AddWithValue("@EntityTypes", entityTypes);
+        cmd.Parameters.AddWithValue("@CanonicalNames", canonicalNames);
+        cmd.Parameters.AddWithValue("@FirstSeenMemoryIds", firstSeenMemoryIds);
+        cmd.Parameters.AddWithValue("@Metadatas", metadatas);
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result[reader.GetString(1)] = reader.GetGuid(0);
+        }
+
+        return result;
+    }
+
+    public async Task LinkMemoryToEntitiesBatchAsync(Guid memoryId, Dictionary<Guid, float> entityRelevances, CancellationToken cancellationToken = default)
+    {
+        if (entityRelevances.Count == 0) return;
+
+        var tenantId = TenantId;
+        var workspaceId = WorkspaceId;
+
+        const string sql = """
+            INSERT INTO memory_entities (tenant_id, workspace_id, memory_id, entity_id, relevance)
+            SELECT * FROM UNNEST(@TenantIds, @WorkspaceIds, @MemoryIds, @EntityIds, @Relevances)
+            ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = EXCLUDED.relevance
+            """;
+
+        var count = entityRelevances.Count;
+        var tenantIds = Enumerable.Repeat(tenantId, count).ToArray();
+        var workspaceIds = Enumerable.Repeat(workspaceId, count).ToArray();
+        var memoryIds = Enumerable.Repeat(memoryId, count).ToArray();
+        var entityIds = entityRelevances.Keys.ToArray();
+        var relevances = entityRelevances.Values.ToArray();
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
+        cmd.Parameters.AddWithValue("@WorkspaceIds", workspaceIds);
+        cmd.Parameters.AddWithValue("@MemoryIds", memoryIds);
+        cmd.Parameters.AddWithValue("@EntityIds", entityIds);
+        cmd.Parameters.AddWithValue("@Relevances", relevances);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<List<Guid>> CreateRelationshipsBatchAsync(List<EntityRelationship> relationships, CancellationToken cancellationToken = default)
+    {
+        if (relationships.Count == 0)
+            return [];
+
+        var tenantId = TenantId;
+
+        const string sql = """
+            INSERT INTO entity_relationships (id, tenant_id, source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
+            SELECT * FROM UNNEST(@Ids, @TenantIds, @SourceEntityIds, @TargetEntityIds, @RelationshipTypes, @Confidences, @FirstSeenMemoryIds, @Metadatas)
+            ON CONFLICT (tenant_id, source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
+                confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence),
+                metadata = COALESCE(EXCLUDED.metadata, entity_relationships.metadata)
+            RETURNING id
+            """;
+
+        var ids = relationships.Select(_ => Guid.CreateVersion7()).ToArray();
+        var tenantIds = relationships.Select(_ => tenantId).ToArray();
+        var sourceIds = relationships.Select(r => r.SourceEntityId).ToArray();
+        var targetIds = relationships.Select(r => r.TargetEntityId).ToArray();
+        var relTypes = relationships.Select(r => r.RelationshipType).ToArray();
+        var confidences = relationships.Select(r => r.Confidence).ToArray();
+        var firstSeenIds = relationships.Select(r => r.FirstSeenMemoryId).ToArray();
+        var metadatas = relationships.Select(r =>
+            r.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(r.Metadata) : (string?)null).ToArray();
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@Ids", ids);
+        cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
+        cmd.Parameters.AddWithValue("@SourceEntityIds", sourceIds);
+        cmd.Parameters.AddWithValue("@TargetEntityIds", targetIds);
+        cmd.Parameters.AddWithValue("@RelationshipTypes", relTypes);
+        cmd.Parameters.AddWithValue("@Confidences", confidences);
+        cmd.Parameters.AddWithValue("@FirstSeenMemoryIds", firstSeenIds);
+        cmd.Parameters.AddWithValue("@Metadatas", metadatas);
+
+        var result = new List<Guid>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(reader.GetGuid(0));
+        }
+
+        return result;
+    }
+
+    public async Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT
+                (SELECT COUNT(*) FROM memories) AS memory_count,
+                (SELECT COUNT(*) FROM entities) AS entity_count,
+                (SELECT COUNT(*) FROM entity_relationships) AS relationship_count
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        var row = await conn.QuerySingleAsync<dynamic>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+
+        return ((long)row.memory_count, (long)row.entity_count, (long)row.relationship_count);
+    }
+
+    public async Task<Dictionary<string, int>> GetRelationshipTypeBreakdownAsync(CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT relationship_type, COUNT(*)::int AS cnt
+            FROM entity_relationships
+            GROUP BY relationship_type
+            ORDER BY cnt DESC
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+
+        return rows.ToDictionary(
+            r => (string)r.relationship_type,
+            r => (int)r.cnt);
+    }
+
+    #endregion
+
     #region Statistics Operations
 
     public async Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default)

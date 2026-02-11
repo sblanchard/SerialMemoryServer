@@ -378,6 +378,23 @@ public class InstrumentedKnowledgeGraphStore(
     public Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default)
         => inner.SearchMemoriesByEmbeddingInDateRangeAsync(queryEmbedding, fromUtc, toUtc, threshold, limit, cancellationToken);
 
+    // Batch entity/relationship creation
+    public Task<Dictionary<string, Guid>> CreateEntitiesBatchAsync(List<Entity> entities, CancellationToken cancellationToken = default)
+        => inner.CreateEntitiesBatchAsync(entities, cancellationToken);
+
+    public Task LinkMemoryToEntitiesBatchAsync(Guid memoryId, Dictionary<Guid, float> entityRelevances, CancellationToken cancellationToken = default)
+        => inner.LinkMemoryToEntitiesBatchAsync(memoryId, entityRelevances, cancellationToken);
+
+    public Task<List<Guid>> CreateRelationshipsBatchAsync(List<EntityRelationship> relationships, CancellationToken cancellationToken = default)
+        => inner.CreateRelationshipsBatchAsync(relationships, cancellationToken);
+
+    // Combined statistics
+    public Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default)
+        => inner.GetGraphStatisticsAsync(cancellationToken);
+
+    public Task<Dictionary<string, int>> GetRelationshipTypeBreakdownAsync(CancellationToken cancellationToken = default)
+        => inner.GetRelationshipTypeBreakdownAsync(cancellationToken);
+
     // Workspace operations
     public Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default)
         => inner.CreateWorkspaceAsync(workspace, ct);

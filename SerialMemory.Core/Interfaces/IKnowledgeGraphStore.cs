@@ -45,6 +45,15 @@ public interface IKnowledgeGraphStore
     Task EndConversationSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<List<ConversationSession>> GetRecentSessionsAsync(int limit = 10, CancellationToken cancellationToken = default);
 
+    // Batch entity/relationship creation (single-roundtrip)
+    Task<Dictionary<string, Guid>> CreateEntitiesBatchAsync(List<Entity> entities, CancellationToken cancellationToken = default);
+    Task LinkMemoryToEntitiesBatchAsync(Guid memoryId, Dictionary<Guid, float> entityRelevances, CancellationToken cancellationToken = default);
+    Task<List<Guid>> CreateRelationshipsBatchAsync(List<EntityRelationship> relationships, CancellationToken cancellationToken = default);
+
+    // Combined statistics (single connection)
+    Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default);
+    Task<Dictionary<string, int>> GetRelationshipTypeBreakdownAsync(CancellationToken cancellationToken = default);
+
     // Statistics operations
     Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default);
     Task<long> GetEntityCountAsync(CancellationToken cancellationToken = default);

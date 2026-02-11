@@ -99,6 +99,16 @@ public sealed class PostgresEventStore : IEventStore
             await transaction.CommitAsync(cancellationToken);
             _logger.LogDebug("Appended {Count} events to stream {StreamId}", events.Count, streamId);
 
+            // Notify subscribers that new events are available
+            try
+            {
+                await conn.ExecuteAsync("NOTIFY memory_events_channel");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "NOTIFY failed (non-critical)");
+            }
+
             return sequences;
         }
         catch (ConcurrencyException)
@@ -205,6 +215,10 @@ public sealed class PostgresEventStore : IEventStore
     {
         var lastSequence = fromGlobalSequence;
 
+        // Use LISTEN/NOTIFY for push-based event notification instead of polling
+        await using var listenConn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await listenConn.ExecuteAsync("LISTEN memory_events_channel");
+
         while (!cancellationToken.IsCancellationRequested)
         {
             var events = await ReadAllAsync(lastSequence, 100, cancellationToken);
@@ -217,7 +231,15 @@ public sealed class PostgresEventStore : IEventStore
 
             if (events.Count == 0)
             {
-                await Task.Delay(100, cancellationToken);
+                // Wait for NOTIFY signal or timeout after 5 seconds (fallback poll)
+                try
+                {
+                    await listenConn.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch (TimeoutException)
+                {
+                    // Timeout is expected - just re-check for events
+                }
             }
         }
     }

@@ -1471,69 +1471,74 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
             // Extract entities and relationships
             var (entities, relationships) = await entityService.ExtractAllAsync(memory.Content);
 
-            // Create entities and link to memory
-            var entityIdMap = new Dictionary<string, Guid>();
-            foreach (var entity in entities)
+            // Batch-create all entities for this memory
+            var entitiesToCreate = entities.Select(e => new Entity
             {
-                var entityId = await store.CreateEntityAsync(new Entity
-                {
-                    Id = Guid.CreateVersion7(),
-                    Name = entity.Text,
-                    EntityType = entity.Label,
-                    CanonicalName = entity.Text.ToLowerInvariant(),
-                    FirstSeenMemoryId = memory.Id,
-                    CreatedAt = DateTime.UtcNow
-                });
+                Name = e.Text,
+                EntityType = e.Label,
+                CanonicalName = e.Text.ToLowerInvariant(),
+                FirstSeenMemoryId = memory.Id,
+                CreatedAt = DateTime.UtcNow
+            }).ToList();
 
-                entityIdMap[entity.Text] = entityId;
-                await store.LinkMemoryToEntityAsync(memory.Id, entityId, entity.Confidence);
-                totalEntities++;
-            }
-
-            // Create relationships
+            // Also collect entities from relationships that aren't in the entity list
+            var entityNames = new HashSet<string>(entities.Select(e => e.Text));
             foreach (var rel in relationships)
             {
-                if (!entityIdMap.TryGetValue(rel.SourceEntity, out var sourceId))
+                if (entityNames.Add(rel.SourceEntity))
                 {
-                    sourceId = await store.CreateEntityAsync(new Entity
+                    entitiesToCreate.Add(new Entity
                     {
-                        Id = Guid.CreateVersion7(),
                         Name = rel.SourceEntity,
                         EntityType = "UNKNOWN",
                         CanonicalName = rel.SourceEntity.ToLowerInvariant(),
                         FirstSeenMemoryId = memory.Id,
                         CreatedAt = DateTime.UtcNow
                     });
-                    entityIdMap[rel.SourceEntity] = sourceId;
-                    totalEntities++;
                 }
-
-                if (!entityIdMap.TryGetValue(rel.TargetEntity, out var targetId))
+                if (entityNames.Add(rel.TargetEntity))
                 {
-                    targetId = await store.CreateEntityAsync(new Entity
+                    entitiesToCreate.Add(new Entity
                     {
-                        Id = Guid.CreateVersion7(),
                         Name = rel.TargetEntity,
                         EntityType = "UNKNOWN",
                         CanonicalName = rel.TargetEntity.ToLowerInvariant(),
                         FirstSeenMemoryId = memory.Id,
                         CreatedAt = DateTime.UtcNow
                     });
-                    entityIdMap[rel.TargetEntity] = targetId;
-                    totalEntities++;
                 }
+            }
 
-                await store.CreateRelationshipAsync(new EntityRelationship
+            var entityIdMap = await store.CreateEntitiesBatchAsync(entitiesToCreate);
+            totalEntities += entityIdMap.Count;
+
+            // Batch-link entities to memory
+            var entityRelevances = new Dictionary<Guid, float>();
+            foreach (var entity in entities)
+            {
+                if (entityIdMap.TryGetValue(entity.Text, out var entityId))
+                    entityRelevances[entityId] = entity.Confidence;
+            }
+            await store.LinkMemoryToEntitiesBatchAsync(memory.Id, entityRelevances);
+
+            // Batch-create all relationships (explicit + co-occurrence)
+            var allRelationships = new List<EntityRelationship>();
+
+            foreach (var rel in relationships)
+            {
+                if (entityIdMap.TryGetValue(rel.SourceEntity, out var sourceId) &&
+                    entityIdMap.TryGetValue(rel.TargetEntity, out var targetId))
                 {
-                    Id = Guid.CreateVersion7(),
-                    SourceEntityId = sourceId,
-                    TargetEntityId = targetId,
-                    RelationshipType = rel.RelationType,
-                    Confidence = rel.Confidence,
-                    FirstSeenMemoryId = memory.Id,
-                    CreatedAt = DateTime.UtcNow
-                });
-                totalRelationships++;
+                    allRelationships.Add(new EntityRelationship
+                    {
+                        SourceEntityId = sourceId,
+                        TargetEntityId = targetId,
+                        RelationshipType = rel.RelationType,
+                        Confidence = rel.Confidence,
+                        FirstSeenMemoryId = memory.Id,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
             // Infer co-occurrence relationships for entities in same memory
@@ -1547,9 +1552,8 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                     if (entityIdMap.TryGetValue(person.Text, out var personId) &&
                         entityIdMap.TryGetValue(org.Text, out var orgId))
                     {
-                        await store.CreateRelationshipAsync(new EntityRelationship
+                        allRelationships.Add(new EntityRelationship
                         {
-                            Id = Guid.CreateVersion7(),
                             SourceEntityId = personId,
                             TargetEntityId = orgId,
                             RelationshipType = "MENTIONED_WITH",
@@ -1557,10 +1561,12 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
                             FirstSeenMemoryId = memory.Id,
                             CreatedAt = DateTime.UtcNow
                         });
-                        totalRelationships++;
                     }
                 }
             }
+
+            await store.CreateRelationshipsBatchAsync(allRelationships);
+            totalRelationships += allRelationships.Count;
 
             processedMemories++;
         }
@@ -1579,24 +1585,16 @@ async Task<object> HandleCrawlRelationships(JsonNode? arguments)
 
 async Task<object> HandleGetGraphStatistics()
 {
-    var memoryCnt = await store.GetMemoryCountAsync();
-    var entityCnt = await store.GetEntityCountAsync();
-    var relationshipCnt = await store.GetRelationshipCountAsync();
-
-    // Get relationship type breakdown
-    var relationships = await store.GetAllRelationshipsAsync(1000);
-    var typeBreakdown = relationships
-        .GroupBy(r => r.RelationshipType)
-        .Select(g => new { Type = g.Key, Count = g.Count() })
-        .OrderByDescending(x => x.Count)
-        .ToList();
+    // Single-connection combined query for all counts + server-side GROUP BY for type breakdown
+    var (memoryCnt, entityCnt, relationshipCnt) = await store.GetGraphStatisticsAsync();
+    var typeBreakdown = await store.GetRelationshipTypeBreakdownAsync();
 
     var text = $"Knowledge Graph Statistics\n\n" +
                $"Total Memories: {memoryCnt}\n" +
                $"Total Entities: {entityCnt}\n" +
                $"Total Relationships: {relationshipCnt}\n\n" +
                $"Relationship Types:\n" +
-               string.Join("\n", typeBreakdown.Select(t => $"  - {t.Type}: {t.Count}"));
+               string.Join("\n", typeBreakdown.Select(t => $"  - {t.Key}: {t.Value}"));
 
     return CreateTextResponse(text);
 }
@@ -1667,6 +1665,9 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
     var errorCount = 0;
     var stopwatch = Stopwatch.StartNew();
 
+    // Reuse a single connection for all embedding UPDATEs
+    await using var reembedConn = await vectorDataSource.OpenConnectionAsync();
+
     if (forceAll)
     {
         // For force_all mode: iterate through ALL memories using offset-based pagination
@@ -1686,10 +1687,8 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
                 {
                     var embedding = await embeddingService.EmbedTextAsync(memory.Content);
 
-                    // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
-                    await using var connection = await vectorDataSource.OpenConnectionAsync();
                     await using var cmd = new NpgsqlCommand(
-                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
+                        "UPDATE memories SET embedding = @Embedding WHERE id = @Id", reembedConn);
                     cmd.Parameters.AddWithValue("@Id", memory.Id);
                     cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                     await cmd.ExecuteNonQueryAsync();
@@ -1719,10 +1718,8 @@ async Task<object> HandleReembedMemories(JsonNode? arguments)
             {
                 var embedding = await embeddingService.EmbedTextAsync(memory.Content);
 
-                // Use raw Npgsql instead of Dapper - Dapper doesn't support Pgvector.Vector type
-                await using var connection = await vectorDataSource.OpenConnectionAsync();
                 await using var cmd = new NpgsqlCommand(
-                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id", connection);
+                    "UPDATE memories SET embedding = @Embedding WHERE id = @Id", reembedConn);
                 cmd.Parameters.AddWithValue("@Id", memory.Id);
                 cmd.Parameters.AddWithValue("@Embedding", new Vector(embedding));
                 await cmd.ExecuteNonQueryAsync();
