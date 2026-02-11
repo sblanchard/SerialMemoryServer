@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Web;
 using Microsoft.AspNetCore.Mvc;
@@ -73,8 +74,18 @@ public static class OAuthEndpoints
             ? new[] { "serialmemory.core" }
             : scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
+        // Generate CSRF token and set as HttpOnly cookie
+        var csrfToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        context.Response.Cookies.Append("oauth_csrf", csrfToken, new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Strict,
+            Secure = context.Request.IsHttps,
+            MaxAge = TimeSpan.FromMinutes(10)
+        });
+
         // Return a simple authorization page
-        var html = GenerateAuthorizePage(client_id, redirect_uri, state, code_challenge, code_challenge_method, requestedScopes);
+        var html = GenerateAuthorizePage(client_id, redirect_uri, state, code_challenge, code_challenge_method, requestedScopes, csrfToken);
         return Results.Content(html, "text/html");
     }
 
@@ -84,6 +95,20 @@ public static class OAuthEndpoints
         [FromServices] IConfiguration configuration)
     {
         var form = await context.Request.ReadFormAsync();
+
+        // Validate CSRF token
+        var csrfCookie = context.Request.Cookies["oauth_csrf"];
+        var csrfForm = form["csrf_token"].ToString();
+        if (string.IsNullOrEmpty(csrfCookie) || string.IsNullOrEmpty(csrfForm) ||
+            !CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(csrfCookie),
+                Encoding.UTF8.GetBytes(csrfForm)))
+        {
+            return Results.BadRequest(new { error = "invalid_request", error_description = "Invalid CSRF token" });
+        }
+
+        // Clear the CSRF cookie
+        context.Response.Cookies.Delete("oauth_csrf");
 
         var clientId = form["client_id"].ToString();
         var clientSecret = form["client_secret"].ToString();
@@ -281,7 +306,7 @@ public static class OAuthEndpoints
             response_types_supported = new[] { "code" },
             grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token" },
             token_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post" },
-            code_challenge_methods_supported = new[] { "S256", "plain" },
+            code_challenge_methods_supported = new[] { "S256" },
             scopes_supported = new[] { "serialmemory.core", "serialmemory.read", "serialmemory.write" }
         });
     }
@@ -314,7 +339,8 @@ public static class OAuthEndpoints
         string? state,
         string? codeChallenge,
         string? codeChallengeMethod,
-        string[] scopes)
+        string[] scopes,
+        string csrfToken)
     {
         var scopesList = string.Join("", scopes.Select(s => $"<li>{HttpUtility.HtmlEncode(s)}</li>"));
         var encodedClientId = HttpUtility.HtmlEncode(clientId);
@@ -324,6 +350,7 @@ public static class OAuthEndpoints
         var attrCodeChallenge = HttpUtility.HtmlAttributeEncode(codeChallenge ?? "");
         var attrCodeChallengeMethod = HttpUtility.HtmlAttributeEncode(codeChallengeMethod ?? "");
         var attrScope = HttpUtility.HtmlAttributeEncode(string.Join(" ", scopes));
+        var attrCsrfToken = HttpUtility.HtmlAttributeEncode(csrfToken);
 
         return $$"""
             <!DOCTYPE html>
@@ -361,6 +388,7 @@ public static class OAuthEndpoints
                         <input type="hidden" name="code_challenge" value="{{attrCodeChallenge}}" />
                         <input type="hidden" name="code_challenge_method" value="{{attrCodeChallengeMethod}}" />
                         <input type="hidden" name="scope" value="{{attrScope}}" />
+                        <input type="hidden" name="csrf_token" value="{{attrCsrfToken}}" />
 
                         <label>Client Secret:</label>
                         <input type="password" name="client_secret" required placeholder="Enter your client secret" />

@@ -3,14 +3,19 @@ namespace SerialMemory.Core.Services;
 /// <summary>
 /// Static file logger for debugging MCP servers where STDOUT/STDERR may not be visible.
 /// Writes to %TEMP%\serialmemory_debug.log
+/// Disabled by default; set DEBUG_FILE_LOGGING=true to enable.
 /// </summary>
 public static class DebugFileLogger
 {
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "serialmemory_debug.log");
     private static readonly object Lock = new();
+    private static readonly bool IsEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("DEBUG_FILE_LOGGING"), "true", StringComparison.OrdinalIgnoreCase);
 
     public static void Log(string message)
     {
+        if (!IsEnabled) return;
+
         try
         {
             lock (Lock)

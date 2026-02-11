@@ -106,7 +106,7 @@ public abstract class McpServerBase
         EmbeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
         EntityService = EntityExtractionServiceFactory.Create(ollamaEntityUrl, ollamaEntityModel, extractionServiceUrl);
         KgService = new KnowledgeGraphService(Store, EmbeddingService, EntityService);
-        EventStore = new PostgresEventStore(ConnectionString, LoggerFactory.CreateLogger<PostgresEventStore>());
+        EventStore = new PostgresEventStore(VectorDataSource, LoggerFactory.CreateLogger<PostgresEventStore>());
 
         Logger.LogInformation("Initialized {ServerName} v{Version}", serverName, serverVersion);
         Logger.LogInformation("Database: {Host}:{Port}/{Database}", postgresHost, postgresPort, postgresDb);

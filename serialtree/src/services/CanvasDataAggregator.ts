@@ -185,14 +185,14 @@ export function buildEntityLinks(
   entities: readonly CanvasNode[],
   searchResults: readonly SearchResult[],
 ): readonly CanvasEdge[] {
+  const memoryIdSet = new Set(memories.map((m) => m.id));
   const entityIdSet = new Set(entities.map((e) => e.id));
 
   const edges: CanvasEdge[] = [];
 
   for (const result of searchResults) {
     const memoryNodeId = `mem-${result.id}`;
-    const memoryExists = memories.some((m) => m.id === memoryNodeId);
-    if (!memoryExists) {
+    if (!memoryIdSet.has(memoryNodeId)) {
       continue;
     }
 
@@ -225,6 +225,7 @@ export function buildAgentFindingEdges(
     agentIdByRole.set(agent.role as string, agent.id);
   }
 
+  const findingIdSet = new Set(findings.map((f) => f.id));
   const edges: CanvasEdge[] = [];
 
   for (let i = 0; i < agentFindings.length; i++) {
@@ -235,8 +236,7 @@ export function buildAgentFindingEdges(
     }
 
     const findingNodeId = `fnd-${i}-${af.file ?? 'unknown'}`;
-    const findingExists = findings.some((f) => f.id === findingNodeId);
-    if (!findingExists) {
+    if (!findingIdSet.has(findingNodeId)) {
       continue;
     }
 

@@ -71,7 +71,7 @@ public sealed class IntegrityAuditService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var whereClauses = new List<string> { "1=1" };
         var parameters = new DynamicParameters();
@@ -164,7 +164,7 @@ public sealed class IntegrityAuditService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var rows = await conn.QueryAsync<AuditEntryRow>(@"
             SELECT id, tenant_id, user_id, action, memory_id, timestamp,
@@ -194,7 +194,7 @@ public sealed class IntegrityAuditService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var row = await conn.QueryFirstOrDefaultAsync<SettingsRow>(@"
             SELECT tenant_id, enable_privacy_mode, enable_hash_verification,
@@ -238,7 +238,7 @@ public sealed class IntegrityAuditService(
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{_tenantId}'");
+        await conn.SetTenantContextAsync(_tenantId);
 
         var current = await GetSettingsAsync(ct);
         var now = DateTimeOffset.UtcNow;

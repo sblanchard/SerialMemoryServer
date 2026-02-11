@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SerialMemory.Core.Json;
 
 namespace SerialMemory.Mcp.Tools;
 
@@ -60,11 +61,7 @@ public sealed class ToolGateway
         return CreateTextResponse(
             $"## Tools in '{category}' ({schemas.Length})\n\n" +
             $"Use `use_tool` with `tool_name` and `arguments` to execute.\n\n" +
-            JsonSerializer.Serialize(schemas, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            }));
+            JsonSerializer.Serialize(schemas, SerialMemoryJsonOptions.Indented));
     }
 
     /// <summary>

@@ -13,10 +13,10 @@ namespace SerialMemory.Mcp.Shared.Tools;
 /// Memory export tools: workspace, memories, graph, user profile.
 /// </summary>
 public sealed class MemoryExportTools(
-    string connectionString,
+    NpgsqlDataSource dataSource,
     ILogger logger)
 {
-    private readonly NpgsqlDataSource _dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();
+    private readonly NpgsqlDataSource _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public async Task<object> HandleExportWorkspace(JsonNode? arguments)

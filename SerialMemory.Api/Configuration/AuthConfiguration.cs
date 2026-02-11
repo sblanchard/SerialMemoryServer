@@ -54,11 +54,13 @@ public static class AuthConfiguration
     /// </summary>
     public static JwtConfig GetJwtConfig(IConfiguration configuration)
     {
+        var secret = configuration["JWT_SECRET"]
+            ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+            ?? throw new InvalidOperationException("JWT_SECRET is required. Set it via configuration or environment variable.");
+
         return new JwtConfig
         {
-            Secret = configuration["JWT_SECRET"]
-                ?? Environment.GetEnvironmentVariable("JWT_SECRET")
-                ?? "dev-secret-key-minimum-32-chars!!",
+            Secret = secret,
             Issuer = configuration["JWT_ISSUER"]
                 ?? Environment.GetEnvironmentVariable("JWT_ISSUER")
                 ?? "serialmemory",

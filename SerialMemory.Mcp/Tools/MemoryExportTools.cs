@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using SerialMemory.Core.Json;
 using SerialMemory.EventSourcing.Store;
 using SerialMemory.Infrastructure;
 
@@ -28,18 +29,13 @@ public sealed class MemoryExportTools
 
     public MemoryExportTools(
         IEventStore eventStore,
-        string connectionString,
+        NpgsqlDataSource dataSource,
         ILogger logger)
     {
         _eventStore = eventStore;
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _logger = logger;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
+        _jsonOptions = SerialMemoryJsonOptions.Indented;
     }
 
     /// <summary>

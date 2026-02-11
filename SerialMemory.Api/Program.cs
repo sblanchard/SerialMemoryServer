@@ -1,4 +1,5 @@
 using Dapper;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
@@ -104,7 +105,9 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.SetIsOriginAllowed(_ => true) // Allow all origins for SignalR
+        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? new[] { "http://localhost:3000", "http://localhost:5173" };
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials(); // Required for SignalR
@@ -157,8 +160,19 @@ else
 
 // Tenant context and API key services
 var jwtSecret = builder.Configuration["JWT_SECRET"]
-    ?? Environment.GetEnvironmentVariable("JWT_SECRET")
-    ?? "dev-secret-change-in-production-32chars";
+    ?? Environment.GetEnvironmentVariable("JWT_SECRET");
+if (string.IsNullOrEmpty(jwtSecret))
+{
+    if (builder.Environment.IsDevelopment())
+    {
+        jwtSecret = "dev-only-insecure-jwt-secret-min-32-chars!!";
+        Console.WriteLine("[WARN] JWT_SECRET not set - using insecure dev default. Do NOT use in production.");
+    }
+    else
+    {
+        throw new InvalidOperationException("JWT_SECRET environment variable is required in non-development environments.");
+    }
+}
 var jwtIssuer = builder.Configuration["JWT_ISSUER"]
     ?? Environment.GetEnvironmentVariable("JWT_ISSUER")
     ?? "serialmemory";
@@ -211,9 +225,9 @@ try
     });
     builder.Services.AddScoped<MassTransitEventPublisher>();
 }
-catch
+catch (Exception ex)
 {
-    // RabbitMQ not available - skip event publishing
+    Console.WriteLine($"[WARN] RabbitMQ not available, continuing without messaging: {ex.Message}");
 }
 
 // SignalR for real-time updates
@@ -467,6 +481,14 @@ app.Use(async (context, next) =>
     if (context.Request.Method == "OPTIONS" && context.Request.Headers.ContainsKey("Origin"))
     {
         var origin = context.Request.Headers.Origin.ToString();
+        var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? (Environment.GetEnvironmentVariable("ALLOWED_ORIGINS")?.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            ?? new[] { "http://localhost:3000", "http://localhost:5173" };
+        if (!corsOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = 403;
+            return;
+        }
         context.Response.Headers.Append("Access-Control-Allow-Origin", origin);
         context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Requested-With, X-SignalR-User-Agent");
@@ -2478,7 +2500,7 @@ app.MapGet("/api/reasoning/run/{runId:guid}", async (Guid runId, IConfiguration 
                 }
             }
         }
-        catch { /* Ignore malformed payload */ }
+        catch (System.Text.Json.JsonException) { /* Ignore malformed payload */ }
     }
 
     return Results.Ok(new
@@ -2502,7 +2524,7 @@ app.MapGet("/api/reasoning/run/{runId:guid}", async (Guid runId, IConfiguration 
                 if (payload != null && payload.TryGetValue("summary", out var summaryObj))
                     summary = summaryObj?.ToString() ?? "";
             }
-            catch { }
+            catch (System.Text.Json.JsonException) { /* Malformed step payload */ }
 
             return new
             {
@@ -2532,7 +2554,7 @@ static string[] GetParentIds(string? payloadJson)
             return parentIds.EnumerateArray().Select(p => p.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToArray();
         }
     }
-    catch { }
+    catch (System.Text.Json.JsonException) { /* Malformed parent IDs */ }
     return [];
 }
 
@@ -2656,7 +2678,7 @@ app.MapGet("/api/memory/timeline", async (
     // Query with RLS context
     await using var conn = await dataSource.OpenConnectionAsync();
     var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+    await conn.SetTenantContextAsync(tenantId);
 
     var events = await conn.QueryAsync<dynamic>(@"
         SELECT e.event_id, e.stream_id as memory_id, e.event_type, e.created_at as timestamp,
@@ -3725,7 +3747,7 @@ app.MapGet("/api/power/recent", async (
     // Query with RLS context
     await using var conn = await dataSource.OpenConnectionAsync();
     var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+    await conn.SetTenantContextAsync(tenantId);
 
     // Note: memories table has no confidence or is_active columns - use defaults
     var memories = await conn.QueryAsync<dynamic>(@"
@@ -4049,7 +4071,7 @@ app.MapGet("/api/power/events/stream", async (
     // Query with RLS context
     await using var conn = await dataSource.OpenConnectionAsync();
     var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+    await conn.SetTenantContextAsync(tenantId);
 
     // Use column names from eventsourcing schema (memory_events table)
     // Schema has: event_id, global_sequence, event_type, stream_id, created_at, event_data, created_by
@@ -4087,15 +4109,17 @@ app.MapGet("/api/power/events/stream", async (
     });
 });
 
-// POST /api/power/sql - Execute raw SQL query (DANGER)
+// POST /api/power/sql - Execute raw SQL query (DANGER - Owner only)
 app.MapPost("/api/power/sql", async (
     RawSqlRequest request,
-    IPowerUserService powerService) =>
+    IPowerUserService powerService,
+    ILogger<Program> logger) =>
 {
+    logger.LogWarning("Raw SQL execution requested: {SqlPreview}", request.Sql?[..Math.Min(request.Sql?.Length ?? 0, 100)]);
     var result = await powerService.ExecuteRawQueryAsync(request.Sql, request.Parameters);
 
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
-});
+}).RequireAuthorization("Owner");
 
 // ---- LIVE GRAPH MUTATIONS ----
 
@@ -4196,7 +4220,7 @@ app.MapGet("/api/mind/health", async (
     // Query memory stats with RLS context
     await using var conn = await dataSource.OpenConnectionAsync();
     var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+    await conn.SetTenantContextAsync(tenantId);
 
     // Note: memories table has no is_active or confidence columns - count all as active
     var stats = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
@@ -4908,7 +4932,7 @@ app.MapGet("/api/integrity/stats", async (
 {
     await using var conn = await dataSource.OpenConnectionAsync();
     var tenantId = Guid.Parse(tenantContext.TenantId);
-    await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+    await conn.SetTenantContextAsync(tenantId);
 
     var stats = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
         SELECT
@@ -4958,7 +4982,7 @@ app.MapGet("/api/integrity/scan-loops", async (
     {
         await using var conn = await dataSource.OpenConnectionAsync();
         var tenantId = Guid.Parse(tenantContext.TenantId);
-        await conn.ExecuteAsync($"SET app.tenant_id = '{tenantId}'");
+        await conn.SetTenantContextAsync(tenantId);
 
         // Get all memories with causal parents
         var memoriesWithParents = await conn.QueryAsync<(Guid memory_id, Guid[] causal_parents)>(@"
@@ -5930,17 +5954,29 @@ internal record SelfHealingTriggerRequest(
 internal record HealingDismissRequest(
     string? Reason = null);
 
-// Mutation state holder for tracking pause/resume state
+// Mutation state holder for tracking pause/resume state (thread-safe)
 internal class MutationStateHolder
 {
-    public bool IsPaused { get; set; }
-    public long CurrentSequence { get; set; }
+    private int _isPaused;
+    private long _currentSequence;
+
+    public bool IsPaused
+    {
+        get => Interlocked.CompareExchange(ref _isPaused, 0, 0) != 0;
+        set => Interlocked.Exchange(ref _isPaused, value ? 1 : 0);
+    }
+
+    public long CurrentSequence
+    {
+        get => Interlocked.Read(ref _currentSequence);
+        set => Interlocked.Exchange(ref _currentSequence, value);
+    }
 }
 
-// Simple in-memory context store fallback
+// Simple in-memory context store fallback (thread-safe)
 internal class InMemoryContextStore : IContextStore
 {
-    private readonly Dictionary<string, string> _store = new();
+    private readonly ConcurrentDictionary<string, string> _store = new();
 
     public Task<string?> GetAsync(string key, CancellationToken ct = default) =>
         Task.FromResult(_store.GetValueOrDefault(key));
@@ -5953,7 +5989,7 @@ internal class InMemoryContextStore : IContextStore
 
     public Task DeleteAsync(string key, CancellationToken ct = default)
     {
-        _store.Remove(key);
+        _store.TryRemove(key, out _);
         return Task.CompletedTask;
     }
 

@@ -1,4 +1,3 @@
-using System.Dynamic;
 using Dapper;
 using Npgsql;
 using Pgvector;
@@ -22,6 +21,9 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 {
     private readonly ITenantDbConnectionFactory _connectionFactory;
     private readonly ITenantContext _tenantContext;
+
+    // Unit-of-work: when active, all operations reuse this connection (RLS already set)
+    private NpgsqlConnection? _unitOfWorkConnection;
 
     /// <summary>
     /// Creates a new tenant-scoped PostgreSQL knowledge graph store.
@@ -74,10 +76,64 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     /// <summary>
     /// Opens a connection with tenant context set for RLS enforcement.
-    /// Returns NpgsqlConnection for pgvector operations.
+    /// When a unit-of-work is active, returns the shared connection wrapped to skip disposal.
+    /// Otherwise returns a new connection that the caller owns and disposes via await using.
     /// </summary>
-    private Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
-        => ((TenantDbConnectionFactory)_connectionFactory).OpenNpgsqlAsync(cancellationToken);
+    private async Task<ConnectionLease> OpenConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        if (_unitOfWorkConnection != null)
+            return new ConnectionLease(_unitOfWorkConnection, ownsConnection: false);
+
+        var conn = await ((TenantDbConnectionFactory)_connectionFactory).OpenNpgsqlAsync(cancellationToken);
+        return new ConnectionLease(conn, ownsConnection: true);
+    }
+
+    /// <summary>
+    /// Wraps an NpgsqlConnection with conditional disposal.
+    /// When ownsConnection is false (unit-of-work), DisposeAsync is a no-op.
+    /// </summary>
+    internal readonly struct ConnectionLease : IAsyncDisposable
+    {
+        public readonly NpgsqlConnection Connection;
+        private readonly bool _ownsConnection;
+
+        public ConnectionLease(NpgsqlConnection connection, bool ownsConnection)
+        {
+            Connection = connection;
+            _ownsConnection = ownsConnection;
+        }
+
+        public ValueTask DisposeAsync() =>
+            _ownsConnection ? Connection.DisposeAsync() : ValueTask.CompletedTask;
+
+        // Implicit conversion so existing code using conn.QueryAsync etc. still works
+        public static implicit operator NpgsqlConnection(ConnectionLease lease) => lease.Connection;
+    }
+
+    /// <inheritdoc />
+    public async Task<IAsyncDisposable> BeginUnitOfWorkAsync(CancellationToken cancellationToken = default)
+    {
+        if (_unitOfWorkConnection != null)
+            return new NoOpDisposable(); // Nested unit-of-work: no-op
+
+        var conn = await ((TenantDbConnectionFactory)_connectionFactory).OpenNpgsqlAsync(cancellationToken);
+        _unitOfWorkConnection = conn;
+        return new UnitOfWorkScope(this, conn);
+    }
+
+    private sealed class NoOpDisposable : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class UnitOfWorkScope(PostgresKnowledgeGraphStore store, NpgsqlConnection connection) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            store._unitOfWorkConnection = null;
+            await connection.DisposeAsync();
+        }
+    }
 
     #region Memory Operations
 
@@ -98,7 +154,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType)
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         Log("CreateMemory", $"Connection opened, about to INSERT with tenantId={tenantId}");
 
         // Use NpgsqlCommand directly to properly handle Vector type
@@ -135,7 +192,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             WHERE id = @Id AND tenant_id = @TenantId
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@Id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = memory.Id });
         cmd.Parameters.Add(new NpgsqlParameter("@TenantId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = TenantId });
@@ -153,9 +211,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "SELECT * FROM memories WHERE id = @Id";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
-        var result = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
+        var result = await conn.QuerySingleOrDefaultAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { Id = id },
             cancellationToken: cancellationToken
@@ -175,9 +234,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
-        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { Limit = limit },
             cancellationToken: cancellationToken
@@ -208,7 +268,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                   LIMIT @Limit
                   """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         // Use NpgsqlCommand directly to properly handle Vector type
         await using var cmd = new NpgsqlCommand(sql, conn);
@@ -218,22 +279,22 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         if (memoryType != null)
             cmd.Parameters.AddWithValue("@MemoryType", memoryType);
 
-        var results = new List<dynamic>();
+        var results = new List<MemoryRow>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            dynamic row = new ExpandoObject();
-            var dict = (IDictionary<string, object?>)row;
-            dict["id"] = reader.GetGuid(0);
-            dict["content"] = reader.GetString(1);
-            dict["created_at"] = reader.GetDateTime(2);
-            dict["updated_at"] = reader.IsDBNull(3) ? null : reader.GetDateTime(3);
-            dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
-            dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
-            dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
-            dict["memory_type"] = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7);
-            dict["similarity"] = reader.GetFloat(8);
-            results.Add(row);
+            results.Add(new MemoryRow
+            {
+                id = reader.GetGuid(0),
+                content = reader.GetString(1),
+                created_at = reader.GetDateTime(2),
+                updated_at = reader.IsDBNull(3) ? null : reader.GetDateTime(3),
+                source = reader.IsDBNull(4) ? null : reader.GetString(4),
+                conversation_session_id = reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
+                memory_type = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7),
+                similarity = reader.GetFloat(8)
+            });
         }
 
         return results.Select(MapToMemory).ToList();
@@ -260,9 +321,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                   LIMIT @Limit
                   """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
-        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { Query = query, Limit = limit, MemoryType = memoryType },
             cancellationToken: cancellationToken
@@ -291,7 +353,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        RETURNING id
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var returnedId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
@@ -316,7 +379,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "SELECT * FROM entities WHERE id = @Id";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var result = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
             sql,
@@ -325,6 +389,25 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         ));
 
         return result != null ? MapToEntity(result) : null;
+    }
+
+    public async Task<List<Entity>> GetEntitiesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0)
+            return [];
+
+        const string sql = "SELECT * FROM entities WHERE id = ANY(@Ids)";
+
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+
+        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { Ids = ids },
+            cancellationToken: cancellationToken
+        ));
+
+        return results.Select(MapToEntity).ToList();
     }
 
     public async Task<List<Entity>> GetEntitiesForMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
@@ -339,7 +422,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        ORDER BY me.relevance DESC
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -365,7 +449,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             ORDER BY me.relevance DESC
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -398,7 +483,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = EXCLUDED.relevance
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
@@ -428,7 +514,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        RETURNING id
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var returnedId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
@@ -469,7 +556,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        ORDER BY er.confidence DESC
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -503,7 +591,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             ORDER BY er.confidence DESC
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -546,7 +635,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -569,7 +659,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -601,7 +692,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                            updated_at = NOW()
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
@@ -634,7 +726,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        ORDER BY attribute_type, attribute_key
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -669,7 +762,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             ORDER BY confidence DESC, updated_at DESC
         """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -705,7 +799,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        VALUES (@Id, @TenantId, @WorkspaceId, @SessionName, @ClientType, @Metadata::jsonb)
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
@@ -729,7 +824,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "UPDATE conversation_sessions SET ended_at = NOW() WHERE id = @SessionId";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
@@ -748,7 +844,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -763,39 +860,41 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     #region Mapping Methods
 
-    private static Memory MapToMemory(dynamic row)
+    private static Memory MapToMemory(MemoryRow row)
     {
-        // Handle both DapperRow (which implements IDictionary<string, object>) and anonymous types
-        IDictionary<string, object>? rowDict = row as IDictionary<string, object>;
-
-        var memory = new Memory
+        return new Memory
         {
             Id = row.id,
             Content = row.content,
             CreatedAt = row.created_at,
-            UpdatedAt = row.updated_at,
+            UpdatedAt = row.updated_at ?? row.created_at,
             Source = row.source,
             ConversationSessionId = row.conversation_session_id,
-            Metadata = row.metadata != null ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString()) : null
+            Metadata = row.metadata != null
+                ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata)
+                : null,
+            Similarity = row.similarity,
+            Rank = row.rank,
+            MemoryType = row.memory_type ?? "knowledge"
         };
+    }
 
-        // Map search scores and memory_type when available from query results
-        if (rowDict != null)
-        {
-            // For DapperRow, use dictionary access for optional properties
-            memory.Similarity = rowDict.TryGetValue("similarity", out var sim) && sim != null ? Convert.ToSingle(sim) : 0f;
-            memory.Rank = rowDict.TryGetValue("rank", out var rank) && rank != null ? Convert.ToSingle(rank) : 0f;
-            memory.MemoryType = rowDict.TryGetValue("memory_type", out var mt) && mt != null ? mt.ToString()! : "knowledge";
-        }
-        else
-        {
-            // For anonymous types or other dynamic objects, try direct property access with fallback
-            try { memory.Similarity = (float)(row.similarity ?? 0f); } catch { memory.Similarity = 0f; }
-            try { memory.Rank = (float)(row.rank ?? 0f); } catch { memory.Rank = 0f; }
-            try { memory.MemoryType = row.memory_type ?? "knowledge"; } catch { memory.MemoryType = "knowledge"; }
-        }
-
-        return memory;
+    /// <summary>
+    /// Typed DTO for Dapper memory row mapping. Properties use snake_case to match DB columns.
+    /// Optional columns (similarity, rank) default to 0f when not present in query results.
+    /// </summary>
+    private sealed record MemoryRow
+    {
+        public Guid id { get; init; }
+        public string content { get; init; } = string.Empty;
+        public DateTime created_at { get; init; }
+        public DateTime? updated_at { get; init; }
+        public string? source { get; init; }
+        public Guid? conversation_session_id { get; init; }
+        public string? metadata { get; init; }
+        public string? memory_type { get; init; } = "knowledge";
+        public float similarity { get; init; }
+        public float rank { get; init; }
     }
 
     private static Entity MapToEntity(dynamic row)
@@ -830,9 +929,9 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         };
 
         // Populate navigation properties when joined entity data is available
+        // Dapper always returns DapperRow (IDictionary<string, object>), so rowDict is never null
         if (rowDict != null)
         {
-            // For DapperRow, use dictionary access for optional joined properties
             if (rowDict.TryGetValue("source_name", out var sourceName) && sourceName != null)
             {
                 relationship.SourceEntity = new Entity
@@ -856,43 +955,6 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                         : "UNKNOWN"
                 };
             }
-        }
-        else
-        {
-            // For anonymous types, try direct property access with fallback
-            try
-            {
-                string? sourceName = row.source_name;
-                if (sourceName != null)
-                {
-                    string? sourceType = null;
-                    try { sourceType = row.source_type; } catch { }
-                    relationship.SourceEntity = new Entity
-                    {
-                        Id = row.source_entity_id,
-                        Name = sourceName,
-                        EntityType = sourceType ?? "UNKNOWN"
-                    };
-                }
-            }
-            catch { /* Property doesn't exist on anonymous type */ }
-
-            try
-            {
-                string? targetName = row.target_name;
-                if (targetName != null)
-                {
-                    string? targetType = null;
-                    try { targetType = row.target_type; } catch { }
-                    relationship.TargetEntity = new Entity
-                    {
-                        Id = row.target_entity_id,
-                        Name = targetName,
-                        EntityType = targetType ?? "UNKNOWN"
-                    };
-                }
-            }
-            catch { /* Property doesn't exist on anonymous type */ }
         }
 
         return relationship;
@@ -942,7 +1004,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var metadatas = entities.Select(e =>
             e.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(e.Metadata) : (string?)null).ToArray();
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@Ids", ids);
         cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
@@ -981,7 +1044,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var entityIds = entityRelevances.Keys.ToArray();
         var relevances = entityRelevances.Values.ToArray();
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
         cmd.Parameters.AddWithValue("@WorkspaceIds", workspaceIds);
@@ -1018,7 +1082,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var metadatas = relationships.Select(r =>
             r.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(r.Metadata) : (string?)null).ToArray();
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@Ids", ids);
         cmd.Parameters.AddWithValue("@TenantIds", tenantIds);
@@ -1041,14 +1106,16 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
     public async Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default)
     {
+        // Use pg_class.reltuples for O(1) approximate counts instead of O(n) COUNT(*)
         const string sql = """
             SELECT
-                (SELECT COUNT(*) FROM memories) AS memory_count,
-                (SELECT COUNT(*) FROM entities) AS entity_count,
-                (SELECT COUNT(*) FROM entity_relationships) AS relationship_count
+                COALESCE((SELECT reltuples::bigint FROM pg_class WHERE relname = 'memories'), 0) AS memory_count,
+                COALESCE((SELECT reltuples::bigint FROM pg_class WHERE relname = 'entities'), 0) AS entity_count,
+                COALESCE((SELECT reltuples::bigint FROM pg_class WHERE relname = 'entity_relationships'), 0) AS relationship_count
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         var row = await conn.QuerySingleAsync<dynamic>(new CommandDefinition(sql, cancellationToken: cancellationToken));
 
         return ((long)row.memory_count, (long)row.entity_count, (long)row.relationship_count);
@@ -1063,7 +1130,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             ORDER BY cnt DESC
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(sql, cancellationToken: cancellationToken));
 
         return rows.ToDictionary(
@@ -1080,7 +1148,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "SELECT COUNT(*) FROM memories";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
     }
@@ -1090,7 +1159,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "SELECT COUNT(*) FROM entities";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
     }
@@ -1100,7 +1170,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // RLS policy will filter by tenant automatically
         const string sql = "SELECT COUNT(*) FROM entity_relationships";
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, cancellationToken: cancellationToken));
     }
@@ -1124,7 +1195,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -1158,7 +1230,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -1191,7 +1264,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                        LIMIT @Limit OFFSET @Offset
                            """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -1225,7 +1299,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                                    LIMIT @Limit
                        """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql,
@@ -1266,7 +1341,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             LIMIT @Limit
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@QueryEmbedding", new Vector(queryEmbedding));
         cmd.Parameters.AddWithValue("@FromUtc", fromUtc);
@@ -1274,22 +1350,22 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.AddWithValue("@Threshold", threshold);
         cmd.Parameters.AddWithValue("@Limit", limit);
 
-        var results = new List<dynamic>();
+        var results = new List<MemoryRow>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            dynamic row = new ExpandoObject();
-            var dict = (IDictionary<string, object?>)row;
-            dict["id"] = reader.GetGuid(0);
-            dict["content"] = reader.GetString(1);
-            dict["created_at"] = reader.GetDateTime(2);
-            dict["updated_at"] = reader.IsDBNull(3) ? null : reader.GetDateTime(3);
-            dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
-            dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
-            dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
-            dict["memory_type"] = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7);
-            dict["similarity"] = reader.GetFloat(8);
-            results.Add(row);
+            results.Add(new MemoryRow
+            {
+                id = reader.GetGuid(0),
+                content = reader.GetString(1),
+                created_at = reader.GetDateTime(2),
+                updated_at = reader.IsDBNull(3) ? null : reader.GetDateTime(3),
+                source = reader.IsDBNull(4) ? null : reader.GetString(4),
+                conversation_session_id = reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
+                memory_type = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7),
+                similarity = reader.GetFloat(8)
+            });
         }
 
         return results.Select(MapToMemory).ToList();
@@ -1306,9 +1382,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             LIMIT @Limit
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
-        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { MemoryType = memoryType, Limit = limit },
             cancellationToken: cancellationToken));
@@ -1327,9 +1404,10 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             LIMIT @Limit
             """;
 
-        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
 
-        var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { SessionId = sessionId, Limit = limit },
             cancellationToken: cancellationToken));
@@ -1356,7 +1434,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             RETURNING id
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         return await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
@@ -1382,7 +1461,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             LIMIT @Limit
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql, new { Limit = limit }, cancellationToken: ct));
@@ -1409,7 +1489,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             WHERE workspace_id = @WorkspaceSlug
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         var row = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
             sql, new { WorkspaceSlug = workspaceId }, cancellationToken: ct));
@@ -1442,7 +1523,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             WHERE id = @SessionId
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         await conn.ExecuteAsync(new CommandDefinition(
             sql,
@@ -1472,7 +1554,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             RETURNING id
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         return await conn.QuerySingleAsync<Guid>(new CommandDefinition(
             sql,
@@ -1498,7 +1581,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             LIMIT @Limit
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         var results = await conn.QueryAsync<dynamic>(new CommandDefinition(
             sql, new { WorkspaceSlug = workspaceId, Limit = limit }, cancellationToken: ct));
@@ -1522,7 +1606,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             WHERE workspace_id = @WorkspaceSlug AND snapshot_name = @SnapshotName
             """;
 
-        await using var conn = await OpenConnectionAsync(ct);
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
 
         var row = await conn.QuerySingleOrDefaultAsync<dynamic>(new CommandDefinition(
             sql, new { WorkspaceSlug = workspaceId, SnapshotName = snapshotName }, cancellationToken: ct));

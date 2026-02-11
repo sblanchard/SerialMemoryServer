@@ -12,7 +12,8 @@ public static class LlmEndpoints
     public static IEndpointRouteBuilder MapLlmEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/llm")
-            .WithTags("LLM");
+            .WithTags("LLM")
+            .RequireAuthorization();
 
         // POST /api/llm/chat - Chat completion
         group.MapPost("/chat", async (

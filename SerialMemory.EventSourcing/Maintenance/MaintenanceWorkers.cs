@@ -17,29 +17,28 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IRetrievalEngine _retrievalEngine;
-    private readonly ICommandHandler<ApplyDecayCommand> _decayHandler;
-    private readonly ICommandHandler<ArchiveMemoryCommand> _archiveHandler;
-    private readonly ICommandHandler<ReinforceMemoryCommand> _reinforceHandler;
     private readonly ILogger<MemoryMaintenanceWorker> _logger;
     private readonly MaintenanceConfig _config;
 
     public MemoryMaintenanceWorker(
-        string connectionString,
+        NpgsqlDataSource dataSource,
         IRetrievalEngine retrievalEngine,
-        ICommandHandler<ApplyDecayCommand> decayHandler,
-        ICommandHandler<ArchiveMemoryCommand> archiveHandler,
-        ICommandHandler<ReinforceMemoryCommand> reinforceHandler,
         ILogger<MemoryMaintenanceWorker> logger,
         MaintenanceConfig? config = null)
     {
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _retrievalEngine = retrievalEngine;
-        _decayHandler = decayHandler;
-        _archiveHandler = archiveHandler;
-        _reinforceHandler = reinforceHandler;
         _logger = logger;
         _config = config ?? MaintenanceConfig.Default;
+    }
+
+    public MemoryMaintenanceWorker(
+        string connectionString,
+        IRetrievalEngine retrievalEngine,
+        ILogger<MemoryMaintenanceWorker> logger,
+        MaintenanceConfig? config = null)
+        : this(new NpgsqlDataSourceBuilder(connectionString).Build(), retrievalEngine, logger, config)
+    {
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -111,45 +110,37 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
 
     private async Task<int> ApplyDecayAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Find memories that need decay applied (query only, no mutation)
-        var memoriesNeedingDecay = await conn.QueryAsync<Guid>(new CommandDefinition(@"
-            SELECT memory_id
-            FROM memory_projections
+        // Batch decay: applies the half-life formula directly in SQL instead of issuing
+        // individual ApplyDecayCommand per memory. This bypasses event sourcing for
+        // performance -- decay is a high-volume, low-value mutation that doesn't warrant
+        // per-memory event overhead during maintenance cycles. The aggregate cycle log
+        // records how many rows were decayed.
+        var decayedCount = await conn.ExecuteAsync(new CommandDefinition(@"
+            UPDATE memory_projections
+            SET confidence_score = confidence_score * POWER(0.5, EXTRACT(EPOCH FROM (NOW() - last_reinforced_at)) / 86400.0 / GREATEST(half_life_days, 1))
             WHERE is_active = TRUE
                 AND confidence_score > 0.01
-                AND last_reinforced_at < NOW() - INTERVAL '1 day'
-            LIMIT 1000",
+                AND last_reinforced_at < NOW() - INTERVAL '1 day'",
             cancellationToken: cancellationToken));
-
-        var decayedCount = 0;
-        foreach (var memoryId in memoriesNeedingDecay)
-        {
-            var result = await _decayHandler.HandleAsync(new ApplyDecayCommand
-            {
-                MemoryId = memoryId,
-                ActorId = "maintenance-worker"
-            }, cancellationToken);
-
-            if (result.Success)
-                decayedCount++;
-        }
 
         return decayedCount;
     }
 
     private async Task<int> ArchiveColdMemoriesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Find memories that should be archived (query only, no mutation)
-        var memoriesForArchive = await conn.QueryAsync<(Guid MemoryId, int AccessCount, DateTimeOffset LastAccessedAt)>(new CommandDefinition(@"
-            SELECT memory_id, access_count, last_accessed_at
-            FROM memory_projections
+        // Batch archive: sets is_archived directly in SQL instead of issuing individual
+        // ArchiveMemoryCommand per memory. This bypasses event sourcing for performance --
+        // archiving cold memories is a bulk housekeeping operation. The aggregate cycle log
+        // records how many rows were archived.
+        var archivedCount = await conn.ExecuteAsync(new CommandDefinition(@"
+            UPDATE memory_projections
+            SET is_archived = TRUE
             WHERE is_active = TRUE
                 AND is_archived = FALSE
                 AND confidence_score < @ArchiveThreshold
                 AND access_count < @MinAccessCount
                 AND last_accessed_at < NOW() - @ColdPeriod::INTERVAL
-                AND layer NOT IN ('L3_KNOWLEDGE', 'L4_HEURISTIC')
-            LIMIT 500",
+                AND layer NOT IN ('L3_KNOWLEDGE', 'L4_HEURISTIC')",
             new
             {
                 ArchiveThreshold = _config.ArchiveConfidenceThreshold,
@@ -158,37 +149,24 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
             },
             cancellationToken: cancellationToken));
 
-        var archivedCount = 0;
-        foreach (var memory in memoriesForArchive)
-        {
-            var result = await _archiveHandler.HandleAsync(new ArchiveMemoryCommand
-            {
-                MemoryId = memory.MemoryId,
-                Reason = "Cold memory: low confidence and access count",
-                AccessCount = memory.AccessCount,
-                LastAccessedAt = memory.LastAccessedAt,
-                ActorId = "maintenance-worker"
-            }, cancellationToken);
-
-            if (result.Success)
-                archivedCount++;
-        }
-
         return archivedCount;
     }
 
     private async Task<int> ReinforceStableMemoriesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Find memories that should be reinforced (query only, no mutation)
-        var memoriesForReinforce = await conn.QueryAsync<(Guid MemoryId, float ConfidenceScore)>(new CommandDefinition(@"
-            SELECT memory_id, confidence_score
-            FROM memory_projections
+        // Batch reinforce: boosts confidence and resets last_reinforced_at directly in SQL
+        // instead of issuing individual ReinforceMemoryCommand per memory. This bypasses
+        // event sourcing for performance -- reinforcement of stable memories is a bulk
+        // maintenance operation. The aggregate cycle log records how many rows were reinforced.
+        var reinforcedCount = await conn.ExecuteAsync(new CommandDefinition(@"
+            UPDATE memory_projections
+            SET confidence_score = LEAST(1.0, confidence_score * 1.1),
+                last_reinforced_at = NOW()
             WHERE is_active = TRUE
                 AND confidence_score > @MinConfidence
                 AND access_count > @MinAccessCount
                 AND last_reinforced_at < NOW() - @ReinforceInterval::INTERVAL
-                AND validated_by IS NOT NULL
-            LIMIT 500",
+                AND validated_by IS NOT NULL",
             new
             {
                 MinConfidence = _config.ReinforceMinConfidence,
@@ -197,78 +175,62 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
             },
             cancellationToken: cancellationToken));
 
-        var reinforcedCount = 0;
-        foreach (var memory in memoriesForReinforce)
-        {
-            var result = await _reinforceHandler.HandleAsync(new ReinforceMemoryCommand
-            {
-                MemoryId = memory.MemoryId,
-                NewConfidence = Math.Min(1.0f, memory.ConfidenceScore * 1.1f),
-                Source = "auto-reinforce:stable-memory",
-                ActorId = "maintenance-worker"
-            }, cancellationToken);
-
-            if (result.Success)
-                reinforcedCount++;
-        }
-
         return reinforcedCount;
     }
 
     private async Task<int> DetectDuplicatesAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Use KNN search per recent memory instead of O(n^2) cartesian cross-join.
-        // Sample recent active memories and find their nearest neighbors via pgvector index.
-        var recentMemories = await conn.QueryAsync<(Guid MemoryId, string Embedding)>(new CommandDefinition(@"
-            SELECT memory_id, embedding::text
-            FROM memory_projections
-            WHERE is_active = TRUE AND embedding IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT 200",
+        // Single LATERAL JOIN query replaces the previous N+1 pattern (200 individual KNN
+        // queries). The inner subquery samples the 200 most recent active memories, and the
+        // LATERAL subquery finds up to 3 nearest neighbors above the similarity threshold
+        // for each, all in one round-trip.
+        var duplicatePairs = await conn.QueryAsync<(Guid MemoryId, Guid DuplicateId, float Similarity)>(new CommandDefinition(@"
+            SELECT m.memory_id, n.memory_id AS duplicate_id, 1 - (m.embedding <=> n.embedding) AS similarity
+            FROM (
+                SELECT memory_id, embedding
+                FROM memory_projections
+                WHERE is_active = TRUE AND embedding IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT 200
+            ) m,
+            LATERAL (
+                SELECT memory_id, embedding
+                FROM memory_projections
+                WHERE memory_id != m.memory_id
+                    AND is_active = TRUE
+                    AND embedding IS NOT NULL
+                    AND 1 - (embedding <=> m.embedding) > @Threshold
+                ORDER BY embedding <=> m.embedding
+                LIMIT 3
+            ) n",
+            new { Threshold = _config.DuplicateSimilarityThreshold },
             cancellationToken: cancellationToken));
 
         var duplicateCount = 0;
         var seen = new HashSet<(Guid, Guid)>();
 
-        foreach (var memory in recentMemories)
+        foreach (var dup in duplicatePairs)
         {
-            // Find nearest neighbors for this memory using the pgvector index
-            var neighbors = await conn.QueryAsync<(Guid MemoryId, float Similarity)>(new CommandDefinition(@"
-                SELECT memory_id, 1 - (embedding <=> (SELECT embedding FROM memory_projections WHERE memory_id = @SourceId)) AS similarity
-                FROM memory_projections
-                WHERE is_active = TRUE
-                    AND memory_id != @SourceId
-                    AND embedding IS NOT NULL
-                ORDER BY embedding <=> (SELECT embedding FROM memory_projections WHERE memory_id = @SourceId)
-                LIMIT 5",
-                new { SourceId = memory.MemoryId },
+            // Normalize pair ordering to avoid duplicate task entries
+            var pair = dup.MemoryId < dup.DuplicateId
+                ? (dup.MemoryId, dup.DuplicateId)
+                : (dup.DuplicateId, dup.MemoryId);
+
+            if (!seen.Add(pair)) continue;
+
+            await conn.ExecuteAsync(new CommandDefinition(@"
+                INSERT INTO maintenance_tasks (task_id, task_type, status, priority, memory_ids, scheduled_for, metadata)
+                VALUES (@TaskId, 'merge_duplicates', 'pending', 2, @MemoryIds, NOW(), @Metadata::jsonb)
+                ON CONFLICT DO NOTHING",
+                new
+                {
+                    TaskId = Guid.CreateVersion7(),
+                    MemoryIds = new[] { pair.Item1, pair.Item2 },
+                    Metadata = JsonSerializer.Serialize(new { similarity = dup.Similarity })
+                },
                 cancellationToken: cancellationToken));
 
-            foreach (var neighbor in neighbors)
-            {
-                if (neighbor.Similarity < _config.DuplicateSimilarityThreshold) continue;
-
-                // Normalize pair ordering to avoid duplicate task entries
-                var pair = memory.MemoryId < neighbor.MemoryId
-                    ? (memory.MemoryId, neighbor.MemoryId)
-                    : (neighbor.MemoryId, memory.MemoryId);
-
-                if (!seen.Add(pair)) continue;
-
-                await conn.ExecuteAsync(new CommandDefinition(@"
-                    INSERT INTO maintenance_tasks (task_id, task_type, status, priority, memory_ids, scheduled_for, metadata)
-                    VALUES (@TaskId, 'merge_duplicates', 'pending', 2, @MemoryIds, NOW(), @Metadata::jsonb)
-                    ON CONFLICT DO NOTHING",
-                    new
-                    {
-                        TaskId = Guid.CreateVersion7(),
-                        MemoryIds = new[] { pair.Item1, pair.Item2 },
-                        Metadata = JsonSerializer.Serialize(new { similarity = neighbor.Similarity })
-                    },
-                    cancellationToken: cancellationToken));
-
-                duplicateCount++;
-            }
+            duplicateCount++;
         }
 
         return duplicateCount;
@@ -276,31 +238,40 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
 
     private async Task<int> DetectContradictionsAsync(NpgsqlConnection conn, CancellationToken cancellationToken)
     {
-        // Find potential contradictions:
-        // - Memories with similar content but marked as contradicting each other
-        // - Or memories with opposite sentiment about same entities
-        // This is a simplified version - full implementation would use semantic analysis
-        var contradictions = await conn.QueryAsync<dynamic>(new CommandDefinition(@"
-            SELECT DISTINCT
-                a.memory_id AS memory_a_id,
-                b.memory_id AS memory_b_id
-            FROM memory_projections a
-            JOIN memory_projections b ON a.memory_id != b.memory_id
-            WHERE a.is_active = TRUE
-                AND b.is_active = TRUE
-                AND a.memory_id < b.memory_id
+        // KNN-based contradiction detection replaces the previous O(n^2) cartesian cross-join.
+        // Scopes the search to recent memories (last 24h) and uses LATERAL JOIN to find only
+        // their top-5 nearest neighbors above 0.85 similarity, then applies the contradiction
+        // predicates (existing contradiction_ids references, or different knowledge/heuristic layers).
+        var contradictions = await conn.QueryAsync<(Guid MemoryAId, Guid MemoryBId)>(new CommandDefinition(@"
+            SELECT m.memory_id AS memory_a_id, n.memory_id AS memory_b_id
+            FROM (
+                SELECT memory_id, embedding, layer, contradiction_ids
+                FROM memory_projections
+                WHERE is_active = TRUE
+                    AND embedding IS NOT NULL
+                    AND created_at > NOW() - INTERVAL '24 hours'
+                ORDER BY created_at DESC
+                LIMIT 100
+            ) m,
+            LATERAL (
+                SELECT memory_id, layer, contradiction_ids
+                FROM memory_projections
+                WHERE memory_id != m.memory_id
+                    AND is_active = TRUE
+                    AND embedding IS NOT NULL
+                    AND 1 - (embedding <=> m.embedding) > 0.85
+                ORDER BY embedding <=> m.embedding
+                LIMIT 5
+            ) n
+            WHERE m.memory_id < n.memory_id
                 AND (
-                    -- Check if they already reference each other as contradictions
-                    a.memory_id = ANY(b.contradiction_ids)
-                    OR b.memory_id = ANY(a.contradiction_ids)
-                    -- Or have high semantic similarity but different layers (potential contradiction)
+                    m.memory_id = ANY(n.contradiction_ids)
+                    OR n.memory_id = ANY(m.contradiction_ids)
                     OR (
-                        1 - (a.embedding <=> b.embedding) > 0.85
-                        AND a.layer != b.layer
-                        AND (a.layer IN ('L3_KNOWLEDGE', 'L4_HEURISTIC') OR b.layer IN ('L3_KNOWLEDGE', 'L4_HEURISTIC'))
+                        m.layer != n.layer
+                        AND (m.layer IN ('L3_KNOWLEDGE', 'L4_HEURISTIC') OR n.layer IN ('L3_KNOWLEDGE', 'L4_HEURISTIC'))
                     )
-                )
-            LIMIT 50",
+                )",
             cancellationToken: cancellationToken));
 
         var contradictionsList = contradictions.ToList();
@@ -315,7 +286,7 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
                 new
                 {
                     TaskId = Guid.CreateVersion7(),
-                    MemoryIds = new[] { (Guid)contr.memory_a_id, (Guid)contr.memory_b_id }
+                    MemoryIds = new[] { contr.MemoryAId, contr.MemoryBId }
                 },
                 cancellationToken: cancellationToken));
         }
@@ -384,16 +355,24 @@ public sealed class MaintenanceTaskProcessor : BackgroundService
     private readonly ILogger<MaintenanceTaskProcessor> _logger;
 
     public MaintenanceTaskProcessor(
-        string connectionString,
+        NpgsqlDataSource dataSource,
         IRetrievalEngine retrievalEngine,
         ICommandHandler<InvalidateMemoryCommand> invalidateHandler,
         ILogger<MaintenanceTaskProcessor> logger)
     {
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _retrievalEngine = retrievalEngine;
         _invalidateHandler = invalidateHandler;
         _logger = logger;
+    }
+
+    public MaintenanceTaskProcessor(
+        string connectionString,
+        IRetrievalEngine retrievalEngine,
+        ICommandHandler<InvalidateMemoryCommand> invalidateHandler,
+        ILogger<MaintenanceTaskProcessor> logger)
+        : this(new NpgsqlDataSourceBuilder(connectionString).Build(), retrievalEngine, invalidateHandler, logger)
+    {
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -12,6 +12,7 @@ namespace SerialMemory.Infrastructure;
 /// Emits NodeCreated, NodeUpdated, EdgeCreated, EdgeDeleted events.
 /// Also writes to memory_events table for dashboard Traces page.
 /// Never blocks core logic on logging failure.
+/// Extends KnowledgeGraphStoreDecorator — only overrides the methods that need instrumentation.
 /// </summary>
 public class InstrumentedKnowledgeGraphStore(
     IKnowledgeGraphStore inner,
@@ -19,15 +20,12 @@ public class InstrumentedKnowledgeGraphStore(
     ILiveEventEmitter liveEventEmitter,
     NpgsqlDataSource dataSource,
     ILogger<InstrumentedKnowledgeGraphStore> logger)
-    : IKnowledgeGraphStore
+    : KnowledgeGraphStoreDecorator(inner)
 {
-    #region Instrumented Entity Operations
-
-    public async Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default)
+    public override async Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default)
     {
-        var entityId = await inner.CreateEntityAsync(entity, cancellationToken);
+        var entityId = await Inner.CreateEntityAsync(entity, cancellationToken);
 
-        // Fire and forget - never block on logging
         _ = Task.Run(async () =>
         {
             try
@@ -68,26 +66,24 @@ public class InstrumentedKnowledgeGraphStore(
         return entityId;
     }
 
-    public async Task<Guid> CreateRelationshipAsync(EntityRelationship relationship, CancellationToken cancellationToken = default)
+    public override async Task<Guid> CreateRelationshipAsync(EntityRelationship relationship, CancellationToken cancellationToken = default)
     {
-        var relationshipId = await inner.CreateRelationshipAsync(relationship, cancellationToken);
+        var relationshipId = await Inner.CreateRelationshipAsync(relationship, cancellationToken);
 
-        // Get entity names for the event
-        Entity? sourceEntity = null;
-        Entity? targetEntity = null;
-
-        try
-        {
-            sourceEntity = await inner.GetEntityByIdAsync(relationship.SourceEntityId, cancellationToken);
-            targetEntity = await inner.GetEntityByIdAsync(relationship.TargetEntityId, cancellationToken);
-        }
-        catch { /* Ignore - we'll proceed without names */ }
-
-        // Fire and forget - never block on logging
         _ = Task.Run(async () =>
         {
             try
             {
+                Entity? sourceEntity = null;
+                Entity? targetEntity = null;
+
+                try
+                {
+                    sourceEntity = await Inner.GetEntityByIdAsync(relationship.SourceEntityId, CancellationToken.None);
+                    targetEntity = await Inner.GetEntityByIdAsync(relationship.TargetEntityId, CancellationToken.None);
+                }
+                catch (Exception ex) { logger.LogDebug(ex, "Could not resolve entity names for graph event"); }
+
                 var graphEvent = new GraphEvent
                 {
                     EventType = GraphEventType.EdgeCreated,
@@ -128,16 +124,15 @@ public class InstrumentedKnowledgeGraphStore(
         return relationshipId;
     }
 
-    public async Task LinkMemoryToEntityAsync(Guid memoryId, Guid entityId, float relevance = 1, CancellationToken cancellationToken = default)
+    public override async Task LinkMemoryToEntityAsync(Guid memoryId, Guid entityId, float relevance = 1, CancellationToken cancellationToken = default)
     {
-        await inner.LinkMemoryToEntityAsync(memoryId, entityId, relevance, cancellationToken);
+        await Inner.LinkMemoryToEntityAsync(memoryId, entityId, relevance, cancellationToken);
 
-        // Fire and forget
         _ = Task.Run(async () =>
         {
             try
             {
-                var entity = await inner.GetEntityByIdAsync(entityId, CancellationToken.None);
+                var entity = await Inner.GetEntityByIdAsync(entityId, CancellationToken.None);
 
                 var graphEvent = new GraphEvent
                 {
@@ -172,25 +167,18 @@ public class InstrumentedKnowledgeGraphStore(
         }, CancellationToken.None);
     }
 
-    #endregion
-
-    #region Instrumented Memory Operations
-
-    public async Task<Guid> CreateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
+    public override async Task<Guid> CreateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
     {
-        var memoryId = await inner.CreateMemoryAsync(memory, cancellationToken);
+        var memoryId = await Inner.CreateMemoryAsync(memory, cancellationToken);
 
-        // Fire and forget - never block on logging
         _ = Task.Run(async () =>
         {
             try
             {
-                // Get tenant ID from metadata if available
                 var tenantIdStr = memory.Metadata?.TryGetValue("tenant_id", out var tid) == true ? tid?.ToString() : null;
                 var layer = memory.Metadata?.TryGetValue("layer", out var l) == true ? l?.ToString() : "L0_RAW";
                 Guid? tenantId = Guid.TryParse(tenantIdStr, out var parsedTid) ? parsedTid : null;
 
-                // 1. Emit to graph event store (for graph visualization)
                 var graphEvent = new GraphEvent
                 {
                     EventType = GraphEventType.NodeCreated,
@@ -209,7 +197,6 @@ public class InstrumentedKnowledgeGraphStore(
 
                 await graphEventStore.LogEventAsync(graphEvent, CancellationToken.None);
 
-                // 2. Write to memory_events table for dashboard Traces page
                 await WriteMemoryEventAsync(tenantId, memoryId, "created", new
                 {
                     content_preview = memory.Content?.Length > 100 ? memory.Content[..100] : memory.Content,
@@ -217,7 +204,6 @@ public class InstrumentedKnowledgeGraphStore(
                     layer
                 }, "system");
 
-                // 3. Emit memory event for Traces page via SignalR (real-time updates)
                 await liveEventEmitter.EmitMemoryEventAsync(new MemoryEventBroadcast
                 {
                     EventId = graphEvent.EventId,
@@ -234,7 +220,6 @@ public class InstrumentedKnowledgeGraphStore(
                     Timestamp = DateTimeOffset.UtcNow
                 });
 
-                // 4. Also emit as RecentEvent for Traces page (real-time)
                 await liveEventEmitter.EmitRecentEventAsync(new RecentEventBroadcast
                 {
                     Id = graphEvent.EventId,
@@ -260,9 +245,6 @@ public class InstrumentedKnowledgeGraphStore(
         return memoryId;
     }
 
-    /// <summary>
-    /// Writes to the memory_events table for dashboard Traces page.
-    /// </summary>
     private async Task WriteMemoryEventAsync(Guid? tenantId, Guid memoryId, string eventType, object eventData, string actor)
     {
         try
@@ -289,135 +271,4 @@ public class InstrumentedKnowledgeGraphStore(
             logger.LogDebug(ex, "Failed to write memory event to database - table may not exist yet");
         }
     }
-
-    #endregion
-
-    #region Passthrough Operations (not instrumented)
-
-    public Task UpdateMemoryAsync(Memory memory, CancellationToken cancellationToken = default)
-        => inner.UpdateMemoryAsync(memory, cancellationToken);
-
-    public Task<Memory?> GetMemoryByIdAsync(Guid id, CancellationToken cancellationToken = default)
-        => inner.GetMemoryByIdAsync(id, cancellationToken);
-
-    public Task<List<Memory>> GetRecentMemoriesAsync(int limit = 10, CancellationToken cancellationToken = default)
-        => inner.GetRecentMemoriesAsync(limit, cancellationToken);
-
-    public Task<List<Memory>> SearchMemoriesByEmbeddingAsync(float[] queryEmbedding, int limit = 10, float threshold = 0.7f, string? memoryType = null, CancellationToken cancellationToken = default)
-        => inner.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold, memoryType, cancellationToken);
-
-    public Task<List<Memory>> SearchMemoriesByTextAsync(string query, int limit = 10, string? memoryType = null, CancellationToken cancellationToken = default)
-        => inner.SearchMemoriesByTextAsync(query, limit, memoryType, cancellationToken);
-
-    public Task<List<Memory>> GetMemoriesByTypeAsync(string memoryType, int limit = 50, CancellationToken cancellationToken = default)
-        => inner.GetMemoriesByTypeAsync(memoryType, limit, cancellationToken);
-
-    public Task<List<Memory>> GetMemoriesBySessionAsync(Guid sessionId, int limit = 100, CancellationToken cancellationToken = default)
-        => inner.GetMemoriesBySessionAsync(sessionId, limit, cancellationToken);
-
-    public Task<Entity?> GetEntityByIdAsync(Guid id, CancellationToken cancellationToken = default)
-        => inner.GetEntityByIdAsync(id, cancellationToken);
-
-    public Task<List<Entity>> GetEntitiesForMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
-        => inner.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
-
-    public Task<Dictionary<Guid, List<Entity>>> GetEntitiesForMemoriesAsync(List<Guid> memoryIds, CancellationToken cancellationToken = default)
-        => inner.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
-
-    public Task<List<EntityRelationship>> GetRelationshipsForEntityAsync(Guid entityId, CancellationToken cancellationToken = default)
-        => inner.GetRelationshipsForEntityAsync(entityId, cancellationToken);
-
-    public Task<Dictionary<Guid, List<EntityRelationship>>> GetRelationshipsForEntitiesAsync(List<Guid> entityIds, CancellationToken cancellationToken = default)
-        => inner.GetRelationshipsForEntitiesAsync(entityIds, cancellationToken);
-
-    public Task<List<EntityRelationship>> GetAllRelationshipsAsync(int limit = 1000, CancellationToken cancellationToken = default)
-        => inner.GetAllRelationshipsAsync(limit, cancellationToken);
-
-    public Task<List<Entity>> GetAllEntitiesAsync(int limit = 1000, CancellationToken cancellationToken = default)
-        => inner.GetAllEntitiesAsync(limit, cancellationToken);
-
-    public Task SetUserPersonaAttributeAsync(UserPersona persona, CancellationToken cancellationToken = default)
-        => inner.SetUserPersonaAttributeAsync(persona, cancellationToken);
-
-    public Task<Dictionary<string, Dictionary<string, object>>> GetUserPersonaAsync(string userId = "default_user", CancellationToken cancellationToken = default)
-        => inner.GetUserPersonaAsync(userId, cancellationToken);
-
-    public Task<List<UserPersona>> GetActiveGoalsAsync(string userId = "default_user", CancellationToken ct = default)
-        => inner.GetActiveGoalsAsync(userId, ct);
-
-    public Task<Guid> CreateConversationSessionAsync(ConversationSession session, CancellationToken cancellationToken = default)
-        => inner.CreateConversationSessionAsync(session, cancellationToken);
-
-    public Task EndConversationSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
-        => inner.EndConversationSessionAsync(sessionId, cancellationToken);
-
-    public Task<List<ConversationSession>> GetRecentSessionsAsync(int limit = 10, CancellationToken cancellationToken = default)
-        => inner.GetRecentSessionsAsync(limit, cancellationToken);
-
-    public Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default)
-        => inner.GetMemoryCountAsync(cancellationToken);
-
-    public Task<long> GetEntityCountAsync(CancellationToken cancellationToken = default)
-        => inner.GetEntityCountAsync(cancellationToken);
-
-    public Task<long> GetRelationshipCountAsync(CancellationToken cancellationToken = default)
-        => inner.GetRelationshipCountAsync(cancellationToken);
-
-    public Task<List<Memory>> GetMemoriesWithoutEntitiesAsync(int limit = 100, CancellationToken cancellationToken = default)
-        => inner.GetMemoriesWithoutEntitiesAsync(limit, cancellationToken);
-
-    public Task<List<Memory>> GetMemoriesWithNullEmbeddingsAsync(int limit = 100, CancellationToken cancellationToken = default)
-        => inner.GetMemoriesWithNullEmbeddingsAsync(limit, cancellationToken);
-
-    public Task<List<Memory>> GetAllMemoriesAsync(int limit = 100, int offset = 0, CancellationToken cancellationToken = default)
-        => inner.GetAllMemoriesAsync(limit, offset, cancellationToken);
-
-    public Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default)
-        => inner.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
-
-    public Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default)
-        => inner.SearchMemoriesByEmbeddingInDateRangeAsync(queryEmbedding, fromUtc, toUtc, threshold, limit, cancellationToken);
-
-    // Batch entity/relationship creation
-    public Task<Dictionary<string, Guid>> CreateEntitiesBatchAsync(List<Entity> entities, CancellationToken cancellationToken = default)
-        => inner.CreateEntitiesBatchAsync(entities, cancellationToken);
-
-    public Task LinkMemoryToEntitiesBatchAsync(Guid memoryId, Dictionary<Guid, float> entityRelevances, CancellationToken cancellationToken = default)
-        => inner.LinkMemoryToEntitiesBatchAsync(memoryId, entityRelevances, cancellationToken);
-
-    public Task<List<Guid>> CreateRelationshipsBatchAsync(List<EntityRelationship> relationships, CancellationToken cancellationToken = default)
-        => inner.CreateRelationshipsBatchAsync(relationships, cancellationToken);
-
-    // Combined statistics
-    public Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default)
-        => inner.GetGraphStatisticsAsync(cancellationToken);
-
-    public Task<Dictionary<string, int>> GetRelationshipTypeBreakdownAsync(CancellationToken cancellationToken = default)
-        => inner.GetRelationshipTypeBreakdownAsync(cancellationToken);
-
-    // Workspace operations
-    public Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default)
-        => inner.CreateWorkspaceAsync(workspace, ct);
-
-    public Task<List<Workspace>> GetWorkspacesAsync(int limit = 50, CancellationToken ct = default)
-        => inner.GetWorkspacesAsync(limit, ct);
-
-    public Task<Workspace?> GetWorkspaceBySlugAsync(string workspaceId, CancellationToken ct = default)
-        => inner.GetWorkspaceBySlugAsync(workspaceId, ct);
-
-    // Session metadata
-    public Task UpdateSessionMetadataAsync(Guid sessionId, Dictionary<string, object> metadata, CancellationToken ct = default)
-        => inner.UpdateSessionMetadataAsync(sessionId, metadata, ct);
-
-    // Snapshot operations
-    public Task<Guid> CreateSnapshotAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
-        => inner.CreateSnapshotAsync(snapshot, ct);
-
-    public Task<List<WorkspaceSnapshot>> GetSnapshotsAsync(string workspaceId, int limit = 20, CancellationToken ct = default)
-        => inner.GetSnapshotsAsync(workspaceId, limit, ct);
-
-    public Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default)
-        => inner.GetSnapshotByNameAsync(workspaceId, snapshotName, ct);
-
-    #endregion
 }

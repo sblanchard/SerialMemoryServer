@@ -20,12 +20,11 @@ public sealed class MemoryObservabilityTools
 
     public MemoryObservabilityTools(
         IEventStore eventStore,
-        string connectionString,
+        NpgsqlDataSource dataSource,
         ILogger logger)
     {
         _eventStore = eventStore;
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        _dataSource = builder.Build();
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _logger = logger;
     }
 
@@ -102,6 +101,8 @@ public sealed class MemoryObservabilityTools
 
         try
         {
+            await using var conn = await _dataSource.OpenConnectionAsync();
+
             var visited = new HashSet<Guid>();
             var lineage = new List<(Guid Id, int Depth, string Direction)>();
 
@@ -113,8 +114,12 @@ public sealed class MemoryObservabilityTools
             if (direction == "descendants" || direction == "both")
             {
                 visited.Clear();
-                await TraceDescendants(memoryId, 0, maxDepth, visited, lineage);
+                await TraceDescendants(memoryId, 0, maxDepth, visited, lineage, conn);
             }
+
+            // Batch-load all event streams for lineage + current memory
+            var allIds = lineage.Select(l => l.Id).Append(memoryId).Distinct().ToList();
+            var allStreams = await _eventStore.ReadStreamsAsync(allIds);
 
             var responseLines = new List<string>
             {
@@ -134,7 +139,7 @@ public sealed class MemoryObservabilityTools
                 foreach (var (id, depth, _) in ancestors)
                 {
                     var indent = new string(' ', (maxDepth - depth) * 2);
-                    var events = await _eventStore.ReadStreamAsync(id);
+                    var events = allStreams.TryGetValue(id, out var evts) ? evts : [];
                     var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
                     responseLines.Add($"{indent}└─ [{depth}] {id}");
                     responseLines.Add($"{indent}   {summary}");
@@ -144,7 +149,7 @@ public sealed class MemoryObservabilityTools
 
             responseLines.Add($"### Current Memory:");
             responseLines.Add($"   ★ {memoryId}");
-            var currentEvents = await _eventStore.ReadStreamAsync(memoryId);
+            var currentEvents = allStreams.TryGetValue(memoryId, out var curEvts) ? curEvts : [];
             if (currentEvents.Count > 0)
             {
                 responseLines.Add($"     {GetMemorySummary(currentEvents)}");
@@ -157,7 +162,7 @@ public sealed class MemoryObservabilityTools
                 foreach (var (id, depth, _) in descendants)
                 {
                     var indent = new string(' ', depth * 2);
-                    var events = await _eventStore.ReadStreamAsync(id);
+                    var events = allStreams.TryGetValue(id, out var evts) ? evts : [];
                     var summary = events.Count > 0 ? GetMemorySummary(events) : "Unknown";
                     responseLines.Add($"{indent}└─ [{depth}] {id}");
                     responseLines.Add($"{indent}   {summary}");
@@ -386,7 +391,7 @@ public sealed class MemoryObservabilityTools
         }
     }
 
-    private async Task TraceDescendants(Guid memoryId, int depth, int maxDepth, HashSet<Guid> visited, List<(Guid, int, string)> lineage)
+    private async Task TraceDescendants(Guid memoryId, int depth, int maxDepth, HashSet<Guid> visited, List<(Guid, int, string)> lineage, NpgsqlConnection conn)
     {
         if (depth >= maxDepth || visited.Contains(memoryId))
             return;
@@ -394,8 +399,6 @@ public sealed class MemoryObservabilityTools
         visited.Add(memoryId);
 
         // Query for memories that have this memory as a causal parent
-        await using var conn = await _dataSource.OpenConnectionAsync();
-
         var children = await conn.QueryAsync<Guid>(@"
             SELECT memory_id FROM memory_projections
             WHERE @ParentId = ANY(causal_parents)
@@ -405,7 +408,7 @@ public sealed class MemoryObservabilityTools
         foreach (var childId in children)
         {
             lineage.Add((childId, depth + 1, "descendant"));
-            await TraceDescendants(childId, depth + 1, maxDepth, visited, lineage);
+            await TraceDescendants(childId, depth + 1, maxDepth, visited, lineage, conn);
         }
     }
 

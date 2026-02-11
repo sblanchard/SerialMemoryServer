@@ -630,7 +630,7 @@ function sanitizeFileName(name: string): string {
 }
 
 function isValidAgentRole(value: string): value is AgentRole {
-  return ['security', 'performance', 'patterns', 'reviewer', 'custom', 'explorer', 'explorer-sub'].includes(value);
+  return (Object.keys(AGENT_CONFIGS) as string[]).includes(value);
 }
 
 function extractRoleFromSource(source?: string): AgentRole {

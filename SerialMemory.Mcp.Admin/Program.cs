@@ -27,9 +27,9 @@ public sealed class AdminMcpServer : McpServerBase
     public AdminMcpServer() : base("serialmemory-admin", "3.0.0")
     {
         _lifecycleTools = new MemoryLifecycleTools(EventStore, EmbeddingService, Logger);
-        _observabilityTools = new MemoryObservabilityTools(EventStore, ConnectionString, Logger);
-        _safetyTools = new MemorySafetyTools(EventStore, ConnectionString, Logger);
-        _exportTools = new MemoryExportTools(ConnectionString, Logger);
+        _observabilityTools = new MemoryObservabilityTools(EventStore, VectorDataSource, Logger);
+        _safetyTools = new MemorySafetyTools(EventStore, VectorDataSource, Logger);
+        _exportTools = new MemoryExportTools(VectorDataSource, Logger);
         Logger.LogInformation("Admin MCP server initialized (21 maintenance/export tools)");
     }
 
