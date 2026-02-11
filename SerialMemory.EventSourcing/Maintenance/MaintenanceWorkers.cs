@@ -132,6 +132,13 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
         // ArchiveMemoryCommand per memory. This bypasses event sourcing for performance --
         // archiving cold memories is a bulk housekeeping operation. The aggregate cycle log
         // records how many rows were archived.
+        //
+        // Layer-specific retention intervals:
+        //   L0_RAW       = 30 days   (raw input, ephemeral)
+        //   L1_CONTEXT   = 90 days   (processed notes)
+        //   L2_SUMMARY   = 180 days  (synthesized concepts)
+        //   L3_KNOWLEDGE = 365 days  (validated learnings)
+        //   L4_HEURISTIC = indefinite (never archived)
         var archivedCount = await conn.ExecuteAsync(new CommandDefinition(@"
             UPDATE memory_projections
             SET is_archived = TRUE
@@ -139,13 +146,24 @@ public sealed class MemoryMaintenanceWorker : BackgroundService
                 AND is_archived = FALSE
                 AND confidence_score < @ArchiveThreshold
                 AND access_count < @MinAccessCount
-                AND last_accessed_at < NOW() - @ColdPeriod::INTERVAL
-                AND layer NOT IN ('L3_KNOWLEDGE', 'L4_HEURISTIC')",
+                AND layer != 'L4_HEURISTIC'
+                AND last_accessed_at < NOW() - make_interval(days =>
+                    CASE layer
+                        WHEN 'L0_RAW'       THEN @L0RetentionDays
+                        WHEN 'L1_CONTEXT'   THEN @L1RetentionDays
+                        WHEN 'L2_SUMMARY'   THEN @L2RetentionDays
+                        WHEN 'L3_KNOWLEDGE' THEN @L3RetentionDays
+                        ELSE @L0RetentionDays
+                    END
+                )",
             new
             {
                 ArchiveThreshold = _config.ArchiveConfidenceThreshold,
                 MinAccessCount = _config.MinAccessCountForRetention,
-                ColdPeriod = $"{_config.ColdPeriodDays} days"
+                L0RetentionDays = _config.L0RawRetentionDays,
+                L1RetentionDays = _config.L1ContextRetentionDays,
+                L2RetentionDays = _config.L2SummaryRetentionDays,
+                L3RetentionDays = _config.L3KnowledgeRetentionDays
             },
             cancellationToken: cancellationToken));
 
@@ -326,6 +344,16 @@ public sealed class MaintenanceConfig
     public int ReinforceMinAccessCount { get; set; } = 10;
     public int ReinforceIntervalDays { get; set; } = 7;
     public float DuplicateSimilarityThreshold { get; set; } = 0.95f;
+
+    /// <summary>
+    /// Per-layer retention intervals in days. Memories are eligible for archival
+    /// only after they exceed their layer's retention period.
+    /// L4_HEURISTIC is always excluded (indefinite retention).
+    /// </summary>
+    public int L0RawRetentionDays { get; set; } = 30;
+    public int L1ContextRetentionDays { get; set; } = 90;
+    public int L2SummaryRetentionDays { get; set; } = 180;
+    public int L3KnowledgeRetentionDays { get; set; } = 365;
 
     public static MaintenanceConfig Default => new();
 }
