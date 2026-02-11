@@ -76,6 +76,219 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
     └──────────┘   └───────────┘   └─────────┘
 ```
 
+## 🧠 Core Concepts
+
+### How It Works: A Temporal Knowledge Graph
+
+SerialMemory goes beyond simple keyword search. It's a **semantic memory system** that understands meaning and context, tracks how information relates over time, and provides intelligent context retrieval for AI applications.
+
+### Memories: The Basic Unit
+
+A **memory** is any piece of information you store in SerialMemory:
+
+- **Natural Language**: "John works at Acme Corp in San Francisco on Python projects"
+- **Structured Data**: Notes, facts, observations, conversations, summaries
+- **Metadata**: When it was created, what project it's for, confidence level
+
+Each memory has:
+
+```
+Memory {
+  id: "uuid",
+  content: "John works at Acme Corp in San Francisco on Python projects",
+  embedding: [0.123, -0.456, 0.789, ...],  // 384-dimensional vector
+  confidence: 0.95,                         // Starts high, decays with time
+  layer: L1_CONTEXT,                        // See layers section below
+  entities: [
+    { type: "PERSON", text: "John" },
+    { type: "ORG", text: "Acme Corp" },
+    { type: "GPE", text: "San Francisco" },
+    { type: "SKILL", text: "Python" }
+  ],
+  createdAt: "2026-02-11T10:00:00Z",
+  lastAccessedAt: "2026-02-11T14:30:00Z"
+}
+```
+
+### Semantic Search: Understanding Meaning
+
+Instead of keyword matching, memories are found by **semantic similarity**:
+
+```
+// This query...
+"Who works at the tech company in San Francisco?"
+
+// ...finds memories about "John works at Acme Corp in San Francisco"
+// Even though keywords don't match exactly!
+```
+
+**How it works:**
+1. Your query is converted to an embedding (384-dimensional vector)
+2. The system finds memories with similar embeddings
+3. Results are ranked by meaning, not keywords
+
+This is powered by PostgreSQL's `pgvector` extension, which uses vector similarity search (KNN) for fast retrieval.
+
+### Memory Layers: The Data Lifecycle
+
+Memories are classified into layers based on how processed/refined they are:
+
+| Layer | What It Is | Typical Retention | Use Case |
+|-------|-----------|-------------------|----------|
+| **L0_RAW** | Raw input, minimal processing | 30 days | Recently captured notes, conversations |
+| **L1_CONTEXT** | Contextual understanding, entities extracted | 90 days | Processed notes with relationships identified |
+| **L2_SUMMARY** | Summarized information, themes extracted | 180 days | Synthesis of similar concepts |
+| **L3_KNOWLEDGE** | Extracted knowledge, proven patterns | 365 days | Reliable facts, validated learnings |
+| **L4_HEURISTIC** | Learned patterns, general principles | Indefinite | Core knowledge, fundamental truths |
+
+**Example Flow:**
+```
+Raw: "John, Sarah, and Mike met yesterday to discuss the backend API design"
+      ↓ (Processing)
+L1: Entities extracted - PERSON(John), PERSON(Sarah), PERSON(Mike), 
+    Relationships identified - John knows Sarah, John knows Mike
+      ↓ (Summarization)
+L2: "Key discussion participants coordinated on technical architecture"
+      ↓ (Pattern recognition)
+L3: "Backend API design is a priority for team coordination"
+      ↓ (Generalization)
+L4: "The team uses synchronous discussion for architectural decisions"
+```
+
+### Memory Confidence Decay: Temporal Forgetting
+
+SerialMemory models human memory: information becomes less reliable over time unless reinforced.
+
+**The decay formula:**
+```
+confidence = initial_confidence × 0.5^(days / half_life)
+
+Default half-life: 90 days
+```
+
+**Example:**
+```
+Day 0:   Confidence = 1.0 (100%)
+Day 90:  Confidence = 0.5 (50%)  - Half as confident
+Day 180: Confidence = 0.25 (25%) - Quarter as confident
+Day 270: Confidence = 0.125 (12.5%)
+```
+
+**Why this matters:**
+- New information is fresh and high-confidence
+- Old information without reinforcement becomes less trusted
+- Memories below 0.1 (10%) confidence are candidates for archival
+- Accessing a memory reinforces it (increases confidence)
+- An explicit "reinforce" action can boost confidence
+
+This allows the system to **automatically forget unimportant details** while keeping validated knowledge intact.
+
+### Entity Extraction: Understanding Key Concepts
+
+SerialMemory automatically identifies key entities (named things) in memories:
+
+| Type | Examples | Used For |
+|------|----------|----------|
+| **PERSON** | John, Sarah, Alice | Finding people-related memories |
+| **ORG** | Acme Corp, Google, MIT | Finding organization memories |
+| **GPE** | New York, France, Silicon Valley | Finding location-related context |
+| **DATE** | 2026-02, Next Tuesday, Q1 | Finding time-relevant memories |
+| **SKILL** | Python, React, Leadership | Finding capability-related memories |
+| **PROJECT** | Project Omega, Dashboard v2 | Finding project-specific context |
+
+**How it works:**
+1. When a memory is stored, entities are automatically extracted
+2. Relationships between entities are identified
+3. A knowledge graph is built and maintained
+
+### The Knowledge Graph: Building Relationships
+
+SerialMemory doesn't just store memories separately—it builds a **knowledge graph** of relationships:
+
+```
+John ─────works_at────→ Acme Corp ─────located_in────→ San Francisco
+  │                                                          │
+  │                                                          │
+  └──────knows──────→ Sarah ─────works_at──────→ Acme Corp │
+                       │
+                       └─────knows──────→ Mike
+
+Projects that use Python:
+Dashboard v2 ─────uses────→ Python ─────language_for────→ Backend Systems
+Project Omega ─────uses────→ Python
+```
+
+**Relationships tracked:**
+- `works_at`: Entity1 works at Entity2
+- `located_in`: Entity1 is located in Entity2
+- `knows`: Entity1 knows Entity2
+- `uses`: Entity1 uses Entity2
+- `created`: Entity1 created Entity2
+- (And many more, automatically discovered)
+
+### Multi-Hop Search: Reasoning Across Context
+
+The real power emerges when traversing multiple hops:
+
+**Query:** "Find technologies used in projects by people I know"
+
+**Search process:**
+```
+1. Start: Find entities I know (Sarah, Mike, ...)
+2. Hop 1: Find projects they work on
+3. Hop 2: Find technologies used in those projects
+4. Result: [Python, Rust, TypeScript, ...]
+```
+
+**Another example:**
+```
+Question: "Who works with technologies similar to what Mike uses?"
+
+1. Find Mike
+2. Find technologies Mike uses
+3. Find other people who use similar technologies
+4. Return those people
+
+This reveals hidden connections and provides better context
+for multi-modal AI reasoning!
+```
+
+### Event Sourcing: Complete Audit Trail
+
+Every change to a memory is captured as an immutable event:
+
+```
+MemoryCreated(id, content, timestamp)
+MemoryUpdated(id, oldContent, newContent, timestamp)
+MemoryReinforced(id, confidence, timestamp)
+MemoryDecayed(id, oldConfidence, newConfidence, timestamp)
+MemoryArchived(id, reason, timestamp)
+```
+
+**Benefits:**
+- Complete audit trail (GDPR compliant)
+- Reproduce system state at any point in time
+- Detect tampering or unauthorized changes
+- Replay events for debugging
+
+### Multi-Tenant Isolation: Security & Privacy
+
+Each tenant's data is completely isolated:
+
+```
+Tenant A                          Tenant B
+├── Memories (isolated)           ├── Memories (isolated)
+├── Entities                      ├── Entities
+├── Relationships                 ├── Relationships
+└── Search results (A only)       └── Search results (B only)
+```
+
+Implemented via PostgreSQL Row-Level Security (RLS):
+- Database enforces isolation at query time
+- Impossible to leak tenant data via SQL
+- API keys scoped per tenant
+- No cross-tenant search possible
+
 ## 🚀 Quick Start
 
 ### Prerequisites
