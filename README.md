@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen?logo=github)](https://github.com/serialmemory/serialmemory/actions)
-[![.NET Version](https://img.shields.io/badge/.NET-8.0+-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
+[![.NET Version](https://img.shields.io/badge/.NET-10+-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql)](https://www.postgresql.org)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com)
 [![Code Coverage](https://img.shields.io/badge/coverage-82%25-brightgreen?logo=codecov)](./docs/)
@@ -81,7 +81,7 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 ### Prerequisites
 
 - Docker & Docker Compose
-- .NET 8.0+ SDK (for development)
+- .NET 10+ SDK (for development)
 - PostgreSQL 15+ (or use Docker)
 
 ### Option 1: Docker Compose (Recommended)
@@ -282,7 +282,7 @@ See [Self-Hosting Guide](./docs/07-self-hosting.md) for detailed security setup.
 
 ## 🛠️ Technology Stack
 
-- **Runtime**: .NET 8.0
+- **Runtime**: .NET 10+
 - **Database**: PostgreSQL 15+ with pgvector
 - **Search**: Vector embeddings (384-dim)
 - **Caching**: Redis
