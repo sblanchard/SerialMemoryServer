@@ -32,6 +32,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     container_name: serialmemory-postgres
+    command: postgres -c max_connections=1024 -c shared_buffers=512MB
     environment:
       # Superuser - only used for initial setup, not by application
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:-pgadmin}

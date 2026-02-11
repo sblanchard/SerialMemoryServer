@@ -926,7 +926,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         // Build multi-row INSERT with ON CONFLICT RETURNING
         var sql = """
             INSERT INTO entities (id, tenant_id, name, entity_type, canonical_name, first_seen_memory_id, metadata)
-            SELECT * FROM UNNEST(@Ids, @TenantIds, @Names, @EntityTypes, @CanonicalNames, @FirstSeenMemoryIds, @Metadatas)
+            SELECT * FROM UNNEST(@Ids, @TenantIds, @Names, @EntityTypes, @CanonicalNames, @FirstSeenMemoryIds, @Metadatas::jsonb[])
             ON CONFLICT (tenant_id, name, entity_type) DO UPDATE SET
                 canonical_name = COALESCE(EXCLUDED.canonical_name, entities.canonical_name),
                 metadata = COALESCE(EXCLUDED.metadata, entities.metadata)
@@ -1001,7 +1001,7 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
             INSERT INTO entity_relationships (id, tenant_id, source_entity_id, target_entity_id, relationship_type, confidence, first_seen_memory_id, metadata)
-            SELECT * FROM UNNEST(@Ids, @TenantIds, @SourceEntityIds, @TargetEntityIds, @RelationshipTypes, @Confidences, @FirstSeenMemoryIds, @Metadatas)
+            SELECT * FROM UNNEST(@Ids, @TenantIds, @SourceEntityIds, @TargetEntityIds, @RelationshipTypes, @Confidences, @FirstSeenMemoryIds, @Metadatas::jsonb[])
             ON CONFLICT (tenant_id, source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
                 confidence = GREATEST(entity_relationships.confidence, EXCLUDED.confidence),
                 metadata = COALESCE(EXCLUDED.metadata, entity_relationships.metadata)
