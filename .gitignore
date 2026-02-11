@@ -6,6 +6,10 @@ riderModule.iml
 .idea/
 .vs/
 nul
+.claude/settings.local.json
+**/appsettings.json (or at least the production one)
+.env
+.env.local
 
 # Build artifacts
 exports/
@@ -27,3 +31,10 @@ ops/cloudflared/credentials.json
 
 .env.production
 container_infrastructure.dll
+
+# secrets
+settings.local.json
+appsettings.json
+*.local.json
+.env
+.env.*
