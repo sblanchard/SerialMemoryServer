@@ -419,10 +419,29 @@ SerialMemoryServer/
 ├── SerialMemory.ML/            # Embeddings & NLP
 ├── SerialMemory.Worker/        # Background jobs
 ├── SerialMemory.Web/           # React dashboard
+├── SerialMemory-MCP/           # Standalone MCP server (submodule)
+│   └── SerialMemory.Mcp/       # Alternative MCP implementation
 ├── examples/                   # Ready-to-run examples
 ├── docs/                       # Documentation
 ├── docker-compose.yml          # Development stack
 └── SerialMemoryServer.sln      # .NET solution file
+```
+
+### Submodules
+
+- **[SerialMemory-MCP](https://github.com/sblanchard/SerialMemory-MCP)** - Standalone MCP server implementation
+  - Included as a git submodule
+  - Can be built and distributed separately
+  - Full MCP protocol support for Claude Desktop and compatible agents
+
+### Cloning with Submodules
+
+```bash
+# Clone including submodules
+git clone --recurse-submodules https://github.com/sblanchard/SerialMemoryServer.git
+
+# Or if already cloned, initialize submodules
+git submodule update --init --recursive
 ```
 
 ## 🎓 Examples
