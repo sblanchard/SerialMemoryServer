@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SerialMemoryServer is a temporal knowledge graph memory system. It provides:
 
+#1 NEVER CREATE DB AND LOSE MEMORIES
+
 - Temporal knowledge graph with semantic search
 - Entity extraction and relationship tracking
 - Semantic embeddings (384-dim vectors)
