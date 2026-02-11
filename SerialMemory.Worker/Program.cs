@@ -185,11 +185,29 @@ if (!string.IsNullOrEmpty(openAiApiKey))
 
 // 1. Memory Maintenance Worker - handles decay, archiving, reinforcement
 //    Uses batch SQL operations directly (bypasses per-item event sourcing for performance).
+var maintenanceConfig = new MaintenanceConfig
+{
+    L0RawRetentionDays = int.TryParse(
+        builder.Configuration["RETENTION_L0_RAW_DAYS"] ?? Environment.GetEnvironmentVariable("RETENTION_L0_RAW_DAYS"),
+        out var l0) ? l0 : 30,
+    L1ContextRetentionDays = int.TryParse(
+        builder.Configuration["RETENTION_L1_CONTEXT_DAYS"] ?? Environment.GetEnvironmentVariable("RETENTION_L1_CONTEXT_DAYS"),
+        out var l1) ? l1 : 90,
+    L2SummaryRetentionDays = int.TryParse(
+        builder.Configuration["RETENTION_L2_SUMMARY_DAYS"] ?? Environment.GetEnvironmentVariable("RETENTION_L2_SUMMARY_DAYS"),
+        out var l2) ? l2 : 180,
+    L3KnowledgeRetentionDays = int.TryParse(
+        builder.Configuration["RETENTION_L3_KNOWLEDGE_DAYS"] ?? Environment.GetEnvironmentVariable("RETENTION_L3_KNOWLEDGE_DAYS"),
+        out var l3) ? l3 : 365,
+};
+
+builder.Services.AddSingleton(maintenanceConfig);
 builder.Services.AddHostedService<MemoryMaintenanceWorker>(sp =>
     new MemoryMaintenanceWorker(
         pgConnectionString,
         sp.GetRequiredService<IRetrievalEngine>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryMaintenanceWorker>()));
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryMaintenanceWorker>(),
+        sp.GetRequiredService<MaintenanceConfig>()));
 
 // 2. Projection Host - processes events and updates read models
 // Wrapped in a BackgroundService since ProjectionHost doesn't implement IHostedService
