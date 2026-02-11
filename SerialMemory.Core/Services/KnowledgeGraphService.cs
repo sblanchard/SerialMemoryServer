@@ -215,31 +215,33 @@ public class KnowledgeGraphService(
         CancellationToken cancellationToken = default)
     {
         var memories = await _store.GetRecentMemoriesAsync(limit, cancellationToken);
-        var results = new List<MemorySearchResult>();
 
-        foreach (var memory in memories)
+        var results = memories.Select(memory => new MemorySearchResult
         {
-            var result = new MemorySearchResult
-            {
-                Id = memory.Id,
-                Content = memory.Content,
-                CreatedAt = memory.CreatedAt,
-                Source = memory.Source,
-                Entities = []
-            };
+            Id = memory.Id,
+            Content = memory.Content,
+            CreatedAt = memory.CreatedAt,
+            Source = memory.Source,
+            Entities = []
+        }).ToList();
 
-            if (includeEntities)
+        if (includeEntities && results.Count > 0)
+        {
+            var memoryIds = results.Select(r => r.Id).ToList();
+            var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
+
+            foreach (var result in results)
             {
-                var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
-                result.Entities = entities.Select(e => new EntityInfo
+                if (entitiesByMemory.TryGetValue(result.Id, out var entities))
                 {
-                    Id = e.Id,
-                    Name = e.Name,
-                    Type = e.EntityType
-                }).ToList();
+                    result.Entities = entities.Select(e => new EntityInfo
+                    {
+                        Id = e.Id,
+                        Name = e.Name,
+                        Type = e.EntityType
+                    }).ToList();
+                }
             }
-
-            results.Add(result);
         }
 
         return results;
@@ -258,6 +260,7 @@ public class KnowledgeGraphService(
         CancellationToken cancellationToken = default)
     {
         var results = new List<MemorySearchResult>();
+        var seenIds = new HashSet<Guid>();
 
         if (mode == SearchMode.Semantic || mode == SearchMode.Hybrid)
         {
@@ -266,28 +269,16 @@ public class KnowledgeGraphService(
 
             foreach (var memory in semanticResults)
             {
-                var result = new MemorySearchResult
+                seenIds.Add(memory.Id);
+                results.Add(new MemorySearchResult
                 {
                     Id = memory.Id,
                     Content = memory.Content,
                     CreatedAt = memory.CreatedAt,
                     Source = memory.Source,
-                    Similarity = memory.Similarity, // Use similarity score from search results
+                    Similarity = memory.Similarity,
                     Entities = []
-                };
-
-                if (includeEntities)
-                {
-                    var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
-                    result.Entities = entities.Select(e => new EntityInfo
-                    {
-                        Id = e.Id,
-                        Name = e.Name,
-                        Type = e.EntityType
-                    }).ToList();
-                }
-
-                results.Add(result);
+                });
             }
         }
 
@@ -297,22 +288,31 @@ public class KnowledgeGraphService(
 
             foreach (var memory in textResults)
             {
-                // Avoid duplicates in hybrid mode
-                if (results.Any(r => r.Id == memory.Id)) continue;
+                if (!seenIds.Add(memory.Id)) continue;
 
-                var result = new MemorySearchResult
+                results.Add(new MemorySearchResult
                 {
                     Id = memory.Id,
                     Content = memory.Content,
                     CreatedAt = memory.CreatedAt,
                     Source = memory.Source,
-                    Rank = memory.Rank, // Use rank score from text search results
+                    Rank = memory.Rank,
                     Entities = []
-                };
+                });
+            }
+        }
 
-                if (includeEntities)
+        var trimmed = results.Take(limit).ToList();
+
+        if (includeEntities && trimmed.Count > 0)
+        {
+            var memoryIds = trimmed.Select(r => r.Id).ToList();
+            var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
+
+            foreach (var result in trimmed)
+            {
+                if (entitiesByMemory.TryGetValue(result.Id, out var entities))
                 {
-                    var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
                     result.Entities = entities.Select(e => new EntityInfo
                     {
                         Id = e.Id,
@@ -320,12 +320,10 @@ public class KnowledgeGraphService(
                         Type = e.EntityType
                     }).ToList();
                 }
-
-                results.Add(result);
             }
         }
 
-        return results.Take(limit).ToList();
+        return trimmed;
     }
 
     /// <summary>
@@ -375,31 +373,35 @@ public class KnowledgeGraphService(
             }
         }
 
-        // Traverse hops - only process frontier entities (those not yet processed for relationships)
+        // Traverse hops - batch-load relationships for frontier entities
         for (int hop = 0; hop < hops; hop++)
         {
-            // Get only entities that haven't had their relationships fetched yet
             var frontierEntities = result.Entities
                 .Where(e => !processedEntityIds.Contains(e.Id))
                 .ToList();
 
             if (frontierEntities.Count == 0)
-                break; // No new entities to explore
+                break;
+
+            var frontierIds = frontierEntities.Select(e => e.Id).ToList();
+            foreach (var id in frontierIds)
+                processedEntityIds.Add(id);
+
+            // Batch-load all relationships for the frontier in one query
+            var relationshipsByEntity = await _store.GetRelationshipsForEntitiesAsync(frontierIds, cancellationToken);
+
+            var newEntityIds = new List<Guid>();
 
             foreach (var entity in frontierEntities)
             {
-                // Mark this entity as processed before fetching relationships
-                processedEntityIds.Add(entity.Id);
-
-                // Get relationships for this entity
-                var relationships = await _store.GetRelationshipsForEntityAsync(entity.Id, cancellationToken);
+                if (!relationshipsByEntity.TryGetValue(entity.Id, out var relationships))
+                    continue;
 
                 foreach (var rel in relationships.Take(maxResultsPerHop))
                 {
-                    // Check for duplicate relationships (using source, target, type as key)
                     var relationshipKey = (rel.SourceEntityId, rel.TargetEntityId, rel.RelationshipType);
                     if (!visitedRelationships.Add(relationshipKey))
-                        continue; // Skip duplicate relationship
+                        continue;
 
                     result.Relationships.Add(new RelationshipInfo
                     {
@@ -411,27 +413,48 @@ public class KnowledgeGraphService(
                         Confidence = rel.Confidence
                     });
 
-                    // Get connected entity
                     var connectedEntityId = rel.SourceEntityId == entity.Id
                         ? rel.TargetEntityId
                         : rel.SourceEntityId;
 
                     if (visitedEntityIds.Add(connectedEntityId))
                     {
-                        var connectedEntity = await _store.GetEntityByIdAsync(connectedEntityId, cancellationToken);
-                        if (connectedEntity != null)
+                        // Try to get entity info from the relationship's navigation properties
+                        var connectedEntityInfo = rel.SourceEntityId == entity.Id
+                            ? rel.TargetEntity
+                            : rel.SourceEntity;
+
+                        if (connectedEntityInfo != null)
                         {
                             result.Entities.Add(new EntityInfo
                             {
-                                Id = connectedEntity.Id,
-                                Name = connectedEntity.Name,
-                                Type = connectedEntity.EntityType
+                                Id = connectedEntityInfo.Id,
+                                Name = connectedEntityInfo.Name,
+                                Type = connectedEntityInfo.EntityType
                             });
-
-                            // Get memories for this entity
-                            // Note: Would need additional method in store to get memories by entity
+                        }
+                        else
+                        {
+                            newEntityIds.Add(connectedEntityId);
                         }
                     }
+                }
+            }
+
+            // Batch-load any entities not available from navigation properties
+            // (This is rare since GetRelationshipsForEntitiesAsync JOINs entity names)
+            // For now, fall back to individual lookups for any missing entities
+            foreach (var entityId in newEntityIds)
+            {
+                var connectedEntity = await _store.GetEntityByIdAsync(entityId, cancellationToken);
+                if (connectedEntity != null)
+                {
+                    result.Entities.Add(new EntityInfo
+                    {
+                        Id = connectedEntity.Id,
+                        Name = connectedEntity.Name,
+                        Type = connectedEntity.EntityType
+                    });
                 }
             }
         }
@@ -441,7 +464,7 @@ public class KnowledgeGraphService(
 
     /// <summary>
     /// Get context from the previous day to instantiate a new session with continuity.
-    /// Filters by project/subject using semantic search if provided.
+    /// Filters by project/subject using server-side pgvector similarity if provided.
     /// </summary>
     public async Task<PreviousDayContext> GetPreviousDayContextAsync(
         string? projectOrSubject = null,
@@ -450,74 +473,45 @@ public class KnowledgeGraphService(
         bool includeEntities = true,
         CancellationToken cancellationToken = default)
     {
-        // Calculate the date range for the previous day(s)
         var now = DateTime.UtcNow;
-        var toUtc = now; // Include up to current time (not just start of today)
-        var fromUtc = now.Date.AddDays(-daysBack); // Start of N days ago
+        var toUtc = now;
+        var fromUtc = now.Date.AddDays(-daysBack);
 
         List<Memory> memories;
 
         if (!string.IsNullOrWhiteSpace(projectOrSubject))
         {
-            // Get ALL memories from date range first, then filter by semantic relevance
-            // This ensures we don't miss recent memories just because older ones rank higher semantically
-            var allMemoriesInRange = await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit: 1000, cancellationToken);
-
             var queryEmbedding = await _embeddingService.EmbedTextAsync(projectOrSubject, cancellationToken);
 
-            if (allMemoriesInRange.Count == 0)
+            // Use server-side pgvector similarity instead of fetching 1000 memories client-side
+            var recentMemories = await _store.SearchMemoriesByEmbeddingInDateRangeAsync(
+                queryEmbedding, fromUtc, toUtc, threshold: 0.3f, limit, cancellationToken);
+
+            if (recentMemories.Count == 0)
             {
-                // No recent memories, but search older ones for context
-                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, limit, threshold: 0.5f, cancellationToken: cancellationToken);
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(
+                    queryEmbedding, limit, threshold: 0.5f, cancellationToken: cancellationToken);
                 memories = olderMemories.Where(m => m.CreatedAt < fromUtc).ToList();
             }
             else
             {
-                // Filter recent memories by semantic similarity to project/subject
-                var recentScoredMemories = new List<(Memory memory, float similarity, bool isRecent)>();
-
-                foreach (var memory in allMemoriesInRange)
-                {
-                    if (memory.Embedding != null && memory.Embedding.Length > 0)
-                    {
-                        var similarity = CosineSimilarity(queryEmbedding, memory.Embedding);
-                        if (similarity >= 0.3f) // Lower threshold since we're already filtered by date
-                        {
-                            recentScoredMemories.Add((memory, similarity, true));
-                        }
-                    }
-                }
-
-                // Take top recent memories
-                var topRecentMemories = recentScoredMemories
-                    .OrderByDescending(x => x.similarity)
-                    .Take(limit)
-                    .ToList();
-
-                // Also fetch similar OLDER memories for context (up to 30% of limit)
+                // Also fetch older context memories (up to 30% of limit)
                 var contextLimit = Math.Max(3, limit / 3);
-                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(queryEmbedding, contextLimit * 2, threshold: 0.5f, cancellationToken: cancellationToken);
+                var olderMemories = await _store.SearchMemoriesByEmbeddingAsync(
+                    queryEmbedding, contextLimit * 2, threshold: 0.5f, cancellationToken: cancellationToken);
                 var olderContextMemories = olderMemories
-                    .Where(m => m.CreatedAt < fromUtc) // Only older than date range
+                    .Where(m => m.CreatedAt < fromUtc)
                     .Take(contextLimit)
-                    .Select(m => (memory: m, similarity: 0f, isRecent: false))
                     .ToList();
 
-                // Combine: recent memories first (by similarity), then older context memories (by date descending)
-                var combined = new List<(Memory memory, float similarity, bool isRecent)>();
-                combined.AddRange(topRecentMemories);
-                combined.AddRange(olderContextMemories);
-
-                memories = combined.Select(x => x.memory).ToList();
+                memories = [..recentMemories, ..olderContextMemories];
             }
         }
         else
         {
-            // No filter - get all memories from the date range
             memories = await _store.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
         }
 
-        // Count recent vs contextual memories
         var recentCount = memories.Count(m => m.CreatedAt >= fromUtc && m.CreatedAt <= toUtc);
         var contextCount = memories.Count - recentCount;
 
@@ -543,63 +537,78 @@ public class KnowledgeGraphService(
             return result;
         }
 
-        // Collect all entities and relationships for aggregation
-        var entityCounts = new Dictionary<string, (EntityInfo Entity, int Count)>();
-        var relationshipCounts = new Dictionary<string, (RelationshipInfo Relationship, int Count)>();
-
-        foreach (var memory in memories)
+        // Build memory results
+        result.Memories = memories.Select(memory => new MemorySearchResult
         {
-            var memoryResult = new MemorySearchResult
-            {
-                Id = memory.Id,
-                Content = memory.Content,
-                CreatedAt = memory.CreatedAt,
-                Source = memory.Source,
-                Similarity = memory.Similarity,
-                Entities = []
-            };
+            Id = memory.Id,
+            Content = memory.Content,
+            CreatedAt = memory.CreatedAt,
+            Source = memory.Source,
+            Similarity = memory.Similarity,
+            Entities = []
+        }).ToList();
 
-            if (includeEntities)
-            {
-                var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
-                memoryResult.Entities = entities.Select(e => new EntityInfo
-                {
-                    Id = e.Id,
-                    Name = e.Name,
-                    Type = e.EntityType
-                }).ToList();
+        // Batch-load entities and relationships instead of N+1
+        if (includeEntities)
+        {
+            var memoryIds = memories.Select(m => m.Id).ToList();
+            var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
 
-                // Aggregate entity counts
-                foreach (var entity in memoryResult.Entities)
+            var entityCounts = new Dictionary<string, (EntityInfo Entity, int Count)>();
+            var allEntityIds = new HashSet<Guid>();
+
+            foreach (var memoryResult in result.Memories)
+            {
+                if (entitiesByMemory.TryGetValue(memoryResult.Id, out var entities))
                 {
-                    var key = $"{entity.Type}:{entity.Name}";
-                    if (entityCounts.TryGetValue(key, out var existing))
+                    memoryResult.Entities = entities.Select(e => new EntityInfo
                     {
-                        entityCounts[key] = (existing.Entity, existing.Count + 1);
-                    }
-                    else
+                        Id = e.Id,
+                        Name = e.Name,
+                        Type = e.EntityType
+                    }).ToList();
+
+                    foreach (var entity in memoryResult.Entities)
                     {
-                        entityCounts[key] = (entity, 1);
+                        allEntityIds.Add(entity.Id);
+                        var key = $"{entity.Type}:{entity.Name}";
+                        if (entityCounts.TryGetValue(key, out var existing))
+                        {
+                            entityCounts[key] = (existing.Entity, existing.Count + 1);
+                        }
+                        else
+                        {
+                            entityCounts[key] = (entity, 1);
+                        }
                     }
                 }
+            }
 
-                // Get relationships for entities in this memory
-                foreach (var entity in entities.Take(5)) // Limit to avoid too many queries
+            // Batch-load all relationships for all entities in one query
+            var relationshipCounts = new Dictionary<string, (RelationshipInfo Relationship, int Count)>();
+            if (allEntityIds.Count > 0)
+            {
+                var relationshipsByEntity = await _store.GetRelationshipsForEntitiesAsync(
+                    allEntityIds.ToList(), cancellationToken);
+
+                var seenRelationships = new HashSet<string>();
+                foreach (var (_, rels) in relationshipsByEntity)
                 {
-                    var relationships = await _store.GetRelationshipsForEntityAsync(entity.Id, cancellationToken);
-                    foreach (var rel in relationships.Take(3))
+                    foreach (var rel in rels)
                     {
                         var relInfo = new RelationshipInfo
                         {
                             SourceId = rel.SourceEntityId,
                             TargetId = rel.TargetEntityId,
-                            Source = rel.SourceEntity?.Name ?? entity.Name,
+                            Source = rel.SourceEntity?.Name ?? "Unknown",
                             Target = rel.TargetEntity?.Name ?? "Unknown",
                             Type = rel.RelationshipType,
                             Confidence = rel.Confidence
                         };
 
                         var key = $"{relInfo.Source}->{relInfo.Type}->{relInfo.Target}";
+                        if (!seenRelationships.Add(key)) continue;
+
                         if (relationshipCounts.TryGetValue(key, out var existingRel))
                         {
                             relationshipCounts[key] = (existingRel.Relationship, existingRel.Count + 1);
@@ -612,23 +621,20 @@ public class KnowledgeGraphService(
                 }
             }
 
-            result.Memories.Add(memoryResult);
+            result.TopEntities = entityCounts.Values
+                .OrderByDescending(x => x.Count)
+                .Take(10)
+                .Select(x => x.Entity)
+                .ToList();
+
+            result.TopRelationships = relationshipCounts.Values
+                .OrderByDescending(x => x.Count)
+                .Take(10)
+                .Select(x => x.Relationship)
+                .ToList();
         }
 
-        // Get top entities and relationships by frequency
-        result.TopEntities = entityCounts.Values
-            .OrderByDescending(x => x.Count)
-            .Take(10)
-            .Select(x => x.Entity)
-            .ToList();
-
-        result.TopRelationships = relationshipCounts.Values
-            .OrderByDescending(x => x.Count)
-            .Take(10)
-            .Select(x => x.Relationship)
-            .ToList();
-
-        // Generate a summary
+        // Generate summary
         var entityTypes = result.TopEntities
             .GroupBy(e => e.Type)
             .Select(g => $"{g.Count()} {g.Key}")
@@ -660,19 +666,13 @@ public class KnowledgeGraphService(
         }
 
         if (topics.Count > 0)
-        {
             result.SessionSummary += $" Main topics: {string.Join(", ", topics)}.";
-        }
 
         if (people.Count > 0)
-        {
             result.SessionSummary += $" People mentioned: {string.Join(", ", people)}.";
-        }
 
         if (entityTypes.Count > 0)
-        {
             result.SessionSummary += $" Entity breakdown: {string.Join(", ", entityTypes)}.";
-        }
 
         return result;
     }
@@ -928,35 +928,6 @@ public class KnowledgeGraphService(
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// Calculate cosine similarity between two embedding vectors.
-    /// Returns a value between -1 and 1, where 1 means identical, 0 means orthogonal, -1 means opposite.
-    /// </summary>
-    private static float CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length)
-            throw new ArgumentException("Vectors must have the same length");
-
-        float dotProduct = 0;
-        float magnitudeA = 0;
-        float magnitudeB = 0;
-
-        for (int i = 0; i < a.Length; i++)
-        {
-            dotProduct += a[i] * b[i];
-            magnitudeA += a[i] * a[i];
-            magnitudeB += b[i] * b[i];
-        }
-
-        magnitudeA = MathF.Sqrt(magnitudeA);
-        magnitudeB = MathF.Sqrt(magnitudeB);
-
-        if (magnitudeA == 0 || magnitudeB == 0)
-            return 0;
-
-        return dotProduct / (magnitudeA * magnitudeB);
     }
 
     #endregion

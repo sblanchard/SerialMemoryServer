@@ -321,8 +321,14 @@ public class InstrumentedKnowledgeGraphStore(
     public Task<List<Entity>> GetEntitiesForMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
         => inner.GetEntitiesForMemoryAsync(memoryId, cancellationToken);
 
+    public Task<Dictionary<Guid, List<Entity>>> GetEntitiesForMemoriesAsync(List<Guid> memoryIds, CancellationToken cancellationToken = default)
+        => inner.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
+
     public Task<List<EntityRelationship>> GetRelationshipsForEntityAsync(Guid entityId, CancellationToken cancellationToken = default)
         => inner.GetRelationshipsForEntityAsync(entityId, cancellationToken);
+
+    public Task<Dictionary<Guid, List<EntityRelationship>>> GetRelationshipsForEntitiesAsync(List<Guid> entityIds, CancellationToken cancellationToken = default)
+        => inner.GetRelationshipsForEntitiesAsync(entityIds, cancellationToken);
 
     public Task<List<EntityRelationship>> GetAllRelationshipsAsync(int limit = 1000, CancellationToken cancellationToken = default)
         => inner.GetAllRelationshipsAsync(limit, cancellationToken);
@@ -368,6 +374,9 @@ public class InstrumentedKnowledgeGraphStore(
 
     public Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default)
         => inner.GetMemoriesByDateRangeAsync(fromUtc, toUtc, limit, cancellationToken);
+
+    public Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default)
+        => inner.SearchMemoriesByEmbeddingInDateRangeAsync(queryEmbedding, fromUtc, toUtc, threshold, limit, cancellationToken);
 
     // Workspace operations
     public Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default)

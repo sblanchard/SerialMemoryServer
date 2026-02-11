@@ -350,6 +350,41 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return results.Select(MapToEntity).ToList();
     }
 
+    public async Task<Dictionary<Guid, List<Entity>>> GetEntitiesForMemoriesAsync(List<Guid> memoryIds, CancellationToken cancellationToken = default)
+    {
+        var result = memoryIds.ToDictionary(id => id, _ => new List<Entity>());
+
+        if (memoryIds.Count == 0)
+            return result;
+
+        const string sql = """
+            SELECT e.*, me.memory_id, me.relevance
+            FROM entities e
+            JOIN memory_entities me ON e.id = me.entity_id
+            WHERE me.memory_id = ANY(@MemoryIds)
+            ORDER BY me.relevance DESC
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { MemoryIds = memoryIds },
+            cancellationToken: cancellationToken
+        ));
+
+        foreach (var row in rows)
+        {
+            Guid memoryId = row.memory_id;
+            if (result.TryGetValue(memoryId, out var entities))
+            {
+                entities.Add(MapToEntity(row));
+            }
+        }
+
+        return result;
+    }
+
     public async Task LinkMemoryToEntityAsync(
         Guid memoryId,
         Guid entityId,
@@ -443,6 +478,52 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         ));
 
         return results.Select(MapToEntityRelationship).ToList();
+    }
+
+    public async Task<Dictionary<Guid, List<EntityRelationship>>> GetRelationshipsForEntitiesAsync(
+        List<Guid> entityIds,
+        CancellationToken cancellationToken = default)
+    {
+        var result = entityIds.ToDictionary(id => id, _ => new List<EntityRelationship>());
+
+        if (entityIds.Count == 0)
+            return result;
+
+        const string sql = """
+            SELECT
+                er.*,
+                source.name as source_name,
+                source.entity_type as source_type,
+                target.name as target_name,
+                target.entity_type as target_type
+            FROM entity_relationships er
+            JOIN entities source ON er.source_entity_id = source.id
+            JOIN entities target ON er.target_entity_id = target.id
+            WHERE er.source_entity_id = ANY(@EntityIds) OR er.target_entity_id = ANY(@EntityIds)
+            ORDER BY er.confidence DESC
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql,
+            new { EntityIds = entityIds },
+            cancellationToken: cancellationToken
+        ));
+
+        foreach (var row in rows)
+        {
+            var rel = MapToEntityRelationship(row);
+            Guid sourceId = row.source_entity_id;
+            Guid targetId = row.target_entity_id;
+
+            if (result.ContainsKey(sourceId))
+                result[sourceId].Add(rel);
+            if (result.ContainsKey(targetId) && sourceId != targetId)
+                result[targetId].Add(rel);
+        }
+
+        return result;
     }
 
     public async Task<List<EntityRelationship>> GetAllRelationshipsAsync(
@@ -1003,6 +1084,55 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                 ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(row.metadata.ToString())
                 : null
         }).ToList();
+    }
+
+    public async Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(
+        float[] queryEmbedding,
+        DateTime fromUtc,
+        DateTime toUtc,
+        float threshold = 0.3f,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT
+                id, content, created_at, updated_at, source, conversation_session_id, metadata, memory_type,
+                1 - (embedding <=> @QueryEmbedding) as similarity
+            FROM memories
+            WHERE created_at >= @FromUtc AND created_at <= @ToUtc
+              AND embedding IS NOT NULL
+              AND 1 - (embedding <=> @QueryEmbedding) > @Threshold
+            ORDER BY embedding <=> @QueryEmbedding
+            LIMIT @Limit
+            """;
+
+        await using var conn = await OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@QueryEmbedding", new Vector(queryEmbedding));
+        cmd.Parameters.AddWithValue("@FromUtc", fromUtc);
+        cmd.Parameters.AddWithValue("@ToUtc", toUtc);
+        cmd.Parameters.AddWithValue("@Threshold", threshold);
+        cmd.Parameters.AddWithValue("@Limit", limit);
+
+        var results = new List<dynamic>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            dynamic row = new ExpandoObject();
+            var dict = (IDictionary<string, object?>)row;
+            dict["id"] = reader.GetGuid(0);
+            dict["content"] = reader.GetString(1);
+            dict["created_at"] = reader.GetDateTime(2);
+            dict["updated_at"] = reader.IsDBNull(3) ? null : reader.GetDateTime(3);
+            dict["source"] = reader.IsDBNull(4) ? null : reader.GetString(4);
+            dict["conversation_session_id"] = reader.IsDBNull(5) ? null : reader.GetGuid(5);
+            dict["metadata"] = reader.IsDBNull(6) ? null : reader.GetString(6);
+            dict["memory_type"] = reader.IsDBNull(7) ? "knowledge" : reader.GetString(7);
+            dict["similarity"] = reader.GetFloat(8);
+            results.Add(row);
+        }
+
+        return results.Select(MapToMemory).ToList();
     }
 
     public async Task<List<Memory>> GetMemoriesByTypeAsync(string memoryType, int limit = 50, CancellationToken cancellationToken = default)

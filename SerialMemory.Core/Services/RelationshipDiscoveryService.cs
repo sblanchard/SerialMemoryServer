@@ -52,12 +52,15 @@ public class RelationshipDiscoveryService
         var result = new RelationshipDiscoveryResult();
         var coOccurrences = new Dictionary<(Guid, Guid), CoOccurrence>();
 
-        // Get recent memories with their entities
+        // Get recent memories and batch-load all entities in one query
         var memories = await _store.GetRecentMemoriesAsync(memoriesLimit, cancellationToken);
+        var memoryIds = memories.Select(m => m.Id).ToList();
+        var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
 
         foreach (var memory in memories)
         {
-            var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
+            if (!entitiesByMemory.TryGetValue(memory.Id, out var entities))
+                continue;
 
             // Track co-occurrences between entities in the same memory
             for (int i = 0; i < entities.Count; i++)
@@ -147,16 +150,18 @@ public class RelationshipDiscoveryService
         CancellationToken cancellationToken = default)
     {
         var result = new RelationshipDiscoveryResult();
-        var patterns = GetRelationshipPatterns();
 
         var memories = await _store.GetRecentMemoriesAsync(memoriesLimit, cancellationToken);
+        var memoryIds = memories.Select(m => m.Id).ToList();
+        var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
 
         foreach (var memory in memories)
         {
-            var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
+            if (!entitiesByMemory.TryGetValue(memory.Id, out var entities))
+                continue;
             var entityNameMap = entities.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (pattern, relationType) in patterns)
+            foreach (var (pattern, relationType) in RelationshipPatterns)
             {
                 var matches = pattern.Matches(memory.Content);
 
@@ -213,50 +218,33 @@ public class RelationshipDiscoveryService
 
     /// <summary>
     /// Get all relationships from the database for visualization.
+    /// Uses the store's GetAllRelationshipsAsync directly instead of iterating memory-by-memory.
     /// </summary>
     public async Task<List<RelationshipWithEntities>> GetAllRelationshipsAsync(
         int limit = 1000,
         CancellationToken cancellationToken = default)
     {
-        // Get all entities first
-        var memories = await _store.GetRecentMemoriesAsync(limit, cancellationToken);
-        var allEntityIds = new HashSet<Guid>();
-        var entityMap = new Dictionary<Guid, Entity>();
+        // Fetch all relationships directly - the store query JOINs entity names
+        var relationships = await _store.GetAllRelationshipsAsync(limit, cancellationToken);
 
-        foreach (var memory in memories)
-        {
-            var entities = await _store.GetEntitiesForMemoryAsync(memory.Id, cancellationToken);
-            foreach (var entity in entities)
-            {
-                allEntityIds.Add(entity.Id);
-                entityMap[entity.Id] = entity;
-            }
-        }
-
-        // Get relationships for all entities
         var relationshipSet = new HashSet<(Guid, Guid, string)>();
         var results = new List<RelationshipWithEntities>();
 
-        foreach (var entityId in allEntityIds)
+        foreach (var rel in relationships)
         {
-            var relationships = await _store.GetRelationshipsForEntityAsync(entityId, cancellationToken);
-
-            foreach (var rel in relationships)
+            var key = (rel.SourceEntityId, rel.TargetEntityId, rel.RelationshipType);
+            if (relationshipSet.Add(key))
             {
-                var key = (rel.SourceEntityId, rel.TargetEntityId, rel.RelationshipType);
-                if (relationshipSet.Add(key))
+                results.Add(new RelationshipWithEntities
                 {
-                    results.Add(new RelationshipWithEntities
-                    {
-                        Id = rel.Id,
-                        SourceEntityId = rel.SourceEntityId,
-                        TargetEntityId = rel.TargetEntityId,
-                        SourceEntityName = rel.SourceEntity?.Name ?? entityMap.GetValueOrDefault(rel.SourceEntityId)?.Name ?? "Unknown",
-                        TargetEntityName = rel.TargetEntity?.Name ?? entityMap.GetValueOrDefault(rel.TargetEntityId)?.Name ?? "Unknown",
-                        RelationshipType = rel.RelationshipType,
-                        Confidence = rel.Confidence
-                    });
-                }
+                    Id = rel.Id,
+                    SourceEntityId = rel.SourceEntityId,
+                    TargetEntityId = rel.TargetEntityId,
+                    SourceEntityName = rel.SourceEntity?.Name ?? "Unknown",
+                    TargetEntityName = rel.TargetEntity?.Name ?? "Unknown",
+                    RelationshipType = rel.RelationshipType,
+                    Confidence = rel.Confidence
+                });
             }
         }
 
@@ -275,47 +263,44 @@ public class RelationshipDiscoveryService
         return "associated_with";
     }
 
-    private static List<(System.Text.RegularExpressions.Regex, string)> GetRelationshipPatterns()
-    {
-        return
-        [
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:works? at|employed by|is with)\s+([A-Z][a-zA-Z\s]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "works_at"),
+    private static readonly List<(System.Text.RegularExpressions.Regex Pattern, string RelationType)> RelationshipPatterns =
+    [
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:works? at|employed by|is with)\s+([A-Z][a-zA-Z\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "works_at"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:founded|created|started)\s+([A-Z][a-zA-Z\s]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "founded"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:founded|created|started)\s+([A-Z][a-zA-Z\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "founded"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:lives? in|is from|resides in)\s+([A-Z][a-zA-Z\s,]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "lives_in"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:lives? in|is from|resides in)\s+([A-Z][a-zA-Z\s,]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "lives_in"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:knows?|met|friend of)\s+([A-Z][a-z]+ [A-Z][a-z]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "knows"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:knows?|met|friend of)\s+([A-Z][a-z]+ [A-Z][a-z]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "knows"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:is (?:the )?(?:CEO|CTO|CFO|COO|President|Director|Manager|VP|Engineer) (?:of|at))\s+([A-Z][a-zA-Z\s]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "leads"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:is (?:the )?(?:CEO|CTO|CFO|COO|President|Director|Manager|VP|Engineer) (?:of|at))\s+([A-Z][a-zA-Z\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "leads"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-zA-Z\s]+)\s+(?:acquired|bought|purchased)\s+([A-Z][a-zA-Z\s]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "acquired"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-zA-Z\s]+)\s+(?:acquired|bought|purchased)\s+([A-Z][a-zA-Z\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "acquired"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-zA-Z\s]+)\s+(?:partnered with|partners with|collaborated with)\s+([A-Z][a-zA-Z\s]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "partner_of"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-zA-Z\s]+)\s+(?:partnered with|partners with|collaborated with)\s+([A-Z][a-zA-Z\s]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "partner_of"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-zA-Z\s]+)\s+(?:is located in|headquartered in|based in)\s+([A-Z][a-zA-Z\s,]+)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "located_in"),
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-zA-Z\s]+)\s+(?:is located in|headquartered in|based in)\s+([A-Z][a-zA-Z\s,]+)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "located_in"),
 
-            (new System.Text.RegularExpressions.Regex(
-                @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:and|&)\s+([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:work|worked|collaborate)",
-                System.Text.RegularExpressions.RegexOptions.Compiled), "works_with"),
-        ];
-    }
+        (new System.Text.RegularExpressions.Regex(
+            @"([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:and|&)\s+([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:work|worked|collaborate)",
+            System.Text.RegularExpressions.RegexOptions.Compiled), "works_with"),
+    ];
 
     private class CoOccurrence
     {

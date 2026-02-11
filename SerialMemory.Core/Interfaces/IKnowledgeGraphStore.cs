@@ -21,11 +21,13 @@ public interface IKnowledgeGraphStore
     Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default);
     Task<Entity?> GetEntityByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<List<Entity>> GetEntitiesForMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<Dictionary<Guid, List<Entity>>> GetEntitiesForMemoriesAsync(List<Guid> memoryIds, CancellationToken cancellationToken = default);
     Task LinkMemoryToEntityAsync(Guid memoryId, Guid entityId, float relevance = 1.0f, CancellationToken cancellationToken = default);
 
     // Relationship operations
     Task<Guid> CreateRelationshipAsync(EntityRelationship relationship, CancellationToken cancellationToken = default);
     Task<List<EntityRelationship>> GetRelationshipsForEntityAsync(Guid entityId, CancellationToken cancellationToken = default);
+    Task<Dictionary<Guid, List<EntityRelationship>>> GetRelationshipsForEntitiesAsync(List<Guid> entityIds, CancellationToken cancellationToken = default);
     Task<List<EntityRelationship>> GetAllRelationshipsAsync(int limit = 1000, CancellationToken cancellationToken = default);
 
     // Entity listing
@@ -57,6 +59,7 @@ public interface IKnowledgeGraphStore
 
     // Date range queries for context instantiation
     Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default);
+    Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default);
 
     // Workspace operations
     Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default);

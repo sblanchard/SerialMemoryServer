@@ -52,17 +52,29 @@ public class OllamaEmbeddingService(
 
     public async Task<List<float[]>> EmbedBatchAsync(List<string> texts, CancellationToken cancellationToken = default)
     {
-        // Ollama doesn't have a native batch endpoint, so we process sequentially
-        // Could parallelize with SemaphoreSlim for better performance
-        var embeddings = new List<float[]>(texts.Count);
+        if (texts.Count == 0)
+            return [];
 
-        foreach (var text in texts)
+        if (texts.Count == 1)
+            return [await EmbedTextAsync(texts[0], cancellationToken)];
+
+        // Parallelize with bounded concurrency to avoid overwhelming Ollama
+        var semaphore = new SemaphoreSlim(4);
+        var tasks = texts.Select(async text =>
         {
-            var embedding = await EmbedTextAsync(text, cancellationToken);
-            embeddings.Add(embedding);
-        }
+            await semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                return await EmbedTextAsync(text, cancellationToken);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
 
-        return embeddings;
+        var results = await Task.WhenAll(tasks);
+        return results.ToList();
     }
 
     public void Dispose()
