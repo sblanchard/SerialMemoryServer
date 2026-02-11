@@ -3,26 +3,26 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen?logo=github)](https://github.com/serialmemory/serialmemory/actions)
-[![.NET Version](https://img.shields.io/badge/.NET-8.0+-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen?logo=github)](https://github.com/sblanchard/SerialMemoryServer/actions)
+[![.NET Version](https://img.shields.io/badge/.NET-10+-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql)](https://www.postgresql.org)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com)
 [![Code Coverage](https://img.shields.io/badge/coverage-82%25-brightgreen?logo=codecov)](./docs/)
-[![Activity](https://img.shields.io/badge/maintenance-active-green?logo=github)](https://github.com/serialmemory/serialmemory)
+[![Activity](https://img.shields.io/badge/maintenance-active-green?logo=github)](https://github.com/sblanchard/SerialMemoryServer)
 
 [![Semantic Search](https://img.shields.io/badge/Semantic%20Search-pgvector-FF6B6B?logo=postgresql&logoColor=white)](./docs/01-overview.md)
 [![Knowledge Graph](https://img.shields.io/badge/Knowledge%20Graph-Multi%20Hop-4ECDC4?logo=neo4j&logoColor=white)](./docs/01-overview.md)
 [![MCP Protocol](https://img.shields.io/badge/MCP%20Protocol-Enabled-9B59B6?logo=aiohttp&logoColor=white)](./docs/02-quickstart-claude-mcp.md)
 [![Multi-Tenant](https://img.shields.io/badge/Multi%20Tenant-Secure-27AE60?logo=security&logoColor=white)](./docs/07-self-hosting.md)
 
-[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/serialmemory/serialmemory)
-[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-000000?logo=apple&logoColor=white)](https://github.com/serialmemory/serialmemory)
-[![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/serialmemory/serialmemory)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/sblanchard/SerialMemoryServer)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-000000?logo=apple&logoColor=white)](https://github.com/sblanchard/SerialMemoryServer)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/sblanchard/SerialMemoryServer)
 
-[![Issues](https://img.shields.io/github/issues/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/issues)
-[![Pull Requests](https://img.shields.io/github/issues-pr/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/pulls)
-[![Stars](https://img.shields.io/github/stars/serialmemory/serialmemory?logo=github&style=flat&label=Stars)](https://github.com/serialmemory/serialmemory)
-[![Contributors](https://img.shields.io/github/contributors/serialmemory/serialmemory?logo=github)](https://github.com/serialmemory/serialmemory/graphs/contributors)
+[![Issues](https://img.shields.io/github/issues/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/pulls)
+[![Stars](https://img.shields.io/github/stars/sblanchard/SerialMemoryServer?logo=github&style=flat&label=Stars)](https://github.com/sblanchard/SerialMemoryServer)
+[![Contributors](https://img.shields.io/github/contributors/sblanchard/SerialMemoryServer?logo=github)](https://github.com/sblanchard/SerialMemoryServer/graphs/contributors)
 
 </div>
 
@@ -30,12 +30,12 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 
 ## 🎯 Features
 
-- **Semantic Search**: Find memories by meaning, not keywords, using vector embeddings (384-dim)
+- **Semantic Search**: Find memories by meaning, not keywords, using vector embeddings (1536-dim)
 - **Entity Extraction**: Automatically identify people, organizations, locations, skills, and projects
 - **Knowledge Graph**: Build and traverse relationships between entities for multi-hop reasoning
 - **Temporal Tracking**: Full event sourcing with confidence decay and audit trails
 - **Multi-Tenant**: Complete data isolation with row-level security
-- **MCP Integration**: Claude Desktop and future AI agents via Model Context Protocol
+- **MCP Integration**: Claude Desktop (Anthropic) and OpenAI compatibility via Model Context Protocol
 - **REST API**: Full-featured HTTP API for custom integrations
 - **Self-Hosted**: Deploy on your own infrastructure with security hardening
 
@@ -44,7 +44,7 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 ```
 ┌────────────────────────────────────────────┐
 │      Client Applications                    │
-│  (Claude Desktop, Custom Apps, SDKs)       │
+│  (Claude/Anthropic, OpenAI, Custom Apps)   │
 └────────────────┬─────────────────────────┘
                  │
          ┌───────┴────────┬──────────────┐
@@ -52,6 +52,8 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
     ┌─────────┐  ┌──────────────┐  ┌────────┐
     │   MCP   │  │  REST API    │  │ Admin  │
     │ Server  │  │  (HTTP)      │  │ API    │
+    │ Anthropic│  │              │  │        │
+    │ OpenAI  │  │              │  │        │
     └────┬────┘  └──────┬───────┘  └───┬────┘
          │               │              │
          └───────────────┼──────────────┘
@@ -76,20 +78,233 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
     └──────────┘   └───────────┘   └─────────┘
 ```
 
+## 🧠 Core Concepts
+
+### How It Works: A Temporal Knowledge Graph
+
+SerialMemory goes beyond simple keyword search. It's a **semantic memory system** that understands meaning and context, tracks how information relates over time, and provides intelligent context retrieval for AI applications.
+
+### Memories: The Basic Unit
+
+A **memory** is any piece of information you store in SerialMemory:
+
+- **Natural Language**: "John works at Acme Corp in San Francisco on Python projects"
+- **Structured Data**: Notes, facts, observations, conversations, summaries
+- **Metadata**: When it was created, what project it's for, confidence level
+
+Each memory has:
+
+```
+Memory {
+  id: "uuid",
+  content: "John works at Acme Corp in San Francisco on Python projects",
+  embedding: [0.123, -0.456, 0.789, ...],  // 1536-dimensional vector (OpenAI text-embedding-3-small)
+  confidence: 0.95,                         // Starts high, decays with time
+  layer: L1_CONTEXT,                        // See layers section below
+  entities: [
+    { type: "PERSON", text: "John" },
+    { type: "ORG", text: "Acme Corp" },
+    { type: "GPE", text: "San Francisco" },
+    { type: "SKILL", text: "Python" }
+  ],
+  createdAt: "2026-02-11T10:00:00Z",
+  lastAccessedAt: "2026-02-11T14:30:00Z"
+}
+```
+
+### Semantic Search: Understanding Meaning
+
+Instead of keyword matching, memories are found by **semantic similarity**:
+
+```
+// This query...
+"Who works at the tech company in San Francisco?"
+
+// ...finds memories about "John works at Acme Corp in San Francisco"
+// Even though keywords don't match exactly!
+```
+
+**How it works:**
+1. Your query is converted to an embedding (1536-dimensional vector)
+2. The system finds memories with similar embeddings
+3. Results are ranked by meaning, not keywords
+
+This is powered by PostgreSQL's `pgvector` extension, which uses vector similarity search (KNN) for fast retrieval.
+
+### Memory Layers: The Data Lifecycle
+
+Memories are classified into layers based on how processed/refined they are:
+
+| Layer | What It Is | Typical Retention | Use Case |
+|-------|-----------|-------------------|----------|
+| **L0_RAW** | Raw input, minimal processing | 30 days | Recently captured notes, conversations |
+| **L1_CONTEXT** | Contextual understanding, entities extracted | 90 days | Processed notes with relationships identified |
+| **L2_SUMMARY** | Summarized information, themes extracted | 180 days | Synthesis of similar concepts |
+| **L3_KNOWLEDGE** | Extracted knowledge, proven patterns | 365 days | Reliable facts, validated learnings |
+| **L4_HEURISTIC** | Learned patterns, general principles | Indefinite | Core knowledge, fundamental truths |
+
+**Example Flow:**
+```
+Raw: "John, Sarah, and Mike met yesterday to discuss the backend API design"
+      ↓ (Processing)
+L1: Entities extracted - PERSON(John), PERSON(Sarah), PERSON(Mike), 
+    Relationships identified - John knows Sarah, John knows Mike
+      ↓ (Summarization)
+L2: "Key discussion participants coordinated on technical architecture"
+      ↓ (Pattern recognition)
+L3: "Backend API design is a priority for team coordination"
+      ↓ (Generalization)
+L4: "The team uses synchronous discussion for architectural decisions"
+```
+
+### Memory Confidence Decay: Temporal Forgetting
+
+SerialMemory models human memory: information becomes less reliable over time unless reinforced.
+
+**The decay formula:**
+```
+confidence = initial_confidence × 0.5^(days / half_life)
+
+Default half-life: 90 days
+```
+
+**Example:**
+```
+Day 0:   Confidence = 1.0 (100%)
+Day 90:  Confidence = 0.5 (50%)  - Half as confident
+Day 180: Confidence = 0.25 (25%) - Quarter as confident
+Day 270: Confidence = 0.125 (12.5%)
+```
+
+**Why this matters:**
+- New information is fresh and high-confidence
+- Old information without reinforcement becomes less trusted
+- Memories below 0.1 (10%) confidence are candidates for archival
+- Accessing a memory reinforces it (increases confidence)
+- An explicit "reinforce" action can boost confidence
+
+This allows the system to **automatically forget unimportant details** while keeping validated knowledge intact.
+
+### Entity Extraction: Understanding Key Concepts
+
+SerialMemory automatically identifies key entities (named things) in memories:
+
+| Type | Examples | Used For |
+|------|----------|----------|
+| **PERSON** | John, Sarah, Alice | Finding people-related memories |
+| **ORG** | Acme Corp, Google, MIT | Finding organization memories |
+| **GPE** | New York, France, Silicon Valley | Finding location-related context |
+| **DATE** | 2026-02, Next Tuesday, Q1 | Finding time-relevant memories |
+| **SKILL** | Python, React, Leadership | Finding capability-related memories |
+| **PROJECT** | Project Omega, Dashboard v2 | Finding project-specific context |
+
+**How it works:**
+1. When a memory is stored, entities are automatically extracted
+2. Relationships between entities are identified
+3. A knowledge graph is built and maintained
+
+### The Knowledge Graph: Building Relationships
+
+SerialMemory doesn't just store memories separately—it builds a **knowledge graph** of relationships:
+
+```
+John ─────works_at────→ Acme Corp ─────located_in────→ San Francisco
+  │                                                          │
+  │                                                          │
+  └──────knows──────→ Sarah ─────works_at──────→ Acme Corp │
+                       │
+                       └─────knows──────→ Mike
+
+Projects that use Python:
+Dashboard v2 ─────uses────→ Python ─────language_for────→ Backend Systems
+Project Omega ─────uses────→ Python
+```
+
+**Relationships tracked:**
+- `works_at`: Entity1 works at Entity2
+- `located_in`: Entity1 is located in Entity2
+- `knows`: Entity1 knows Entity2
+- `uses`: Entity1 uses Entity2
+- `created`: Entity1 created Entity2
+- (And many more, automatically discovered)
+
+### Multi-Hop Search: Reasoning Across Context
+
+The real power emerges when traversing multiple hops:
+
+**Query:** "Find technologies used in projects by people I know"
+
+**Search process:**
+```
+1. Start: Find entities I know (Sarah, Mike, ...)
+2. Hop 1: Find projects they work on
+3. Hop 2: Find technologies used in those projects
+4. Result: [Python, Rust, TypeScript, ...]
+```
+
+**Another example:**
+```
+Question: "Who works with technologies similar to what Mike uses?"
+
+1. Find Mike
+2. Find technologies Mike uses
+3. Find other people who use similar technologies
+4. Return those people
+
+This reveals hidden connections and provides better context
+for multi-modal AI reasoning!
+```
+
+### Event Sourcing: Complete Audit Trail
+
+Every change to a memory is captured as an immutable event:
+
+```
+MemoryCreated(id, content, timestamp)
+MemoryUpdated(id, oldContent, newContent, timestamp)
+MemoryReinforced(id, confidence, timestamp)
+MemoryDecayed(id, oldConfidence, newConfidence, timestamp)
+MemoryArchived(id, reason, timestamp)
+```
+
+**Benefits:**
+- Complete audit trail (GDPR compliant)
+- Reproduce system state at any point in time
+- Detect tampering or unauthorized changes
+- Replay events for debugging
+
+### Multi-Tenant Isolation: Security & Privacy
+
+Each tenant's data is completely isolated:
+
+```
+Tenant A                          Tenant B
+├── Memories (isolated)           ├── Memories (isolated)
+├── Entities                      ├── Entities
+├── Relationships                 ├── Relationships
+└── Search results (A only)       └── Search results (B only)
+```
+
+Implemented via PostgreSQL Row-Level Security (RLS):
+- Database enforces isolation at query time
+- Impossible to leak tenant data via SQL
+- API keys scoped per tenant
+- No cross-tenant search possible
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Docker & Docker Compose
-- .NET 8.0+ SDK (for development)
+- .NET 10+ SDK (for development)
 - PostgreSQL 15+ (or use Docker)
 
 ### Option 1: Docker Compose (Recommended)
 
 ```bash
 # Clone the repository
-git clone https://github.com/serialmemory/serialmemory.git
-cd serialmemory
+git clone https://github.com/sblanchard/SerialMemoryServer.git
+cd SerialMemoryServer
 
 # Start infrastructure (PostgreSQL, Redis, RabbitMQ)
 docker compose up -d
@@ -118,6 +333,19 @@ Services available:
 - **Redis**: localhost:6379
 - **RabbitMQ Dashboard**: http://localhost:15672 (guest/guest)
 
+### Connect to AI Platforms
+
+**Claude Desktop (Anthropic)**
+```bash
+# Configure in Claude Desktop after starting the server
+# See: ./docs/02-quickstart-claude-mcp.md
+```
+
+**OpenAI Integration**
+- Use REST API at http://localhost:5001
+- Build custom tools or plugins
+- Leverage semantic search and knowledge graph capabilities
+
 ## 📚 Documentation
 
 - [Overview & Architecture](./docs/01-overview.md) - Concepts and system design
@@ -144,7 +372,8 @@ Services available:
 ### MCP Protocol
 
 SerialMemory implements the **Model Context Protocol**, enabling integration with:
-- Claude Desktop
+- Claude Desktop (Anthropic)
+- OpenAI integrations
 - Future compatible AI agents
 - Custom MCP clients
 
@@ -206,10 +435,31 @@ SerialMemoryServer/
 ├── SerialMemory.ML/            # Embeddings & NLP
 ├── SerialMemory.Worker/        # Background jobs
 ├── SerialMemory.Web/           # React dashboard
+├── SerialMemory-MCP/           # Standalone MCP server (submodule)
+│   └── SerialMemory.Mcp/       # Alternative MCP implementation
 ├── examples/                   # Ready-to-run examples
 ├── docs/                       # Documentation
 ├── docker-compose.yml          # Development stack
 └── SerialMemoryServer.sln      # .NET solution file
+```
+
+### Submodules
+
+- **[SerialMemory-MCP](https://github.com/sblanchard/SerialMemory-MCP)** - Standalone MCP server for Anthropic & OpenAI
+  - Included as a git submodule
+  - Can be built and distributed separately
+  - Full MCP protocol support for Claude Desktop (Anthropic)
+  - Compatible with OpenAI's tool-calling capabilities
+  - Ready for future AI agent integrations
+
+### Cloning with Submodules
+
+```bash
+# Clone including submodules
+git clone --recurse-submodules https://github.com/sblanchard/SerialMemoryServer.git
+
+# Or if already cloned, initialize submodules
+git submodule update --init --recursive
 ```
 
 ## 🎓 Examples
@@ -282,9 +532,9 @@ See [Self-Hosting Guide](./docs/07-self-hosting.md) for detailed security setup.
 
 ## 🛠️ Technology Stack
 
-- **Runtime**: .NET 8.0
+- **Runtime**: .NET 10+
 - **Database**: PostgreSQL 15+ with pgvector
-- **Search**: Vector embeddings (384-dim)
+- **Search**: Vector embeddings (1536-dim via OpenAI text-embedding-3-small)
 - **Caching**: Redis
 - **Queue**: RabbitMQ
 - **NLP**: Pattern-based entity extraction (extensible to spaCy, BERT)
@@ -360,7 +610,7 @@ SerialMemory is released under the **MIT License**. See [LICENSE](./LICENSE) for
 
 ## 🆘 Support & Community
 
-- **GitHub Issues**: [Report bugs and request features](https://github.com/serialmemory/serialmemory/issues)
+- **GitHub Issues**: [Report bugs and request features](https://github.com/sblanchard/SerialMemoryServer/issues)
 - **Documentation**: [Full docs](./docs/)
 - **Examples**: [Ready-to-run examples](./examples/)
 
