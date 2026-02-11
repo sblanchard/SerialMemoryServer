@@ -30,12 +30,12 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 
 ## 🎯 Features
 
-- **Semantic Search**: Find memories by meaning, not keywords, using vector embeddings (384-dim)
+- **Semantic Search**: Find memories by meaning, not keywords, using vector embeddings (1536-dim)
 - **Entity Extraction**: Automatically identify people, organizations, locations, skills, and projects
 - **Knowledge Graph**: Build and traverse relationships between entities for multi-hop reasoning
 - **Temporal Tracking**: Full event sourcing with confidence decay and audit trails
 - **Multi-Tenant**: Complete data isolation with row-level security
-- **MCP Integration**: Claude Desktop and future AI agents via Model Context Protocol
+- **MCP Integration**: Claude Desktop (Anthropic) and OpenAI compatibility via Model Context Protocol
 - **REST API**: Full-featured HTTP API for custom integrations
 - **Self-Hosted**: Deploy on your own infrastructure with security hardening
 
@@ -44,7 +44,7 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
 ```
 ┌────────────────────────────────────────────┐
 │      Client Applications                    │
-│  (Claude Desktop, Custom Apps, SDKs)       │
+│  (Claude/Anthropic, OpenAI, Custom Apps)   │
 └────────────────┬─────────────────────────┘
                  │
          ┌───────┴────────┬──────────────┐
@@ -52,6 +52,8 @@ A **temporal knowledge graph memory system** for AI applications. SerialMemory p
     ┌─────────┐  ┌──────────────┐  ┌────────┐
     │   MCP   │  │  REST API    │  │ Admin  │
     │ Server  │  │  (HTTP)      │  │ API    │
+    │ Anthropic│  │              │  │        │
+    │ OpenAI  │  │              │  │        │
     └────┬────┘  └──────┬───────┘  └───┬────┘
          │               │              │
          └───────────────┼──────────────┘
@@ -96,7 +98,7 @@ Each memory has:
 Memory {
   id: "uuid",
   content: "John works at Acme Corp in San Francisco on Python projects",
-  embedding: [0.123, -0.456, 0.789, ...],  // 384-dimensional vector
+  embedding: [0.123, -0.456, 0.789, ...],  // 1536-dimensional vector (OpenAI text-embedding-3-small)
   confidence: 0.95,                         // Starts high, decays with time
   layer: L1_CONTEXT,                        // See layers section below
   entities: [
@@ -123,7 +125,7 @@ Instead of keyword matching, memories are found by **semantic similarity**:
 ```
 
 **How it works:**
-1. Your query is converted to an embedding (384-dimensional vector)
+1. Your query is converted to an embedding (1536-dimensional vector)
 2. The system finds memories with similar embeddings
 3. Results are ranked by meaning, not keywords
 
@@ -331,6 +333,19 @@ Services available:
 - **Redis**: localhost:6379
 - **RabbitMQ Dashboard**: http://localhost:15672 (guest/guest)
 
+### Connect to AI Platforms
+
+**Claude Desktop (Anthropic)**
+```bash
+# Configure in Claude Desktop after starting the server
+# See: ./docs/02-quickstart-claude-mcp.md
+```
+
+**OpenAI Integration**
+- Use REST API at http://localhost:5001
+- Build custom tools or plugins
+- Leverage semantic search and knowledge graph capabilities
+
 ## 📚 Documentation
 
 - [Overview & Architecture](./docs/01-overview.md) - Concepts and system design
@@ -357,7 +372,8 @@ Services available:
 ### MCP Protocol
 
 SerialMemory implements the **Model Context Protocol**, enabling integration with:
-- Claude Desktop
+- Claude Desktop (Anthropic)
+- OpenAI integrations
 - Future compatible AI agents
 - Custom MCP clients
 
@@ -429,10 +445,12 @@ SerialMemoryServer/
 
 ### Submodules
 
-- **[SerialMemory-MCP](https://github.com/sblanchard/SerialMemory-MCP)** - Standalone MCP server implementation
+- **[SerialMemory-MCP](https://github.com/sblanchard/SerialMemory-MCP)** - Standalone MCP server for Anthropic & OpenAI
   - Included as a git submodule
   - Can be built and distributed separately
-  - Full MCP protocol support for Claude Desktop and compatible agents
+  - Full MCP protocol support for Claude Desktop (Anthropic)
+  - Compatible with OpenAI's tool-calling capabilities
+  - Ready for future AI agent integrations
 
 ### Cloning with Submodules
 
@@ -516,7 +534,7 @@ See [Self-Hosting Guide](./docs/07-self-hosting.md) for detailed security setup.
 
 - **Runtime**: .NET 10+
 - **Database**: PostgreSQL 15+ with pgvector
-- **Search**: Vector embeddings (384-dim)
+- **Search**: Vector embeddings (1536-dim via OpenAI text-embedding-3-small)
 - **Caching**: Redis
 - **Queue**: RabbitMQ
 - **NLP**: Pattern-based entity extraction (extensible to spaCy, BERT)

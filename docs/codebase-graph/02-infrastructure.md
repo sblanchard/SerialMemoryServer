@@ -66,6 +66,6 @@ graph TD
 
 - **Multi-tenancy**: PostgreSQL RLS with `app.tenant_id` and `app.workspace_id` session variables
 - **Connection factory**: `TenantDbConnectionFactory` sets tenant context on each connection via `SET app.tenant_id`
-- **Vector search**: pgvector `<=>` operator for cosine similarity on `vector(384)` or `vector(768)` columns
+- **Vector search**: pgvector `<=>` operator for cosine similarity on `vector(1536)` (production) or `vector(384)` / `vector(768)` (legacy/custom models)
 - **Hybrid search**: Combines pgvector similarity with PostgreSQL full-text search (`ts_vector`, `ts_query`)
 - **Optimistic concurrency**: Version columns on key tables

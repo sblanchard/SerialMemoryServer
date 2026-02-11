@@ -56,7 +56,7 @@ SerialMemory is a **temporal knowledge graph memory system** for AI applications
 
 A memory is a piece of information stored in the system. Each memory has:
 - **Content**: The actual text/information
-- **Embedding**: A 384-dimensional vector for semantic search
+- **Embedding**: A 1536-dimensional vector for semantic search (OpenAI text-embedding-3-small)
 - **Entities**: Extracted entities (people, organizations, etc.)
 - **Confidence**: A score that decays over time unless reinforced
 - **Layer**: Classification (L0_RAW through L4_HEURISTIC)
