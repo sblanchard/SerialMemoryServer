@@ -75,25 +75,32 @@ public interface ISessionStore
 }
 
 /// <summary>
-/// Composite repository interface for knowledge graph operations.
-/// Inherits from focused sub-interfaces for backward compatibility.
+/// Graph-wide statistics (approximate counts, breakdowns).
 /// </summary>
-public interface IKnowledgeGraphStore : IMemoryStore, IEntityStore, IRelationshipStore, IUserProfileStore, ISessionStore
+public interface IStatisticsStore
 {
-    // Combined statistics (single connection)
     Task<(long Memories, long Entities, long Relationships)> GetGraphStatisticsAsync(CancellationToken cancellationToken = default);
     Task<Dictionary<string, int>> GetRelationshipTypeBreakdownAsync(CancellationToken cancellationToken = default);
+}
 
-    // Workspace operations
+/// <summary>
+/// Workspace and snapshot lifecycle operations.
+/// </summary>
+public interface IWorkspaceStore
+{
     Task<Guid> CreateWorkspaceAsync(Workspace workspace, CancellationToken ct = default);
     Task<List<Workspace>> GetWorkspacesAsync(int limit = 50, CancellationToken ct = default);
     Task<Workspace?> GetWorkspaceBySlugAsync(string workspaceId, CancellationToken ct = default);
-
-    // Workspace snapshot operations
     Task<Guid> CreateSnapshotAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default);
     Task<List<WorkspaceSnapshot>> GetSnapshotsAsync(string workspaceId, int limit = 20, CancellationToken ct = default);
     Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default);
+}
 
-    // Unit-of-work: reuse a single connection with RLS already set across multiple operations
+/// <summary>
+/// Composite repository interface for knowledge graph operations.
+/// Inherits from focused sub-interfaces for backward compatibility.
+/// </summary>
+public interface IKnowledgeGraphStore : IMemoryStore, IEntityStore, IRelationshipStore, IUserProfileStore, ISessionStore, IStatisticsStore, IWorkspaceStore
+{
     Task<IAsyncDisposable> BeginUnitOfWorkAsync(CancellationToken cancellationToken = default);
 }
