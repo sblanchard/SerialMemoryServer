@@ -6,6 +6,7 @@ COPY ["SerialMemory.Api/SerialMemory.Api.csproj", "SerialMemory.Api/"]
 COPY ["SerialMemory.Core/SerialMemory.Core.csproj", "SerialMemory.Core/"]
 COPY ["SerialMemory.Infrastructure/SerialMemory.Infrastructure.csproj", "SerialMemory.Infrastructure/"]
 COPY ["SerialMemory.ML/SerialMemory.ML.csproj", "SerialMemory.ML/"]
+COPY ["SerialMemory.EventSourcing/SerialMemory.EventSourcing.csproj", "SerialMemory.EventSourcing/"]
 RUN dotnet restore "SerialMemory.Api/SerialMemory.Api.csproj"
 
 # Copy source and build

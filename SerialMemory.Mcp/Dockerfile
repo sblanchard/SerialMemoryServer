@@ -8,6 +8,7 @@ COPY SerialMemory.Core/SerialMemory.Core.csproj SerialMemory.Core/
 COPY SerialMemory.Infrastructure/SerialMemory.Infrastructure.csproj SerialMemory.Infrastructure/
 COPY SerialMemory.ML/SerialMemory.ML.csproj SerialMemory.ML/
 COPY SerialMemory.Contracts/SerialMemory.Contracts.csproj SerialMemory.Contracts/
+COPY SerialMemory.EventSourcing/SerialMemory.EventSourcing.csproj SerialMemory.EventSourcing/
 COPY SerialMemory.Mcp/SerialMemory.Mcp.csproj SerialMemory.Mcp/
 
 # Restore dependencies
@@ -18,6 +19,7 @@ COPY SerialMemory.Core/ SerialMemory.Core/
 COPY SerialMemory.Infrastructure/ SerialMemory.Infrastructure/
 COPY SerialMemory.ML/ SerialMemory.ML/
 COPY SerialMemory.Contracts/ SerialMemory.Contracts/
+COPY SerialMemory.EventSourcing/ SerialMemory.EventSourcing/
 COPY SerialMemory.Mcp/ SerialMemory.Mcp/
 
 # Build and publish
