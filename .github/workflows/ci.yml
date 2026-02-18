@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop, 'feature/**', 'claude/**']
+    branches: [master, main, develop, 'feature/**', 'claude/**']
   pull_request:
-    branches: [main, develop]
+    branches: [master, main, develop]
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -110,7 +110,7 @@ jobs:
     name: Build Docker Images
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
 
     steps:
       - name: Checkout repository
@@ -143,7 +143,7 @@ jobs:
     name: Publish Artifacts
     runs-on: ubuntu-latest
     needs: [build, security-scan]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
     steps:
       - name: Checkout repository
@@ -222,7 +222,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     needs: publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release:')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && startsWith(github.event.head_commit.message, 'release:')
 
     permissions:
       contents: write
@@ -261,3 +261,50 @@ jobs:
           files: |
             artifacts/*.zip
           generate_release_notes: true
+
+  deploy:
+    name: Deploy to Homeserver
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create deployment bundle
+        run: git bundle create /tmp/deploy.bundle --all
+
+      - name: Transfer bundle to homeserver
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          password: ${{ secrets.HOMESERVER_PASSWORD }}
+          source: /tmp/deploy.bundle
+          target: /tmp/
+
+      - name: Pull and rebuild on homeserver
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          password: ${{ secrets.HOMESERVER_PASSWORD }}
+          script: |
+            cd /home/serialcoder/docker/serialmemory
+            git fetch /tmp/deploy.bundle HEAD:refs/remotes/origin/master
+            git reset --hard origin/master
+            docker compose -f docker-compose.prod.yml up -d --build api
+            echo "Deployed $(git log --oneline -1)"
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          password: ${{ secrets.HOMESERVER_PASSWORD }}
+          script: |
+            sleep 10
+            docker ps --format '{{.Names}} {{.Status}}' | grep serialmemory-api
