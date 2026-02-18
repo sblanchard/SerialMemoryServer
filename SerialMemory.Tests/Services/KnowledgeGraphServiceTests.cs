@@ -20,6 +20,42 @@ public class KnowledgeGraphServiceTests
         _embeddingServiceMock = new Mock<IEmbeddingService>();
         _entityExtractionServiceMock = new Mock<IEntityExtractionService>();
 
+        // Default mock setups for methods that return collections (prevent NRE on .Count / iteration)
+        _storeMock
+            .Setup(x => x.SearchMemoriesByEmbeddingAsync(It.IsAny<float[]>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Memory>());
+        _storeMock
+            .Setup(x => x.SearchMemoriesByTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Memory>());
+        _storeMock
+            .Setup(x => x.GetEntitiesForMemoriesAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, List<Entity>>());
+        _storeMock
+            .Setup(x => x.GetEntitiesForMemoryAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Entity>());
+        _storeMock
+            .Setup(x => x.GetRelationshipsForEntityAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<EntityRelationship>());
+        _storeMock
+            .Setup(x => x.GetRelationshipsForEntitiesAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, List<EntityRelationship>>());
+        _storeMock
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid>());
+        _storeMock
+            .Setup(x => x.CreateRelationshipsBatchAsync(It.IsAny<List<EntityRelationship>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Guid>());
+        _storeMock
+            .Setup(x => x.GetRecentMemoriesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Memory>());
+        _storeMock
+            .Setup(x => x.BeginUnitOfWorkAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        _embeddingServiceMock
+            .Setup(x => x.EmbedBatchAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((List<string> texts, CancellationToken _) =>
+                texts.Select(_ => new float[] { 0.1f }).ToList());
+
         _service = new KnowledgeGraphService(
             _storeMock.Object,
             _embeddingServiceMock.Object,
@@ -106,7 +142,8 @@ public class KnowledgeGraphServiceTests
         var content = "John works at Microsoft";
         var embedding = new float[] { 0.1f, 0.2f, 0.3f };
         var memoryId = Guid.CreateVersion7();
-        var entityId = Guid.CreateVersion7();
+        var johnId = Guid.CreateVersion7();
+        var msId = Guid.CreateVersion7();
 
         var extractedEntities = new List<ExtractedEntity>
         {
@@ -123,8 +160,8 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(memoryId);
 
         _storeMock
-            .Setup(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(entityId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = johnId, ["Microsoft"] = msId });
 
         _entityExtractionServiceMock
             .Setup(x => x.ExtractAllAsync(content, It.IsAny<CancellationToken>()))
@@ -136,8 +173,12 @@ public class KnowledgeGraphServiceTests
         // Assert
         result.EntitiesCreated.Should().Be(2);
         result.Entities.Should().HaveCount(2);
-        _storeMock.Verify(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
-        _storeMock.Verify(x => x.LinkMemoryToEntityAsync(memoryId, entityId, It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _storeMock.Verify(x => x.CreateEntitiesBatchAsync(
+            It.Is<List<Entity>>(e => e.Count == 2),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _storeMock.Verify(x => x.LinkMemoryToEntitiesBatchAsync(
+            memoryId, It.IsAny<Dictionary<Guid, float>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -170,9 +211,8 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(memoryId);
 
         _storeMock
-            .SetupSequence(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(johnEntityId)
-            .ReturnsAsync(msEntityId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = johnEntityId, ["Microsoft"] = msEntityId });
 
         _entityExtractionServiceMock
             .Setup(x => x.ExtractAllAsync(content, It.IsAny<CancellationToken>()))
@@ -392,8 +432,8 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(new List<Memory> { memory });
 
         _storeMock
-            .Setup(x => x.GetEntitiesForMemoryAsync(memoryId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Entity> { entity });
+            .Setup(x => x.GetEntitiesForMemoriesAsync(It.Is<List<Guid>>(ids => ids.Contains(memoryId)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, List<Entity>> { [memoryId] = new List<Entity> { entity } });
 
         // Act
         var results = await _service.SearchMemoriesAsync(query, SearchMode.Semantic, includeEntities: true);
@@ -605,7 +645,8 @@ public class KnowledgeGraphServiceTests
     public async Task ImportFromCoreAsync_WithEntities_ImportsEntities()
     {
         // Arrange
-        var entityId = Guid.CreateVersion7();
+        var johnId = Guid.CreateVersion7();
+        var msId = Guid.CreateVersion7();
         var coreData = new CoreExportData
         {
             Entities = new List<CoreEntity>
@@ -616,15 +657,17 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .Setup(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(entityId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = johnId, ["Microsoft"] = msId });
 
         // Act
         var result = await _service.ImportFromCoreAsync(coreData);
 
         // Assert
         result.EntitiesImported.Should().Be(2);
-        _storeMock.Verify(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _storeMock.Verify(x => x.CreateEntitiesBatchAsync(
+            It.Is<List<Entity>>(e => e.Count == 2),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -649,12 +692,12 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .Setup(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(entityId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = entityId });
 
         _embeddingServiceMock
-            .Setup(x => x.EmbedTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(embedding);
+            .Setup(x => x.EmbedBatchAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<float[]> { embedding, embedding });
 
         _storeMock
             .Setup(x => x.CreateMemoryAsync(It.IsAny<Memory>(), It.IsAny<CancellationToken>()))
@@ -691,20 +734,20 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .SetupSequence(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(johnId)
-            .ReturnsAsync(microsoftId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = johnId, ["Microsoft"] = microsoftId });
 
         // Act
         var result = await _service.ImportFromCoreAsync(coreData);
 
         // Assert
         result.RelationsImported.Should().Be(1);
-        _storeMock.Verify(x => x.CreateRelationshipAsync(
-            It.Is<EntityRelationship>(r =>
-                r.SourceEntityId == johnId &&
-                r.TargetEntityId == microsoftId &&
-                r.RelationshipType == "WORKS_AT"),
+        _storeMock.Verify(x => x.CreateRelationshipsBatchAsync(
+            It.Is<List<EntityRelationship>>(r =>
+                r.Count == 1 &&
+                r[0].SourceEntityId == johnId &&
+                r[0].TargetEntityId == microsoftId &&
+                r[0].RelationshipType == "WORKS_AT"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -727,8 +770,8 @@ public class KnowledgeGraphServiceTests
         };
 
         _storeMock
-            .Setup(x => x.CreateEntityAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(johnId);
+            .Setup(x => x.CreateEntitiesBatchAsync(It.IsAny<List<Entity>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, Guid> { ["John"] = johnId });
 
         // Act
         var result = await _service.ImportFromCoreAsync(coreData);
@@ -765,12 +808,15 @@ public class KnowledgeGraphServiceTests
             .ReturnsAsync(new List<Memory>());
 
         _storeMock
-            .Setup(x => x.GetEntitiesForMemoryAsync(memoryId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Entity> { new() { Id = entityId, Name = "John", EntityType = "PERSON" } });
+            .Setup(x => x.GetEntitiesForMemoriesAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, List<Entity>>
+            {
+                [memoryId] = new List<Entity> { new() { Id = entityId, Name = "John", EntityType = "PERSON" } }
+            });
 
         _storeMock
-            .Setup(x => x.GetRelationshipsForEntityAsync(entityId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<EntityRelationship>());
+            .Setup(x => x.GetRelationshipsForEntitiesAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, List<EntityRelationship>>());
 
         // Act
         var result = await _service.MultiHopSearchAsync(query, hops: 1);

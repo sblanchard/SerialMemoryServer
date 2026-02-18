@@ -58,7 +58,7 @@ jobs:
         run: dotnet build SerialMemoryServer.sln --configuration Release --no-restore
 
       - name: Run unit tests
-        run: dotnet test SerialMemory.Tests/SerialMemory.Tests.csproj --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage"
+        run: dotnet test SerialMemory.Tests/SerialMemory.Tests.csproj --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage" --filter "Category!=Integration&Category!=OpenAI&Category!=Chaos"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

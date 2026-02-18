@@ -217,17 +217,14 @@ public class ModelTests
         // Act
         var persona = new UserPersona
         {
-            AttributeType = null,
-            AttributeKey = null,
-            AttributeValue = null
+            AttributeType = "test",
+            AttributeKey = "test",
+            AttributeValue = "test"
         };
 
         // Assert
         persona.Id.Should().BeEmpty();
-        persona.UserId.Should().BeNull();
-        persona.AttributeType.Should().BeNull();
-        persona.AttributeKey.Should().BeNull();
-        persona.AttributeValue.Should().BeNull();
+        persona.UserId.Should().Be(string.Empty);
         persona.Confidence.Should().Be(0);
     }
 

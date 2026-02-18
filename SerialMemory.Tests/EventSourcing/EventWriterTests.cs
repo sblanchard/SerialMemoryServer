@@ -10,6 +10,7 @@ namespace SerialMemory.Tests.EventSourcing;
 /// Integration tests for the EventWriter service.
 /// Verifies that events are correctly written to memory_events and event_log tables.
 /// </summary>
+[Trait("Category", "Integration")]
 public class EventWriterTests : IAsyncLifetime
 {
     private readonly string _connectionString;

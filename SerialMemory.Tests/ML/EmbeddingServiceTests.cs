@@ -119,10 +119,10 @@ public class EmbeddingServiceTests
     #endregion
 }
 
+[Trait("Category", "Integration")]
 public class OllamaEmbeddingServiceIntegrationTests
 {
     // These tests require a running Ollama service
-    // They are marked with Skip to allow selective running
 
     [Fact]
     public async Task EmbedTextAsync_ReturnsEmbeddingOfCorrectDimension()

@@ -12,6 +12,7 @@ namespace SerialMemory.Tests.Rag;
 /// Unit tests for PersonalizedRagService.
 /// Tests RAG answer generation and memory search functionality.
 /// </summary>
+[Trait("Category", "Integration")]
 public class PersonalizedRagServiceTests : IAsyncLifetime
 {
     private readonly string _connectionString;

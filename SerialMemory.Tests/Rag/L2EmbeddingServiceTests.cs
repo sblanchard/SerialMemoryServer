@@ -12,6 +12,7 @@ namespace SerialMemory.Tests.Rag;
 /// Unit tests for L2EmbeddingService.
 /// Tests L2 embedding indexing, retrieval, and reindexing functionality.
 /// </summary>
+[Trait("Category", "Integration")]
 public class L2EmbeddingServiceTests : IAsyncLifetime
 {
     private readonly string _connectionString;
