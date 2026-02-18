@@ -1,6 +1,9 @@
 using Dapper;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Serialization;
 using SerialMemory.Core.Interfaces;
 using SerialMemory.Core.Services;
 using SerialMemory.Core.Operations;
@@ -3861,6 +3864,350 @@ app.MapPost("/api/power/batch", async (
     return Results.Ok(result);
 });
 
+// ---- LIFECYCLE TOOL ENDPOINTS (forwarded from MCP proxy) ----
+
+// POST /api/power/memory/update - Update memory content with new embedding
+app.MapPost("/api/power/memory/update", async (
+    LifecycleUpdateRequest request,
+    ITenantContext tenantContext,
+    IEmbeddingService embeddingService,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var existing = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        "SELECT id, content, confidence_score FROM memories WHERE id = @Id AND is_active = true",
+        new { Id = request.MemoryId });
+
+    if (existing == null)
+        return Results.NotFound(new { error = "Memory not found or inactive" });
+
+    var embedding = await embeddingService.EmbedTextAsync(request.NewContent);
+    var contentHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request.NewContent)));
+
+    await using var cmd = new NpgsqlCommand(@"
+        UPDATE memories
+        SET content = @Content, embedding = @Embedding, content_hash = @Hash, updated_at = NOW()
+        WHERE id = @Id", conn);
+    cmd.Parameters.AddWithValue("@Content", request.NewContent);
+    cmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+    cmd.Parameters.AddWithValue("@Hash", contentHash);
+    cmd.Parameters.AddWithValue("@Id", request.MemoryId);
+    await cmd.ExecuteNonQueryAsync();
+
+    return Results.Ok(new
+    {
+        memoryId = request.MemoryId,
+        contentHash,
+        reason = request.Reason ?? "updated via lifecycle tool"
+    });
+});
+
+// POST /api/power/memory/delete - Soft delete (invalidate) a memory
+app.MapPost("/api/power/memory/delete", async (
+    LifecycleDeleteRequest request,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var exists = await conn.ExecuteScalarAsync<bool>(
+        "SELECT EXISTS(SELECT 1 FROM memories WHERE id = @Id)", new { Id = request.MemoryId });
+
+    if (!exists)
+        return Results.NotFound(new { error = "Memory not found" });
+
+    await conn.ExecuteAsync(@"
+        UPDATE memories SET is_active = false, merged_into = @SupersededById, updated_at = NOW()
+        WHERE id = @Id",
+        new { Id = request.MemoryId, request.SupersededById });
+
+    return Results.Ok(new
+    {
+        memoryId = request.MemoryId,
+        status = "invalidated",
+        reason = request.Reason
+    });
+});
+
+// POST /api/power/memory/merge - Merge multiple memories into one
+app.MapPost("/api/power/memory/merge", async (
+    LifecycleMergeRequest request,
+    ITenantContext tenantContext,
+    IEmbeddingService embeddingService,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    if (request.SourceMemoryIds == null || request.SourceMemoryIds.Count < 2)
+        return Results.BadRequest(new { error = "At least 2 source memories required" });
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var sourceIds = request.SourceMemoryIds.ToArray();
+    var activeCount = await conn.ExecuteScalarAsync<int>(
+        "SELECT COUNT(*) FROM memories WHERE id = ANY(@Ids) AND is_active = true",
+        new { Ids = sourceIds });
+
+    if (activeCount != sourceIds.Length)
+        return Results.BadRequest(new { error = $"Expected {sourceIds.Length} active memories, found {activeCount}" });
+
+    var embedding = await embeddingService.EmbedTextAsync(request.MergedContent);
+    var contentHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request.MergedContent)));
+    var newId = Guid.CreateVersion7();
+
+    await using var insertCmd = new NpgsqlCommand(@"
+        INSERT INTO memories (id, tenant_id, content, embedding, content_hash, source, is_active, confidence_score, parent_memory_ids, created_at, updated_at)
+        VALUES (@Id, @TenantId, @Content, @Embedding, @Hash, 'merge', true, 1.0, @Parents, NOW(), NOW())", conn);
+    insertCmd.Parameters.AddWithValue("@Id", newId);
+    insertCmd.Parameters.AddWithValue("@TenantId", tenantId);
+    insertCmd.Parameters.AddWithValue("@Content", request.MergedContent);
+    insertCmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+    insertCmd.Parameters.AddWithValue("@Hash", contentHash);
+    insertCmd.Parameters.AddWithValue("@Parents", sourceIds);
+    await insertCmd.ExecuteNonQueryAsync();
+
+    await conn.ExecuteAsync(
+        "UPDATE memories SET is_active = false, merged_into = @NewId, updated_at = NOW() WHERE id = ANY(@Ids)",
+        new { NewId = newId, Ids = sourceIds });
+
+    return Results.Ok(new
+    {
+        newMemoryId = newId,
+        sourceMemoryIds = request.SourceMemoryIds,
+        strategy = request.Strategy ?? "manual"
+    });
+});
+
+// POST /api/power/memory/split - Split a memory into multiple children
+app.MapPost("/api/power/memory/split", async (
+    LifecycleSplitRequest request,
+    ITenantContext tenantContext,
+    IEmbeddingService embeddingService,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    if (request.ChildContents == null || request.ChildContents.Count < 2)
+        return Results.BadRequest(new { error = "At least 2 child contents required" });
+
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var parent = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        "SELECT id, confidence_score FROM memories WHERE id = @Id AND is_active = true",
+        new { Id = request.MemoryId });
+
+    if (parent == null)
+        return Results.NotFound(new { error = "Parent memory not found or inactive" });
+
+    var parentConfidence = (decimal)parent.confidence_score;
+    var parentIds = new[] { request.MemoryId };
+    var childIds = new List<Guid>();
+
+    var embeddings = await embeddingService.EmbedBatchAsync(request.ChildContents);
+
+    for (var i = 0; i < request.ChildContents.Count; i++)
+    {
+        var childId = Guid.CreateVersion7();
+        childIds.Add(childId);
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request.ChildContents[i])));
+
+        await using var childCmd = new NpgsqlCommand(@"
+            INSERT INTO memories (id, tenant_id, content, embedding, content_hash, source, is_active, confidence_score, parent_memory_ids, created_at, updated_at)
+            VALUES (@Id, @TenantId, @Content, @Embedding, @Hash, 'split', true, @Confidence, @Parents, NOW(), NOW())", conn);
+        childCmd.Parameters.AddWithValue("@Id", childId);
+        childCmd.Parameters.AddWithValue("@TenantId", tenantId);
+        childCmd.Parameters.AddWithValue("@Content", request.ChildContents[i]);
+        childCmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embeddings[i]));
+        childCmd.Parameters.AddWithValue("@Hash", hash);
+        childCmd.Parameters.AddWithValue("@Confidence", parentConfidence);
+        childCmd.Parameters.AddWithValue("@Parents", parentIds);
+        await childCmd.ExecuteNonQueryAsync();
+    }
+
+    await conn.ExecuteAsync(
+        "UPDATE memories SET is_active = false, updated_at = NOW() WHERE id = @Id",
+        new { Id = request.MemoryId });
+
+    return Results.Ok(new
+    {
+        parentId = request.MemoryId,
+        childIds,
+        strategy = request.Strategy ?? "manual"
+    });
+});
+
+// POST /api/power/memory/reinforce - Reset decay and boost confidence
+app.MapPost("/api/power/memory/reinforce", async (
+    LifecycleReinforceRequest request,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var existing = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        "SELECT id, confidence_score FROM memories WHERE id = @Id AND is_active = true",
+        new { Id = request.MemoryId });
+
+    if (existing == null)
+        return Results.NotFound(new { error = "Memory not found or inactive" });
+
+    var previousConfidence = (decimal)existing.confidence_score;
+    var newConfidence = request.Confidence ?? 1.0f;
+
+    await conn.ExecuteAsync(
+        "UPDATE memories SET confidence_score = @Confidence, updated_at = NOW() WHERE id = @Id",
+        new { Confidence = newConfidence, Id = request.MemoryId });
+
+    return Results.Ok(new
+    {
+        memoryId = request.MemoryId,
+        previousConfidence,
+        newConfidence,
+        source = request.Source ?? "manual"
+    });
+});
+
+// POST /api/power/memory/expire - Expire a memory (TTL-based inactivation)
+app.MapPost("/api/power/memory/expire", async (
+    LifecycleExpireRequest request,
+    ITenantContext tenantContext,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var exists = await conn.ExecuteScalarAsync<bool>(
+        "SELECT EXISTS(SELECT 1 FROM memories WHERE id = @Id AND is_active = true)",
+        new { Id = request.MemoryId });
+
+    if (!exists)
+        return Results.NotFound(new { error = "Memory not found or already inactive" });
+
+    await conn.ExecuteAsync(
+        "UPDATE memories SET is_active = false, updated_at = NOW() WHERE id = @Id",
+        new { Id = request.MemoryId });
+
+    return Results.Ok(new
+    {
+        memoryId = request.MemoryId,
+        policy = request.Policy ?? "manual",
+        status = "expired"
+    });
+});
+
+// POST /api/power/memory/supersede - Replace a memory with new content
+app.MapPost("/api/power/memory/supersede", async (
+    LifecycleSupersedeRequest request,
+    ITenantContext tenantContext,
+    IEmbeddingService embeddingService,
+    IEntityExtractionService entityExtractionService,
+    IKnowledgeGraphStore store,
+    [FromServices] NpgsqlDataSource dataSource) =>
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    var tenantId = Guid.Parse(tenantContext.TenantId);
+    await conn.SetTenantContextAsync(tenantId);
+
+    var oldMemory = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        "SELECT id, confidence_score FROM memories WHERE id = @Id AND is_active = true",
+        new { Id = request.OldMemoryId });
+
+    if (oldMemory == null)
+        return Results.NotFound(new { error = "Old memory not found or inactive" });
+
+    var embedding = await embeddingService.EmbedTextAsync(request.NewContent);
+    var contentHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request.NewContent)));
+    var newId = Guid.CreateVersion7();
+    var parentIds = new[] { request.OldMemoryId };
+    var oldConfidence = (decimal)oldMemory.confidence_score;
+
+    await using var supersedeCmd = new NpgsqlCommand(@"
+        INSERT INTO memories (id, tenant_id, content, embedding, content_hash, source, is_active, confidence_score, parent_memory_ids, created_at, updated_at)
+        VALUES (@Id, @TenantId, @Content, @Embedding, @Hash, 'supersede', true, @Confidence, @Parents, NOW(), NOW())", conn);
+    supersedeCmd.Parameters.AddWithValue("@Id", newId);
+    supersedeCmd.Parameters.AddWithValue("@TenantId", tenantId);
+    supersedeCmd.Parameters.AddWithValue("@Content", request.NewContent);
+    supersedeCmd.Parameters.AddWithValue("@Embedding", new Pgvector.Vector(embedding));
+    supersedeCmd.Parameters.AddWithValue("@Hash", contentHash);
+    supersedeCmd.Parameters.AddWithValue("@Confidence", oldConfidence);
+    supersedeCmd.Parameters.AddWithValue("@Parents", parentIds);
+    await supersedeCmd.ExecuteNonQueryAsync();
+
+    await conn.ExecuteAsync(
+        "UPDATE memories SET is_active = false, merged_into = @NewId, updated_at = NOW() WHERE id = @OldId",
+        new { NewId = newId, OldId = request.OldMemoryId });
+
+    var entitiesExtracted = 0;
+    if (request.ExtractEntities ?? true)
+    {
+        try
+        {
+            var (entities, relationships) = await entityExtractionService.ExtractAllAsync(request.NewContent);
+            var entitiesToCreate = entities.Select(e => new Entity
+            {
+                Name = e.Text,
+                EntityType = e.Label,
+                CanonicalName = e.Text.ToLowerInvariant(),
+                FirstSeenMemoryId = newId,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["confidence"] = e.Confidence,
+                    ["start"] = e.Start,
+                    ["end"] = e.End
+                }
+            }).ToList();
+
+            var entityIdMap = await store.CreateEntitiesBatchAsync(entitiesToCreate);
+            var entityRelevances = new Dictionary<Guid, float>();
+            foreach (var extracted in entities)
+            {
+                if (entityIdMap.TryGetValue(extracted.Text, out var entityId))
+                    entityRelevances[entityId] = extracted.Confidence;
+            }
+            await store.LinkMemoryToEntitiesBatchAsync(newId, entityRelevances);
+
+            var relationshipsToCreate = new List<EntityRelationship>();
+            foreach (var rel in relationships)
+            {
+                if (entityIdMap.TryGetValue(rel.SourceEntity, out var sourceId) &&
+                    entityIdMap.TryGetValue(rel.TargetEntity, out var targetId))
+                {
+                    relationshipsToCreate.Add(new EntityRelationship
+                    {
+                        SourceEntityId = sourceId,
+                        TargetEntityId = targetId,
+                        RelationshipType = rel.RelationType,
+                        Confidence = rel.Confidence,
+                        FirstSeenMemoryId = newId
+                    });
+                }
+            }
+            await store.CreateRelationshipsBatchAsync(relationshipsToCreate);
+            entitiesExtracted = entities.Count;
+        }
+        catch
+        {
+            // Entity extraction is best-effort; memory is already created
+        }
+    }
+
+    return Results.Ok(new
+    {
+        oldMemoryId = request.OldMemoryId,
+        newMemoryId = newId,
+        entitiesExtracted,
+        reason = request.Reason ?? "superseded via lifecycle tool"
+    });
+});
+
 // ---- CONFLICT OVERLAYS ----
 
 // GET /api/power/conflicts - Get all conflicts for visualization overlay
@@ -5876,6 +6223,51 @@ internal record PrivacyAuditProofRequest(
     DateTimeOffset From,
     DateTimeOffset To,
     string? TenantId = null);
+
+// Lifecycle Tool DTOs (MCP proxy sends snake_case JSON)
+internal record LifecycleUpdateRequest(
+    [property: JsonPropertyName("memory_id")] Guid MemoryId,
+    [property: JsonPropertyName("new_content")] string NewContent,
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleDeleteRequest(
+    [property: JsonPropertyName("memory_id")] Guid MemoryId,
+    [property: JsonPropertyName("reason")] string Reason,
+    [property: JsonPropertyName("superseded_by_id")] Guid? SupersededById = null,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleMergeRequest(
+    [property: JsonPropertyName("source_memory_ids")] List<Guid> SourceMemoryIds,
+    [property: JsonPropertyName("merged_content")] string MergedContent,
+    [property: JsonPropertyName("strategy")] string? Strategy = null,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleSplitRequest(
+    [property: JsonPropertyName("memory_id")] Guid MemoryId,
+    [property: JsonPropertyName("child_contents")] List<string> ChildContents,
+    [property: JsonPropertyName("strategy")] string? Strategy = null,
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleReinforceRequest(
+    [property: JsonPropertyName("memory_id")] Guid MemoryId,
+    [property: JsonPropertyName("confidence")] float? Confidence = 1.0f,
+    [property: JsonPropertyName("source")] string? Source = "manual",
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleExpireRequest(
+    [property: JsonPropertyName("memory_id")] Guid MemoryId,
+    [property: JsonPropertyName("policy")] string? Policy = "manual",
+    [property: JsonPropertyName("ttl_days")] int? TtlDays = null,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
+
+internal record LifecycleSupersedeRequest(
+    [property: JsonPropertyName("old_memory_id")] Guid OldMemoryId,
+    [property: JsonPropertyName("new_content")] string NewContent,
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("extract_entities")] bool? ExtractEntities = true,
+    [property: JsonPropertyName("actor_id")] string? ActorId = null);
 
 // Power User DTOs - NO GUARD RAILS
 internal record RawContentEditRequest(
