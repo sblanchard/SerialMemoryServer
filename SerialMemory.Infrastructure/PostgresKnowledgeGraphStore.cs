@@ -982,6 +982,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         if (entities.Count == 0)
             return new Dictionary<string, Guid>();
 
+        // Deduplicate by (Name, EntityType) to prevent PostgreSQL error:
+        // "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        var deduped = entities
+            .GroupBy(e => (e.Name, e.EntityType))
+            .Select(g => g.First())
+            .ToList();
+
         var tenantId = TenantId;
         var result = new Dictionary<string, Guid>(StringComparer.Ordinal);
 
@@ -995,13 +1002,13 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             RETURNING id, name
             """;
 
-        var ids = entities.Select(_ => Guid.CreateVersion7()).ToArray();
-        var tenantIds = entities.Select(_ => tenantId).ToArray();
-        var names = entities.Select(e => e.Name).ToArray();
-        var entityTypes = entities.Select(e => e.EntityType).ToArray();
-        var canonicalNames = entities.Select(e => e.CanonicalName).ToArray();
-        var firstSeenMemoryIds = entities.Select(e => e.FirstSeenMemoryId).ToArray();
-        var metadatas = entities.Select(e =>
+        var ids = deduped.Select(_ => Guid.CreateVersion7()).ToArray();
+        var tenantIds = deduped.Select(_ => tenantId).ToArray();
+        var names = deduped.Select(e => e.Name).ToArray();
+        var entityTypes = deduped.Select(e => e.EntityType).ToArray();
+        var canonicalNames = deduped.Select(e => e.CanonicalName).ToArray();
+        var firstSeenMemoryIds = deduped.Select(e => e.FirstSeenMemoryId).ToArray();
+        var metadatas = deduped.Select(e =>
             e.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(e.Metadata) : (string?)null).ToArray();
 
         await using var _connLease = await OpenConnectionAsync(cancellationToken);
