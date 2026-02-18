@@ -264,7 +264,7 @@ jobs:
 
   deploy:
     name: Deploy to Homeserver
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, homeserver]
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
@@ -274,37 +274,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create deployment bundle
-        run: git bundle create /tmp/deploy.bundle --all
+      - name: Update deployment repo
+        run: |
+          cd /home/serialcoder/docker/serialmemory
+          git fetch "$GITHUB_WORKSPACE" HEAD:refs/remotes/origin/master
+          git reset --hard origin/master
+          echo "Updated to $(git log --oneline -1)"
 
-      - name: Transfer bundle to homeserver
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOMESERVER_HOST }}
-          username: ${{ secrets.HOMESERVER_USER }}
-          password: ${{ secrets.HOMESERVER_PASSWORD }}
-          source: /tmp/deploy.bundle
-          target: /tmp/
-
-      - name: Pull and rebuild on homeserver
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.HOMESERVER_HOST }}
-          username: ${{ secrets.HOMESERVER_USER }}
-          password: ${{ secrets.HOMESERVER_PASSWORD }}
-          script: |
-            cd /home/serialcoder/docker/serialmemory
-            git fetch /tmp/deploy.bundle HEAD:refs/remotes/origin/master
-            git reset --hard origin/master
-            docker compose -f docker-compose.prod.yml up -d --build api
-            echo "Deployed $(git log --oneline -1)"
+      - name: Rebuild API container
+        run: |
+          cd /home/serialcoder/docker/serialmemory
+          docker compose -f docker-compose.prod.yml up -d --build api
 
       - name: Verify deployment
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.HOMESERVER_HOST }}
-          username: ${{ secrets.HOMESERVER_USER }}
-          password: ${{ secrets.HOMESERVER_PASSWORD }}
-          script: |
-            sleep 10
-            docker ps --format '{{.Names}} {{.Status}}' | grep serialmemory-api
+        run: |
+          sleep 10
+          docker ps --format '{{.Names}} {{.Status}}' | grep serialmemory-api
+          echo "Deploy complete: $(date)"
