@@ -776,11 +776,7 @@
 
     async function subscribeToStreams() {
         try {
-            await connection.invoke("SubscribeToStream", "selfhost.status");
-            await connection.invoke("SubscribeToStream", "selfhost.diagnostics");
-            await connection.invoke("SubscribeToStream", "selfhost.alerts");
-            await connection.invoke("SubscribeToStream", "db.query");
-            await connection.invoke("SubscribeToStream", "system.topology");
+            await connection.invoke("SubscribeSelfHost");
         } catch (err) {
             appendLog(`Subscription error: ${err}`, 'warning');
         }

@@ -152,6 +152,43 @@ public sealed class LiveHub : Hub
     }
 
     /// <summary>
+    /// Subscribe to self-hosted control room streams.
+    /// Workaround: .NET 10 SignalR resolves parameterized hub methods with 0 params.
+    /// </summary>
+    public async Task SubscribeSelfHost()
+    {
+        var streams = new[] { "selfhost.status", "selfhost.diagnostics", "selfhost.alerts", "db.query", "system.topology" };
+        foreach (var stream in streams)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+        }
+        _logger.LogDebug("Client {ConnectionId} subscribed to selfhost streams", Context.ConnectionId);
+        await Clients.Caller.SendAsync("Subscribed", "selfhost.*");
+    }
+
+    /// <summary>
+    /// Subscribe to security anomaly stream.
+    /// </summary>
+    public async Task SubscribeSecurity()
+    {
+        var stream = GetEffectiveStreamName("security.anomalies");
+        await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+        _logger.LogDebug("Client {ConnectionId} subscribed to security stream", Context.ConnectionId);
+        await Clients.Caller.SendAsync("Subscribed", "security.anomalies");
+    }
+
+    /// <summary>
+    /// Subscribe to graph change stream.
+    /// </summary>
+    public async Task SubscribeGraphChanges()
+    {
+        var stream = GetEffectiveStreamName("graph.changes");
+        await Groups.AddToGroupAsync(Context.ConnectionId, stream);
+        _logger.LogDebug("Client {ConnectionId} subscribed to graph changes", Context.ConnectionId);
+        await Clients.Caller.SendAsync("Subscribed", "graph.changes");
+    }
+
+    /// <summary>
     /// Subscribe to all streams at once
     /// </summary>
     public async Task SubscribeAll()
