@@ -181,7 +181,7 @@ public static class SnapshotEndpoints
                 });
             }
         })
-        .WithName("CreateSnapshot")
+        .WithName("CreateWorkspaceSnapshot")
         .WithDescription("Creates a new workspace snapshot");
 
         // =============================================================================
