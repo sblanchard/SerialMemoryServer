@@ -104,13 +104,14 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 // CORS for web frontend and SignalR
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? (Environment.GetEnvironmentVariable("ALLOWED_ORIGINS")?.Split(';', StringSplitOptions.RemoveEmptyEntries))
+    ?? new[] { "http://localhost:3000", "http://localhost:5173" };
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-            ?? new[] { "http://localhost:3000", "http://localhost:5173" };
-        policy.WithOrigins(allowedOrigins)
+        policy.WithOrigins(corsOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials(); // Required for SignalR
