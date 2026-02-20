@@ -107,9 +107,10 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? (Environment.GetEnvironmentVariable("ALLOWED_ORIGINS")?.Split(';', StringSplitOptions.RemoveEmptyEntries))
     ?? new[] { "http://localhost:3000", "http://localhost:5173" };
+const string corsPolicyName = "SerialMemoryCors";
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy =>
+    options.AddPolicy(corsPolicyName, policy =>
     {
         policy.WithOrigins(corsOrigins)
               .AllowAnyMethod()
@@ -506,7 +507,7 @@ app.Use(async (context, next) =>
 });
 
 // Standard CORS middleware for non-preflight requests (adds headers to normal responses)
-app.UseCors();
+app.UseCors(corsPolicyName);
 
 // Panic Switch Middleware - must be early to block requests
 app.Use(async (context, next) =>
@@ -625,9 +626,9 @@ app.MapGet("/health", async () =>
 });
 
 // Map SignalR hubs (RequireCors needed for cross-origin negotiate)
-app.MapHub<ContextHub>("/hub/context").RequireCors();
-app.MapHub<LiveHub>("/hubs/live").RequireCors();
-app.MapHub<ReasoningHub>("/hubs/reasoning").RequireCors();
+app.MapHub<ContextHub>("/hub/context").RequireCors(corsPolicyName);
+app.MapHub<LiveHub>("/hubs/live").RequireCors(corsPolicyName);
+app.MapHub<ReasoningHub>("/hubs/reasoning").RequireCors(corsPolicyName);
 
 // ============================================
 // KNOWLEDGE GRAPH API ENDPOINTS
