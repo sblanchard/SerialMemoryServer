@@ -624,10 +624,10 @@ app.MapGet("/health", async () =>
     return result.IsHealthy ? Results.Ok(result) : Results.StatusCode(503);
 });
 
-// Map SignalR hubs
-app.MapHub<ContextHub>("/hub/context");
-app.MapHub<LiveHub>("/hubs/live");
-app.MapHub<ReasoningHub>("/hubs/reasoning");
+// Map SignalR hubs (RequireCors needed for cross-origin negotiate)
+app.MapHub<ContextHub>("/hub/context").RequireCors();
+app.MapHub<LiveHub>("/hubs/live").RequireCors();
+app.MapHub<ReasoningHub>("/hubs/reasoning").RequireCors();
 
 // ============================================
 // KNOWLEDGE GRAPH API ENDPOINTS
