@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
@@ -217,12 +218,13 @@ public static class WorkspaceEndpoints
 
 // DTOs
 public sealed record CreateWorkspaceRequest(
-    string? Name = null,
-    string? DisplayName = null,
-    string? Description = null,
-    Dictionary<string, object>? Metadata = null);
+    [property: JsonPropertyName("name")] string? Name = null,
+    [property: JsonPropertyName("display_name")] string? DisplayName = null,
+    [property: JsonPropertyName("description")] string? Description = null,
+    [property: JsonPropertyName("metadata")] Dictionary<string, object>? Metadata = null);
 
-public sealed record SwitchWorkspaceRequest(string? WorkspaceId = null);
+public sealed record SwitchWorkspaceRequest(
+    [property: JsonPropertyName("workspace_id")] string? WorkspaceId = null);
 
 public sealed class WorkspaceDto
 {

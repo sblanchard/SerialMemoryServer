@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -372,8 +373,8 @@ public static class McpExportEndpoints
 
 // DTOs
 public sealed record McpExportRequest(
-    string? WorkspaceId = null,
-    int? Limit = null);
+    [property: JsonPropertyName("workspace_id")] string? WorkspaceId = null,
+    [property: JsonPropertyName("limit")] int? Limit = null);
 
 public sealed class MarkdownMemoryDto
 {

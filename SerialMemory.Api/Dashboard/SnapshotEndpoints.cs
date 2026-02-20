@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -311,13 +312,13 @@ public static class SnapshotEndpoints
 
 // DTOs
 public sealed record CreateWorkspaceSnapshotRequest(
-    string? SnapshotName = null,
-    string? WorkspaceId = null,
-    string? SessionId = null,
-    string? Goal = null,
-    string? Constraints = null,
-    string? Memory = null,
-    Dictionary<string, object>? Metadata = null);
+    [property: JsonPropertyName("snapshot_name")] string? SnapshotName = null,
+    [property: JsonPropertyName("workspace_id")] string? WorkspaceId = null,
+    [property: JsonPropertyName("session_id")] string? SessionId = null,
+    [property: JsonPropertyName("goal")] string? Goal = null,
+    [property: JsonPropertyName("constraints")] string? Constraints = null,
+    [property: JsonPropertyName("memory")] string? Memory = null,
+    [property: JsonPropertyName("metadata")] Dictionary<string, object>? Metadata = null);
 
 public sealed class SnapshotDto
 {
