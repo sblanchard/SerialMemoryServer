@@ -123,8 +123,9 @@ public sealed class LiveHub : Hub
     /// Subscribe to a specific stream.
     /// In SaaS mode: streams are automatically tenant-scoped.
     /// In SelfHosted mode: global streams are available.
+    /// Named SubscribeToStream to avoid .NET 10 hub method discovery issues with "Subscribe".
     /// </summary>
-    public async Task Subscribe(string stream)
+    public async Task SubscribeToStream(string stream)
     {
         var effectiveStream = GetEffectiveStreamName(stream);
         await Groups.AddToGroupAsync(Context.ConnectionId, effectiveStream);
@@ -132,6 +133,12 @@ public sealed class LiveHub : Hub
             Context.ConnectionId, stream, effectiveStream);
         await Clients.Caller.SendAsync("Subscribed", stream);
     }
+
+    /// <summary>
+    /// Legacy Subscribe - delegates to SubscribeToStream.
+    /// Kept for backward compatibility with older dashboard clients.
+    /// </summary>
+    public Task Subscribe(string stream) => SubscribeToStream(stream);
 
     /// <summary>
     /// Unsubscribe from a stream

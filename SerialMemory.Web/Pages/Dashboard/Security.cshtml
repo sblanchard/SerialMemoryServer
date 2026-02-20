@@ -279,7 +279,7 @@
         try {
             await connection.start();
             console.log("SignalR connected");
-            await connection.invoke("Subscribe", "security.anomalies");
+            await connection.invoke("SubscribeToStream", "security.anomalies");
             document.getElementById('feedIndicator').classList.add('bg-green-900/300');
             document.getElementById('feedIndicator').classList.remove('bg-cyan');
         } catch (err) {

@@ -540,7 +540,7 @@
         try {
             await signalRConnection.start();
             console.log("SignalR connected for graph updates");
-            await signalRConnection.invoke("Subscribe", "graph.changes");
+            await signalRConnection.invoke("SubscribeToStream", "graph.changes");
         } catch (err) {
             console.error("SignalR connection failed:", err);
         }

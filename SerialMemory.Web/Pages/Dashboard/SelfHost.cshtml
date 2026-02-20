@@ -776,11 +776,11 @@
 
     async function subscribeToStreams() {
         try {
-            await connection.invoke("Subscribe", "selfhost.status");
-            await connection.invoke("Subscribe", "selfhost.diagnostics");
-            await connection.invoke("Subscribe", "selfhost.alerts");
-            await connection.invoke("Subscribe", "db.query");
-            await connection.invoke("Subscribe", "system.topology");
+            await connection.invoke("SubscribeToStream", "selfhost.status");
+            await connection.invoke("SubscribeToStream", "selfhost.diagnostics");
+            await connection.invoke("SubscribeToStream", "selfhost.alerts");
+            await connection.invoke("SubscribeToStream", "db.query");
+            await connection.invoke("SubscribeToStream", "system.topology");
         } catch (err) {
             appendLog(`Subscription error: ${err}`, 'warning');
         }
