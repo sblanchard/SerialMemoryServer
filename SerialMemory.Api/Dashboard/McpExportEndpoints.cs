@@ -62,13 +62,13 @@ public static class McpExportEndpoints
                     """,
                     new { TenantId = tenantId })).ToList();
 
-                var persona = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                var persona = (await conn.QueryAsync<dynamic>(
                     """
-                    SELECT preferences, skills, background, goals
+                    SELECT attribute_type, attribute_key, attribute_value, confidence
                     FROM user_personas WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                    LIMIT 1
+                    ORDER BY attribute_type, attribute_key
                     """,
-                    new { TenantId = tenantId, WorkspaceId = workspaceId });
+                    new { TenantId = tenantId, WorkspaceId = workspaceId })).ToList();
 
                 var export = new
                 {
@@ -231,13 +231,13 @@ public static class McpExportEndpoints
 
             try
             {
-                var persona = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                var personaAttributes = (await conn.QueryAsync<dynamic>(
                     """
-                    SELECT preferences, skills, background, goals
+                    SELECT attribute_type, attribute_key, attribute_value, confidence
                     FROM user_personas WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId
-                    LIMIT 1
+                    ORDER BY attribute_type, attribute_key
                     """,
-                    new { TenantId = tenantId, WorkspaceId = workspaceId });
+                    new { TenantId = tenantId, WorkspaceId = workspaceId })).ToList();
 
                 var memoryCount = await conn.ExecuteScalarAsync<long>(
                     "SELECT COUNT(*) FROM memories WHERE tenant_id = @TenantId AND workspace_id = @WorkspaceId",
@@ -251,7 +251,7 @@ public static class McpExportEndpoints
                 {
                     exported_at = DateTimeOffset.UtcNow,
                     workspace_id = workspaceId,
-                    user_persona = persona,
+                    user_persona = personaAttributes,
                     statistics = new
                     {
                         memory_count = memoryCount,
