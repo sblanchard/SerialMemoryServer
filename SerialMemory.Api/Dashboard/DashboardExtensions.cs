@@ -223,6 +223,9 @@ public static class DashboardExtensions
         app.MapToolAnalyticsEndpoints(selfHostedMode);
         app.MapDedupEndpoints(selfHostedMode);
         app.MapAdminEndpoints(selfHostedMode);
+        app.MapWorkspaceEndpoints(selfHostedMode);
+        app.MapSnapshotEndpoints(selfHostedMode);
+        app.MapMcpExportEndpoints(selfHostedMode);
 
         return app;
     }

@@ -4382,6 +4382,138 @@ app.MapGet("/api/power/trace/{memoryId:guid}", async (
     });
 });
 
+// =============================================================================
+// Query-param observability endpoints (MCP proxy compatible)
+// =============================================================================
+
+// GET /api/power/trace?memory_id= - Query-param version of trace
+app.MapGet("/api/power/trace", async (
+    Guid? memory_id,
+    IPowerUserService powerService) =>
+{
+    if (memory_id == null)
+        return Results.BadRequest(new { error = "memory_id query parameter is required" });
+
+    var trace = await powerService.GetFullTraceAsync(memory_id.Value);
+    return Results.Ok(new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    trace.MemoryId,
+                    trace.Content,
+                    trace.Layer,
+                    trace.Confidence,
+                    trace.IsActive,
+                    trace.ContentHash,
+                    trace.Source,
+                    trace.CreatedAt,
+                    trace.UpdatedAt,
+                    EventCount = trace.Events.Count,
+                    trace.CausalParents,
+                    trace.Descendants,
+                    ConflictCount = trace.Conflicts.Count
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+            }
+        }
+    });
+});
+
+// GET /api/power/lineage?memory_id=&max_depth=&direction= - Lineage via query params
+app.MapGet("/api/power/lineage", async (
+    Guid? memory_id,
+    int? max_depth,
+    string? direction,
+    IPowerUserService powerService) =>
+{
+    if (memory_id == null)
+        return Results.BadRequest(new { error = "memory_id query parameter is required" });
+
+    var trace = await powerService.GetFullTraceAsync(memory_id.Value);
+    var effectiveDirection = direction?.ToLowerInvariant() ?? "both";
+    var effectiveDepth = Math.Clamp(max_depth ?? 3, 1, 10);
+
+    var parents = effectiveDirection is "up" or "both" ? trace.CausalParents : new List<Guid>();
+    var descendants = effectiveDirection is "down" or "both" ? trace.Descendants : new List<Guid>();
+
+    return Results.Ok(new
+    {
+        content = new[]
+        {
+            new
+            {
+                type = "text",
+                text = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    memory_id = trace.MemoryId,
+                    direction = effectiveDirection,
+                    max_depth = effectiveDepth,
+                    causal_parents = parents,
+                    descendants,
+                    total_ancestors = parents.Count,
+                    total_descendants = descendants.Count
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+            }
+        }
+    });
+});
+
+// GET /api/power/explain?memory_id= - Explain a memory's state
+app.MapGet("/api/power/explain", async (
+    Guid? memory_id,
+    IPowerUserService powerService) =>
+{
+    if (memory_id == null)
+        return Results.BadRequest(new { error = "memory_id query parameter is required" });
+
+    var trace = await powerService.GetFullTraceAsync(memory_id.Value);
+
+    var status = trace.IsActive ? "active" : "archived/expired";
+    var sb = new System.Text.StringBuilder();
+    sb.AppendLine($"## Memory Explanation: {trace.MemoryId}");
+    sb.AppendLine();
+    sb.AppendLine($"**Status:** {status}");
+    sb.AppendLine($"**Layer:** {trace.Layer}");
+    sb.AppendLine($"**Confidence:** {trace.Confidence:F3}");
+    sb.AppendLine($"**Created:** {trace.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
+    if (trace.UpdatedAt.HasValue)
+        sb.AppendLine($"**Updated:** {trace.UpdatedAt.Value:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"**Source:** {trace.Source ?? "unknown"}");
+    sb.AppendLine($"**Content Hash:** {trace.ContentHash ?? "none"}");
+    sb.AppendLine();
+    sb.AppendLine($"**Event History:** {trace.Events.Count} events");
+    if (trace.Events.Count > 0)
+    {
+        sb.AppendLine();
+        foreach (var evt in trace.Events.Take(10))
+        {
+            sb.AppendLine($"  - [{evt.Timestamp:yyyy-MM-dd HH:mm}] {evt.EventType}" +
+                $"{(evt.Reason != null ? $" — {evt.Reason}" : "")}");
+        }
+        if (trace.Events.Count > 10)
+            sb.AppendLine($"  ... and {trace.Events.Count - 10} more events");
+    }
+    sb.AppendLine();
+    sb.AppendLine($"**Lineage:** {trace.CausalParents.Count} parents, {trace.Descendants.Count} descendants");
+    sb.AppendLine($"**Conflicts:** {trace.Conflicts.Count} conflict(s)");
+    sb.AppendLine();
+    sb.AppendLine("**Content Preview:**");
+    var preview = trace.Content.Length > 500 ? trace.Content[..500] + "..." : trace.Content;
+    sb.AppendLine(preview);
+
+    return Results.Ok(new
+    {
+        content = new[]
+        {
+            new { type = "text", text = sb.ToString() }
+        }
+    });
+});
+
 // GET /api/power/events/type/{type} - Get raw events by type
 app.MapGet("/api/power/events/type/{eventType}", async (
     string eventType,
