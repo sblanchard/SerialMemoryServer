@@ -150,8 +150,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
 
-                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata, memory_type)
-                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType)
+                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata, memory_type, title, facts, concepts, files_read, files_modified)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType, @Title, @Facts::jsonb, @Concepts::jsonb, @FilesRead::jsonb, @FilesModified::jsonb)
                            """;
 
         await using var _connLease = await OpenConnectionAsync(cancellationToken);
@@ -169,6 +169,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.Add(new NpgsqlParameter("@SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@MemoryType", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.MemoryType ?? "knowledge" });
+        cmd.Parameters.Add(new NpgsqlParameter("@Title", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Title ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Facts", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Facts != null ? System.Text.Json.JsonSerializer.Serialize(memory.Facts) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Concepts", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Concepts != null ? System.Text.Json.JsonSerializer.Serialize(memory.Concepts) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@FilesRead", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.FilesRead != null ? System.Text.Json.JsonSerializer.Serialize(memory.FilesRead) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@FilesModified", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.FilesModified != null ? System.Text.Json.JsonSerializer.Serialize(memory.FilesModified) : DBNull.Value });
 
         try
         {
@@ -875,8 +880,20 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                 : null,
             Similarity = row.similarity,
             Rank = row.rank,
-            MemoryType = row.memory_type ?? "knowledge"
+            MemoryType = row.memory_type ?? "knowledge",
+            Title = row.title,
+            Facts = DeserializeJsonList(row.facts),
+            Concepts = DeserializeJsonList(row.concepts),
+            FilesRead = DeserializeJsonList(row.files_read),
+            FilesModified = DeserializeJsonList(row.files_modified)
         };
+    }
+
+    private static List<string>? DeserializeJsonList(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json); }
+        catch { return null; }
     }
 
     /// <summary>
@@ -895,6 +912,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         public string? memory_type { get; init; } = "knowledge";
         public float similarity { get; init; }
         public float rank { get; init; }
+        // Structured observation fields
+        public string? title { get; init; }
+        public string? facts { get; init; }
+        public string? concepts { get; init; }
+        public string? files_read { get; init; }
+        public string? files_modified { get; init; }
     }
 
     private static Entity MapToEntity(dynamic row)
@@ -1417,6 +1440,92 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
             sql,
             new { SessionId = sessionId, Limit = limit },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
+    // --- Progressive Disclosure Methods (P0 - GAP 2) ---
+
+    public async Task<List<Memory>> GetMemoriesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return [];
+
+        const string sql = """
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text, memory_type,
+                   title, facts::text, concepts::text, files_read::text, files_modified::text
+            FROM memories
+            WHERE id = ANY(@Ids)
+            ORDER BY created_at DESC
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
+            sql,
+            new { Ids = ids.ToArray() },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
+    public async Task<List<Memory>> GetMemoriesAroundAnchorAsync(
+        Guid anchorId, int before = 5, int after = 5, string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        // First get the anchor memory's timestamp
+        const string anchorSql = "SELECT created_at FROM memories WHERE id = @Id";
+
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+
+        var anchorTime = await conn.QuerySingleOrDefaultAsync<DateTime?>(new CommandDefinition(
+            anchorSql, new { Id = anchorId }, cancellationToken: cancellationToken));
+
+        if (anchorTime == null) return [];
+
+        return await GetMemoriesAroundTimestampInternalAsync(conn, anchorTime.Value, before, after, memoryType, cancellationToken);
+    }
+
+    public async Task<List<Memory>> GetMemoriesAroundTimestampAsync(
+        DateTime anchor, int before = 5, int after = 5, string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+        return await GetMemoriesAroundTimestampInternalAsync(conn, anchor, before, after, memoryType, cancellationToken);
+    }
+
+    private static async Task<List<Memory>> GetMemoriesAroundTimestampInternalAsync(
+        NpgsqlConnection conn, DateTime anchor, int before, int after, string? memoryType,
+        CancellationToken cancellationToken)
+    {
+        var typeFilter = memoryType != null ? " AND memory_type = @MemoryType" : "";
+
+        var sql = $"""
+            (SELECT id, content, created_at, updated_at, source,
+                    conversation_session_id, metadata::text, memory_type,
+                    title, facts::text, concepts::text, files_read::text, files_modified::text
+             FROM memories
+             WHERE created_at <= @Anchor{typeFilter}
+             ORDER BY created_at DESC
+             LIMIT @Before)
+            UNION ALL
+            (SELECT id, content, created_at, updated_at, source,
+                    conversation_session_id, metadata::text, memory_type,
+                    title, facts::text, concepts::text, files_read::text, files_modified::text
+             FROM memories
+             WHERE created_at > @Anchor{typeFilter}
+             ORDER BY created_at ASC
+             LIMIT @After)
+            ORDER BY created_at ASC
+            """;
+
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
+            sql,
+            new { Anchor = anchor, Before = before, After = after, MemoryType = memoryType },
             cancellationToken: cancellationToken));
 
         return results.Select(MapToMemory).ToList();

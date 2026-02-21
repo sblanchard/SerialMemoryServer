@@ -293,6 +293,9 @@ RegisterToolCategory(gateway, "goals", ToolDefinitions.GetGoalTools(), new()
     ["goal_complete"] = args => goalHandlers.HandleGoalComplete(args),
 });
 
+// Initialize progressive disclosure tools (P0 - GAP 2)
+var progressiveDisclosureTools = new ProgressiveDisclosureTools(kgService, logger);
+
 // Initialize auto-capture tools
 var autoCaptureTools = new AutoCaptureTools(kgService, logger);
 
@@ -328,6 +331,13 @@ catch (Exception ex)
 
 // Wire up session handlers now that autoCaptureTools and summarizationTools are available
 var sessionToolHandlers = new SessionToolHandlers(kgService, sessionState, autoCaptureTools, summarizationTools, logger);
+
+RegisterToolCategory(gateway, "disclosure", ToolDefinitions.GetProgressiveDisclosureTools(), new()
+{
+    ["memory_search_index"] = args => progressiveDisclosureTools.HandleMemorySearchIndex(args),
+    ["memory_timeline"] = args => progressiveDisclosureTools.HandleMemoryTimeline(args),
+    ["memory_fetch"] = args => progressiveDisclosureTools.HandleMemoryFetch(args),
+});
 
 RegisterToolCategory(gateway, "capture", ToolDefinitions.GetCaptureTools(), new()
 {
@@ -441,11 +451,14 @@ object HandleToolsList()
         var lazyToolNames = new HashSet<string>
         {
             "memory_search", "memory_ingest", "memory_multi_hop_search", "memory_about_user",
-            "initialise_conversation_session", "end_conversation_session"
+            "initialise_conversation_session", "end_conversation_session",
+            "memory_search_index", "memory_timeline", "memory_fetch"
         };
         var lazyTools = coreTools.Where(t => lazyToolNames.Contains(((dynamic)t).name)).ToArray();
+        var pdTools = ToolDefinitions.GetProgressiveDisclosureTools()
+            .Where(t => lazyToolNames.Contains(((dynamic)t).name)).ToArray();
         var gatewayTools = ToolDefinitions.GetGatewayTools();
-        return new { tools = lazyTools.Concat(gatewayTools).ToArray() };
+        return new { tools = lazyTools.Concat(pdTools).Concat(gatewayTools).ToArray() };
     }
 
     return new
@@ -609,6 +622,11 @@ async Task<object> HandleToolsCall(JsonNode? @params)
             "initialise_conversation_session" => await sessionToolHandlers.HandleInitialiseSession(arguments),
             "end_conversation_session" => await sessionToolHandlers.HandleEndSession(),
             "memory_multi_hop_search" => await coreToolHandlers.HandleMultiHopSearch(arguments),
+
+            // Progressive disclosure tools (P0 - GAP 2)
+            "memory_search_index" => await progressiveDisclosureTools.HandleMemorySearchIndex(arguments),
+            "memory_timeline" => await progressiveDisclosureTools.HandleMemoryTimeline(arguments),
+            "memory_fetch" => await progressiveDisclosureTools.HandleMemoryFetch(arguments),
 
             // Gateway meta-tools
             "get_tools" => gateway.HandleGetTools(arguments),
@@ -815,6 +833,10 @@ Task<object>? DispatchTool(string toolName, JsonNode? arguments) => toolName swi
     "snapshot_create" => snapshotTools.HandleSnapshotCreate(arguments),
     "snapshot_list" => snapshotTools.HandleSnapshotList(arguments),
     "snapshot_load" => snapshotTools.HandleSnapshotLoad(arguments),
+    // Progressive disclosure tools
+    "memory_search_index" => progressiveDisclosureTools.HandleMemorySearchIndex(arguments),
+    "memory_timeline" => progressiveDisclosureTools.HandleMemoryTimeline(arguments),
+    "memory_fetch" => progressiveDisclosureTools.HandleMemoryFetch(arguments),
     // Auto-capture tools
     "drain_session_captures" => autoCaptureTools.HandleDrainSessionCaptures(arguments),
     "capture_status" => autoCaptureTools.HandleCaptureStatus(arguments),

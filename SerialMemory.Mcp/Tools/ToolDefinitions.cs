@@ -434,6 +434,63 @@ public static class ToolDefinitions
     ];
 
     /// <summary>
+    /// Progressive disclosure tools (P0 - GAP 2): token-efficient 3-layer search workflow.
+    /// </summary>
+    public static object[] GetProgressiveDisclosureTools() =>
+    [
+        new
+        {
+            name = "memory_search_index",
+            description = "Token-efficient search: returns compact index (~50-80 tokens/result) with IDs, timestamps, titles, scores. Use memory_fetch to get full content for selected results. ~10x fewer tokens than memory_search.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    query = new { type = "string", description = "Search query (natural language)" },
+                    mode = new { type = "string", @enum = new[] { "semantic", "text", "hybrid" }, @default = "hybrid", description = "Search mode" },
+                    limit = new { type = "integer", @default = 20, description = "Maximum results to return" },
+                    threshold = new { type = "number", @default = 0.5, description = "Minimum similarity threshold (0.0-1.0)" },
+                    memory_type = new { type = "string", @enum = new[] { "error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture" }, description = "Filter by memory type" }
+                },
+                required = new[] { "query" }
+            }
+        },
+        new
+        {
+            name = "memory_timeline",
+            description = "Get chronological context around a memory or timestamp. Shows N entries before and after the anchor point. Useful for understanding what happened around a specific event.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    anchor_id = new { type = "string", description = "UUID of memory to center timeline on" },
+                    anchor_time = new { type = "string", description = "ISO timestamp to center timeline on (alternative to anchor_id)" },
+                    depth_before = new { type = "integer", @default = 5, description = "Number of entries before anchor" },
+                    depth_after = new { type = "integer", @default = 5, description = "Number of entries after anchor" },
+                    memory_type = new { type = "string", description = "Filter by memory type" }
+                }
+            }
+        },
+        new
+        {
+            name = "memory_fetch",
+            description = "Batch fetch full memory details by IDs. Returns complete content, entities, structured fields (facts, concepts, files). Use after memory_search_index to get details for selected results.",
+            inputSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    ids = new { type = "array", items = new { type = "string" }, description = "Array of memory UUIDs to fetch (max 50)" },
+                    include_entities = new { type = "boolean", @default = true, description = "Include linked entities" }
+                },
+                required = new[] { "ids" }
+            }
+        }
+    ];
+
+    /// <summary>
     /// Shared context schema fragment for per-call context envelope.
     /// Added as optional property to tool schemas.
     /// </summary>

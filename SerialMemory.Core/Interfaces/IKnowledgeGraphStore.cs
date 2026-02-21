@@ -21,6 +21,11 @@ public interface IMemoryStore
     Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default);
     Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default);
     Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default);
+
+    // Progressive disclosure methods (P0 - GAP 2)
+    Task<List<Memory>> GetMemoriesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesAroundAnchorAsync(Guid anchorId, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesAroundTimestampAsync(DateTime anchor, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
