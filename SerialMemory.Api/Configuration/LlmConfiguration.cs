@@ -9,7 +9,10 @@ namespace SerialMemory.Api.Configuration;
 public static class LlmConfiguration
 {
     /// <summary>
-    /// Adds LLM and embedding services (OpenAI primary, Ollama fallback).
+    /// Adds LLM and embedding services.
+    /// Supports mixed providers via EMBEDDING_PROVIDER env var:
+    ///   - EMBEDDING_PROVIDER=ollama → Ollama for embeddings, OpenAI for chat
+    ///   - (unset) → OpenAI for both if key exists, otherwise Ollama for both
     /// </summary>
     public static IServiceCollection AddLlmServices(
         this IServiceCollection services,
@@ -17,29 +20,55 @@ public static class LlmConfiguration
     {
         var openAiConfig = GetOpenAiConfig(configuration);
         var ollamaConfig = GetOllamaConfig(configuration);
+        var embeddingProvider = configuration["EmbeddingProvider"]
+            ?? Environment.GetEnvironmentVariable("EMBEDDING_PROVIDER");
 
-        if (!string.IsNullOrEmpty(openAiConfig.ApiKey))
+        // Register embedding service
+        if (string.Equals(embeddingProvider, "ollama", StringComparison.OrdinalIgnoreCase))
         {
-            // OpenAI is available - use it as primary
-            Console.WriteLine($"[INFO] Using OpenAI: chat={openAiConfig.ChatModel}, embed={openAiConfig.EmbedModel}");
-
+            Console.WriteLine($"[INFO] Embeddings: Ollama ({ollamaConfig.EmbedModel}, {ollamaConfig.EmbeddingDimension}d) at {ollamaConfig.BaseUrl}");
+            services.AddSingleton<IEmbeddingService>(_ =>
+                new OllamaEmbeddingService(ollamaConfig.BaseUrl, ollamaConfig.EmbedModel, ollamaConfig.EmbeddingDimension));
+        }
+        else if (!string.IsNullOrEmpty(openAiConfig.ApiKey))
+        {
+            Console.WriteLine($"[INFO] Embeddings: OpenAI ({openAiConfig.EmbedModel})");
             var openAiClient = new OpenAiClient(
                 apiKey: openAiConfig.ApiKey,
                 chatModel: openAiConfig.ChatModel,
                 embedModel: openAiConfig.EmbedModel,
                 embeddingDimension: openAiConfig.EmbeddingDimension);
-
             services.AddSingleton<IEmbeddingService>(openAiClient);
-            services.AddSingleton<ILlmService>(openAiClient);
             services.AddSingleton(openAiClient);
         }
         else
         {
-            // Fallback to Ollama
-            Console.WriteLine($"[INFO] Using Ollama: embed={ollamaConfig.EmbedModel}, llm={ollamaConfig.LlmModel} at {ollamaConfig.BaseUrl}");
-
+            Console.WriteLine($"[INFO] Embeddings: Ollama ({ollamaConfig.EmbedModel}, {ollamaConfig.EmbeddingDimension}d) at {ollamaConfig.BaseUrl}");
             services.AddSingleton<IEmbeddingService>(_ =>
                 new OllamaEmbeddingService(ollamaConfig.BaseUrl, ollamaConfig.EmbedModel, ollamaConfig.EmbeddingDimension));
+        }
+
+        // Register chat/LLM service
+        if (!string.IsNullOrEmpty(openAiConfig.ApiKey))
+        {
+            // Reuse existing OpenAiClient singleton if registered, otherwise create one for chat only
+            services.AddSingleton<ILlmService>(sp =>
+            {
+                var existing = sp.GetService<OpenAiClient>();
+                if (existing is not null)
+                    return existing;
+
+                Console.WriteLine($"[INFO] Chat: OpenAI ({openAiConfig.ChatModel})");
+                return new OpenAiClient(
+                    apiKey: openAiConfig.ApiKey,
+                    chatModel: openAiConfig.ChatModel,
+                    embedModel: openAiConfig.EmbedModel,
+                    embeddingDimension: openAiConfig.EmbeddingDimension);
+            });
+        }
+        else
+        {
+            Console.WriteLine($"[INFO] Chat: Ollama ({ollamaConfig.LlmModel}) at {ollamaConfig.BaseUrl}");
             services.AddSingleton<ILlmService>(_ =>
                 new OllamaLlmService(ollamaConfig.BaseUrl, ollamaConfig.LlmModel));
         }

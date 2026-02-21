@@ -1,7 +1,7 @@
 import { useCallback, useRef, useMemo, useEffect } from 'react';
 import ForceGraph3DLib from 'react-force-graph-3d';
 import type { ForceGraphNode, ForceGraphLink } from '../../types/graph';
-import { ENTITY_COLORS, NODE_TYPE_COLORS, LINK_TYPE_COLORS } from '../../types/graph';
+import { ENTITY_COLORS, LINK_TYPE_COLORS } from '../../types/graph';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';

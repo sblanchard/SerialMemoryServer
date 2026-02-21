@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { askMyMemory, getRagHistory, getRagStats, searchRagMemories } from '../lib/api';
-import type { RagAnswerRequest, RagAnswerResponse, RagHistoryResponse, RagStats, RagSearchResponse } from '../types/rag';
+import type { RagAnswerRequest, RagAnswerResponse, RagHistoryResponse, RagStats } from '../types/rag';
 
 export interface UseRagOptions {
   includeL1?: boolean;

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Send, Sparkles, Clock, ChevronDown, ChevronUp, X, Brain, Layers } from 'lucide-react';
+import { MessageCircle, Sparkles, Clock, ChevronDown, ChevronUp, X, Brain, Layers } from 'lucide-react';
 import { useRag } from '../../hooks/useRag';
 import type { RetrievedMemory } from '../../types/rag';
 
@@ -21,7 +21,7 @@ export function AskMyMemory({ isExpanded = true, onToggle }: AskMyMemoryProps) {
     ask,
     clearResponse,
     history,
-    isLoadingHistory,
+    isLoadingHistory: _isLoadingHistory,
   } = useRag({
     maxMemories: 5,
     includeL1: true,
