@@ -29,12 +29,18 @@ public class OllamaEmbeddingService(
 
     public int EmbeddingDimension => embeddingDimension;
 
+    // Approximate max characters for the model's context window.
+    // mxbai-embed-large: 512 tokens (~2000 chars), nomic-embed-text: 8192 tokens (~32000 chars)
+    private const int MaxChars = 2000;
+
     public async Task<float[]> EmbedTextAsync(string text, CancellationToken cancellationToken = default)
     {
+        var truncated = text.Length > MaxChars ? text[..MaxChars] : text;
+
         var request = new OllamaEmbedRequest
         {
             Model = model,
-            Prompt = text
+            Prompt = truncated
         };
 
         var response = await _httpClient.PostAsJsonAsync("/api/embeddings", request, cancellationToken);
