@@ -23,7 +23,7 @@ function AppContent() {
     hops: 2,
   });
 
-  // Fetch memories for sidebar
+  // Fetch memories for sidebar (auto-refresh every 10s when showing recent)
   const { data: memories, isLoading: memoriesLoading } = useQuery({
     queryKey: ['memories', searchQuery, searchMode],
     queryFn: async () => {
@@ -32,6 +32,7 @@ function AppContent() {
       }
       return fetchRecentMemories(20);
     },
+    refetchInterval: searchQuery ? false : 10000,
   });
 
   // Filter nodes based on active filters
