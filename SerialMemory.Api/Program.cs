@@ -943,7 +943,15 @@ app.MapPost("/api/memories", async (MemoryIngestRequest request, KnowledgeGraphS
             request.Source,
             request.SessionId,
             metadataWithHash,
-            request.ExtractEntities ?? true);
+            request.ExtractEntities ?? true,
+            request.DedupMode ?? "warn",
+            request.DedupThreshold ?? 0.85f,
+            request.MemoryType,
+            request.Title,
+            request.Facts,
+            request.Concepts,
+            request.FilesRead,
+            request.FilesModified);
 
         // Run contradiction detection against similar memories
         var memory = await store.GetMemoryByIdAsync(result.MemoryId);
@@ -6641,7 +6649,15 @@ internal record MemoryIngestRequest(
     string? Source = null,
     Guid? SessionId = null,
     Dictionary<string, object>? Metadata = null,
-    bool? ExtractEntities = true);
+    bool? ExtractEntities = true,
+    string? DedupMode = "warn",
+    float? DedupThreshold = 0.85f,
+    string? MemoryType = null,
+    string? Title = null,
+    List<string>? Facts = null,
+    List<string>? Concepts = null,
+    List<string>? FilesRead = null,
+    List<string>? FilesModified = null);
 
 internal record UserPersonaRequest(
     string AttributeType,
