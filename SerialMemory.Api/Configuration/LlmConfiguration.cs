@@ -83,10 +83,19 @@ public static class LlmConfiguration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var extractionServiceUrl = configuration["ExtractionServiceUrl"]
+        var openAiConfig = GetOpenAiConfig(configuration);
+        var ollamaConfig = GetOllamaConfig(configuration);
+
+        var httpServiceUrl = configuration["ExtractionServiceUrl"]
             ?? Environment.GetEnvironmentVariable("EXTRACTION_SERVICE_URL");
 
-        var entityExtractionService = EntityExtractionServiceFactory.Create(extractionServiceUrl);
+        var entityExtractionService = EntityExtractionServiceFactory.Create(
+            openAiApiKey: openAiConfig.ApiKey,
+            openAiEntityModel: openAiConfig.ChatModel,
+            ollamaUrl: ollamaConfig.BaseUrl,
+            ollamaModel: ollamaConfig.LlmModel,
+            httpServiceUrl: httpServiceUrl);
+
         Console.WriteLine($"[INFO] Entity extraction: {entityExtractionService.GetType().Name}");
 
         services.AddSingleton<IEntityExtractionService>(_ => entityExtractionService);
