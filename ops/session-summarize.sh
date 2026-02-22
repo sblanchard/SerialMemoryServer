@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
-# session-summarize.sh - Summarize session activity via SerialMemory HTTP API
-# Reads capture status from API and outputs structured summary text
+# session-summarize.sh - Query capture status through MCP HTTP transport
+# Sends JSON-RPC to MCP at localhost:4545, which forwards to the API
+# The MCP client already has the API key — no extra env vars needed
 # Usage: bash ops/session-summarize.sh <precompact|session_end>
 set -euo pipefail
 
 TRIGGER="${1:-session_end}"
 
-# SerialMemory API endpoint
-API_URL="${SERIALMEMORY_ENDPOINT:-http://localhost:5000}"
-API_KEY="${SERIALMEMORY_API_KEY:-}"
+# MCP HTTP transport (always localhost, started alongside stdio)
+MCP_URL="${MCP_HTTP_URL:-http://localhost:4545}/mcp"
+MCP_TOKEN="${MCP_HTTP_TOKEN:-}"
 
-# Build auth header
-AUTH_OPTS=""
-if [ -n "$API_KEY" ]; then
-    AUTH_OPTS="-H \"Authorization: Bearer $API_KEY\""
-fi
+# JSON-RPC payload for capture_status tool
+JSONRPC='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"capture_status","arguments":{}}}'
 
-# Fetch capture status from API
-STATUS=""
+# Call MCP HTTP transport
+RESPONSE=""
 if command -v curl &>/dev/null; then
-    STATUS=$(curl -s -m 5 "${API_URL}/api/captures/status" \
-        -H "Accept: application/json" \
-        ${API_KEY:+-H "Authorization: Bearer $API_KEY"} 2>/dev/null || echo "")
+    RESPONSE=$(curl -s -m 5 -X POST "$MCP_URL" \
+        -H "Content-Type: application/json" \
+        ${MCP_TOKEN:+-H "Authorization: Bearer $MCP_TOKEN"} \
+        -d "$JSONRPC" 2>/dev/null || echo "")
 elif command -v wget &>/dev/null; then
-    STATUS=$(wget -q -O - --timeout=5 \
-        --header="Accept: application/json" \
-        ${API_KEY:+--header="Authorization: Bearer $API_KEY"} \
-        "${API_URL}/api/captures/status" 2>/dev/null || echo "")
+    RESPONSE=$(wget -q -O - --timeout=5 \
+        --header="Content-Type: application/json" \
+        ${MCP_TOKEN:+--header="Authorization: Bearer $MCP_TOKEN"} \
+        --post-data="$JSONRPC" "$MCP_URL" 2>/dev/null || echo "")
 fi
 
-# Parse capture status
+# Parse the MCP response — result.content[0].text contains the API response
 TOTAL_UNDRAINED=0
 SESSION_COUNT=0
-if [ -n "$STATUS" ] && command -v jq &>/dev/null; then
-    TOTAL_UNDRAINED=$(echo "$STATUS" | jq -r '.totalUndrained // 0' 2>/dev/null || echo "0")
-    SESSION_COUNT=$(echo "$STATUS" | jq -r '.sessions | length // 0' 2>/dev/null || echo "0")
+if [ -n "$RESPONSE" ] && command -v jq &>/dev/null; then
+    # Extract the text payload from MCP JSON-RPC response
+    STATUS=$(echo "$RESPONSE" | jq -r '.result.content[0].text // ""' 2>/dev/null || echo "")
+    if [ -n "$STATUS" ]; then
+        TOTAL_UNDRAINED=$(echo "$STATUS" | jq -r '.totalUndrained // 0' 2>/dev/null || echo "0")
+        SESSION_COUNT=$(echo "$STATUS" | jq -r '.sessions | length // 0' 2>/dev/null || echo "0")
+    fi
 fi
 
 echo ""
