@@ -1529,7 +1529,7 @@ app.MapPost("/api/summarize/session", async (SessionSummarizeRequest request, Kn
         if (memories.Count == 0)
             return Results.Ok(new { summary = "", memoryCount = 0, message = $"No memories found for session {sessionId}" });
 
-        var content = BuildMemoryContentForSummary(memories);
+        var content = SummarizationHelpers.BuildMemoryContentForSummary(memories);
         var summary = await llmService.ChatAsync(content,
             "Summarize the following session memories into a concise, actionable summary. Focus on key decisions, problems solved, and next steps. Format as structured markdown under 500 words.",
             temperature: 0.3f, maxTokens: 1000);
@@ -1580,7 +1580,7 @@ app.MapPost("/api/summarize/context", async (ContextSummarizeRequest? request, K
         if (memories.Count == 0)
             return Results.Ok(new { summary = "", memoryCount = 0, message = $"No memories found in the last {hoursBack} hours" });
 
-        var content = BuildMemoryContentForSummary(memories);
+        var content = SummarizationHelpers.BuildMemoryContentForSummary(memories);
         var summary = await llmService.ChatAsync(content,
             "Summarize the following recent memories into a concise context briefing. Focus on current work state, decisions, and blockers. Format as structured markdown under 300 words.",
             temperature: 0.3f, maxTokens: 600);
@@ -6926,20 +6926,22 @@ internal class InMemoryContextStore : IContextStore
         Task.FromResult<IEnumerable<string>>(_store.Keys);
 }
 
-// Helper for summarization endpoints
-static string BuildMemoryContentForSummary(List<SerialMemory.Core.Models.Memory> memories)
+internal static class SummarizationHelpers
 {
-    var sb = new StringBuilder();
-    sb.AppendLine("# Session Memories");
-    sb.AppendLine();
-    foreach (var memory in memories.OrderBy(m => m.CreatedAt))
+    public static string BuildMemoryContentForSummary(List<SerialMemory.Core.Models.Memory> memories)
     {
-        sb.AppendLine($"## [{memory.CreatedAt:yyyy-MM-dd HH:mm}] ({memory.MemoryType ?? "knowledge"})");
-        if (!string.IsNullOrEmpty(memory.Source))
-            sb.AppendLine($"Source: {memory.Source}");
+        var sb = new StringBuilder();
+        sb.AppendLine("# Session Memories");
         sb.AppendLine();
-        sb.AppendLine(memory.Content.Length > 500 ? memory.Content[..500] + "..." : memory.Content);
-        sb.AppendLine();
+        foreach (var memory in memories.OrderBy(m => m.CreatedAt))
+        {
+            sb.AppendLine($"## [{memory.CreatedAt:yyyy-MM-dd HH:mm}] ({memory.MemoryType ?? "knowledge"})");
+            if (!string.IsNullOrEmpty(memory.Source))
+                sb.AppendLine($"Source: {memory.Source}");
+            sb.AppendLine();
+            sb.AppendLine(memory.Content.Length > 500 ? memory.Content[..500] + "..." : memory.Content);
+            sb.AppendLine();
+        }
+        return sb.ToString();
     }
-    return sb.ToString();
 }
