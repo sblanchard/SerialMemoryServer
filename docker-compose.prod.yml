@@ -173,9 +173,10 @@ services:
       - RabbitMq__User=${RABBITMQ_USER}
       - RabbitMq__Password=${RABBITMQ_PASSWORD}
       - RabbitMq__VHost=serialmemory
-      # Embeddings
+      # Embeddings & LLM
       - OLLAMA_BASE_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_EMBEDDING_MODEL=${OLLAMA_MODEL:-nomic-embed-text}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:3b}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
       - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}
@@ -315,9 +316,10 @@ services:
       - RabbitMq__User=${RABBITMQ_USER}
       - RabbitMq__Password=${RABBITMQ_PASSWORD}
       - RabbitMq__VHost=serialmemory
-      # Embeddings
+      # Embeddings & LLM
       - OLLAMA_BASE_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_EMBEDDING_MODEL=${OLLAMA_MODEL:-nomic-embed-text}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:3b}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
       - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL:-text-embedding-3-small}

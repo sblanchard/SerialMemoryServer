@@ -590,7 +590,7 @@ Configure with:
 
 ## Technology Stack
 
-- **.NET 9.0** with C# 12
+- **.NET 10.0** with C# 13
 - **PostgreSQL** with pgvector extension
 - **Npgsql** + **Dapper** for data access
 - **sentence-transformers** (via HTTP) for embeddings
@@ -872,6 +872,17 @@ For automatic memory integration, add to your `.claude/settings.json`:
 - ✅ Connection pooling
 - ✅ Optimistic concurrency control
 - ✅ Restart-safe background workers
+
+## Hooks Compliance
+
+**ALWAYS follow hook instructions.** When hooks fire (SessionStart, PreCompact, Stop, etc.), they provide context and instructions. Do NOT ignore them. Specifically:
+
+- **SessionStart hooks**: Initialize conversation session and instantiate context as instructed
+- **PreCompact hooks**: Save critical context to memory before compaction
+- **Stop/SessionEnd hooks**: Ingest important session insights into memory
+- **PostToolUse hooks**: Follow any formatting or validation instructions
+
+Hook output is authoritative. Treat it as user instructions.
 
 ## Memory Protocol
 
