@@ -556,9 +556,10 @@
             }
         }
 
-        // Format date
+        // Format date (normalize UTC timestamps without Z suffix)
         function formatDate(dateStr) {
-            const date = new Date(dateStr);
+            const normalized = dateStr && !dateStr.endsWith('Z') ? dateStr + 'Z' : dateStr;
+            const date = new Date(normalized);
             return date.toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'short',
@@ -694,7 +695,7 @@
             try {
                 const token = window.dashboardConfig?.signalRToken || '';
                 layerSignalRConnection = new signalR.HubConnectionBuilder()
-                    .withUrl(`${window.dashboardConfig?.apiBaseUrl || ''}/live?access_token=${token}`)
+                    .withUrl(`${window.dashboardConfig?.apiBaseUrl || ''}/hubs/live?access_token=${token}`)
                     .withAutomaticReconnect()
                     .build();
 
@@ -842,10 +843,105 @@
             }
         }
 
+        // Real-time memory streaming via SignalR
+        let memorySignalRConnection = null;
+
+        async function connectMemorySignalR() {
+            try {
+                const config = window.dashboardConfig || {};
+                const token = config.signalRToken || '';
+                const hubUrl = (config.apiBaseUrl || '') + '/hubs/live';
+
+                memorySignalRConnection = new signalR.HubConnectionBuilder()
+                    .withUrl(`${hubUrl}?access_token=${token}`)
+                    .withAutomaticReconnect()
+                    .configureLogging(signalR.LogLevel.Warning)
+                    .build();
+
+                memorySignalRConnection.on('MemoryEvent', (evt) => {
+                    if (evt.eventType !== 'created') return;
+                    if (currentQuery) return; // Don't inject during search
+
+                    const memory = {
+                        id: evt.memoryId,
+                        content: evt.payload?.content || evt.payload?.content_preview || '',
+                        createdAt: evt.timestamp,
+                        entities: evt.payload?.entities || [],
+                        similarity: 0
+                    };
+
+                    const list = document.getElementById('memories-list');
+                    const emptyState = document.getElementById('empty-state');
+                    emptyState.classList.add('hidden');
+
+                    const card = document.createElement('div');
+                    card.innerHTML = renderMemoryCard(memory);
+                    card.firstElementChild.style.borderColor = 'var(--cyan)';
+                    card.firstElementChild.style.boxShadow = '0 0 20px rgba(34, 211, 238, 0.15)';
+                    list.insertBefore(card.firstElementChild, list.firstChild);
+
+                    // Fade highlight after 2s
+                    setTimeout(() => {
+                        const inserted = list.firstElementChild;
+                        if (inserted) {
+                            inserted.style.borderColor = '';
+                            inserted.style.boxShadow = '';
+                        }
+                    }, 2000);
+
+                    // Update total count
+                    const countEl = document.getElementById('total-count');
+                    countEl.textContent = parseInt(countEl.textContent || '0') + 1;
+                });
+
+                memorySignalRConnection.onreconnected(() => {
+                    subscribeMemoryStreams();
+                    updateLiveIndicator(true);
+                });
+                memorySignalRConnection.onclose(() => updateLiveIndicator(false));
+
+                await memorySignalRConnection.start();
+                await subscribeMemoryStreams();
+                updateLiveIndicator(true);
+            } catch (err) {
+                console.error('[Memories] SignalR connection failed:', err);
+                updateLiveIndicator(false);
+            }
+        }
+
+        async function subscribeMemoryStreams() {
+            if (!memorySignalRConnection) return;
+            try {
+                await memorySignalRConnection.invoke('SubscribeMemoryEvents');
+            } catch {
+                try {
+                    await memorySignalRConnection.invoke('SubscribeToStream', 'events.all');
+                } catch {}
+            }
+        }
+
+        function updateLiveIndicator(connected) {
+            let indicator = document.getElementById('live-indicator');
+            if (!indicator) {
+                const header = document.querySelector('h1.gradient-text');
+                if (!header) return;
+                indicator = document.createElement('span');
+                indicator.id = 'live-indicator';
+                indicator.style.cssText = 'font-size:0.7rem;margin-left:0.5rem;vertical-align:middle;';
+                header.parentElement.appendChild(indicator);
+            }
+            if (connected) {
+                indicator.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#34d399;animation:pulse 2s infinite;margin-right:4px;vertical-align:middle;"></span><span style="color:#34d399;vertical-align:middle;">LIVE</span>';
+            } else {
+                indicator.innerHTML = '';
+            }
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', async () => {
             await fetchStats();
             await searchMemories('', currentMode, 0);
+            connectMemorySignalR();
 
             // Layer panel buttons
             document.getElementById('btn-refresh-layers').addEventListener('click', fetchLayerStatus);
