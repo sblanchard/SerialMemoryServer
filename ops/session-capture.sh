@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# session-capture.sh - POST tool activity to SerialMemory API over HTTP
+# session-capture.sh - POST tool activity through MCP HTTP transport
 # Called from PostToolUse hooks for Write/Edit/Bash
-# Reads tool result JSON from stdin, POSTs to /api/captures/entry
-# Designed for <100ms execution time — single HTTP POST, no MCP calls
+# Reads tool result JSON from stdin, sends JSON-RPC to MCP at localhost:4545
+# The MCP client already has the API key — no extra env vars needed
+# Designed for <100ms execution time — single HTTP POST, fire-and-forget
 set -euo pipefail
 
-# SerialMemory API endpoint (set via env or default to localhost)
-API_URL="${SERIALMEMORY_ENDPOINT:-http://localhost:5000}"
-API_KEY="${SERIALMEMORY_API_KEY:-}"
+# MCP HTTP transport (always localhost, started alongside stdio)
+MCP_URL="${MCP_HTTP_URL:-http://localhost:4545}/mcp"
+MCP_TOKEN="${MCP_HTTP_TOKEN:-}"
 
 # Session ID from Claude Code env var, fallback to date-based
 SESSION_ID="${CLAUDE_SESSION_ID:-$(date +%Y%m%d)}"
@@ -38,38 +39,42 @@ else
     RESULT=""
 fi
 
-# Timestamp in ISO 8601
-TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-# Build JSON payload
+# Build JSON-RPC payload for MCP tools/call
 if command -v jq &>/dev/null; then
     PAYLOAD=$(jq -nc \
         --arg sid "$SESSION_ID" \
-        --arg ts "$TS" \
         --arg tool "$TOOL_NAME" \
         --arg file "$FILE_PATH" \
         --arg result "$RESULT" \
-        '{session_id: $sid, ts: $ts, tool: $tool, file: $file, result: $result}')
+        '{
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+                name: "capture_entry",
+                arguments: {
+                    session_id: $sid,
+                    tool: $tool,
+                    file: $file,
+                    result: $result
+                }
+            }
+        }')
 else
-    PAYLOAD="{\"session_id\":\"$SESSION_ID\",\"ts\":\"$TS\",\"tool\":\"$TOOL_NAME\",\"file\":\"$FILE_PATH\",\"result\":\"\"}"
+    PAYLOAD="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"capture_entry\",\"arguments\":{\"session_id\":\"$SESSION_ID\",\"tool\":\"$TOOL_NAME\",\"file\":\"$FILE_PATH\",\"result\":\"\"}}}"
 fi
 
-# POST to API (fire-and-forget with timeout)
-AUTH_HEADER=""
-if [ -n "$API_KEY" ]; then
-    AUTH_HEADER="-H \"Authorization: Bearer $API_KEY\""
-fi
-
+# POST to MCP HTTP transport (fire-and-forget with 2s timeout)
 if command -v curl &>/dev/null; then
-    curl -s -m 2 -X POST "${API_URL}/api/captures/entry" \
+    curl -s -m 2 -X POST "$MCP_URL" \
         -H "Content-Type: application/json" \
-        ${API_KEY:+-H "Authorization: Bearer $API_KEY"} \
+        ${MCP_TOKEN:+-H "Authorization: Bearer $MCP_TOKEN"} \
         -d "$PAYLOAD" > /dev/null 2>&1 || true
 elif command -v wget &>/dev/null; then
-    echo "$PAYLOAD" | wget -q -O /dev/null --timeout=2 \
+    wget -q -O /dev/null --timeout=2 \
         --header="Content-Type: application/json" \
-        ${API_KEY:+--header="Authorization: Bearer $API_KEY"} \
-        --post-data="$PAYLOAD" "${API_URL}/api/captures/entry" 2>/dev/null || true
+        ${MCP_TOKEN:+--header="Authorization: Bearer $MCP_TOKEN"} \
+        --post-data="$PAYLOAD" "$MCP_URL" 2>/dev/null || true
 fi
 
 echo "Activity captured"
