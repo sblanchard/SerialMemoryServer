@@ -1347,6 +1347,372 @@ app.MapPost("/api/import/core", async (CoreExportData coreData, KnowledgeGraphSe
 });
 
 // ============================================
+// PROGRESSIVE DISCLOSURE API ENDPOINTS
+// ============================================
+
+// Token-efficient compact search index (~50-80 tokens/result vs 500+)
+app.MapGet("/api/memories/search-index", async (
+    string query,
+    string? mode,
+    int? limit,
+    float? threshold,
+    string? memory_type,
+    KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var searchMode = mode?.ToLower() switch
+        {
+            "semantic" => SearchMode.Semantic,
+            "text" => SearchMode.Text,
+            _ => SearchMode.Hybrid
+        };
+
+        var result = await kgService.SearchMemoriesCompactAsync(
+            query,
+            searchMode,
+            limit ?? 20,
+            threshold ?? 0.5f,
+            memory_type);
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Chronological navigation around an anchor point
+app.MapGet("/api/memories/timeline", async (
+    Guid? anchor_id,
+    string? anchor_time,
+    int? depth_before,
+    int? depth_after,
+    string? memory_type,
+    KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        DateTime? anchorTime = null;
+        if (!string.IsNullOrEmpty(anchor_time) && DateTime.TryParse(anchor_time, out var parsed))
+            anchorTime = parsed.ToUniversalTime();
+
+        var result = await kgService.GetTimelineAsync(
+            anchor_id,
+            anchorTime,
+            depth_before ?? 5,
+            depth_after ?? 5,
+            memory_type);
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Batch fetch full memory details by IDs
+app.MapPost("/api/memories/fetch", async (MemoryFetchRequest request, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        if (request.Ids == null || request.Ids.Count == 0)
+            return Results.BadRequest(new { error = "At least one memory ID is required" });
+
+        if (request.Ids.Count > 50)
+            return Results.BadRequest(new { error = "Maximum 50 memories can be fetched at once" });
+
+        var results = await kgService.FetchMemoriesByIdsAsync(
+            request.Ids,
+            request.IncludeEntities ?? true);
+
+        return Results.Ok(results);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// ============================================
+// GOAL MANAGEMENT API ENDPOINTS
+// ============================================
+
+// Set or update a goal
+app.MapPost("/api/goals", async (GoalSetRequest request, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(request.Key))
+            return Results.BadRequest(new { error = "key is required" });
+        if (string.IsNullOrWhiteSpace(request.Description))
+            return Results.BadRequest(new { error = "description is required" });
+
+        var priority = Math.Clamp(request.Priority ?? 1.0f, 0.1f, 1f);
+        await kgService.SetGoalAsync(request.Key, request.Description, priority, request.UserId ?? "default_user");
+        return Results.Ok(new { key = request.Key, priority, status = "set" });
+    }
+    catch (Npgsql.PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        return Results.Problem(detail: "User persona schema not available. Run workspace scoping migration.", statusCode: 503);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// List active goals
+app.MapGet("/api/goals", async (string? userId, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var goals = await kgService.GetActiveGoalsAsync(userId ?? "default_user");
+        var mapped = goals.Select(g => new
+        {
+            key = g.AttributeKey,
+            description = g.AttributeValue,
+            priority = g.Confidence,
+            priorityLabel = g.Confidence >= 0.8f ? "HIGH" : g.Confidence >= 0.5f ? "MEDIUM" : "LOW",
+            updatedAt = g.UpdatedAt
+        });
+        return Results.Ok(mapped);
+    }
+    catch (Npgsql.PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Complete a goal
+app.MapPost("/api/goals/{key}/complete", async (string key, string? userId, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        await kgService.CompleteGoalAsync(key, userId ?? "default_user");
+        return Results.Ok(new { key, status = "completed" });
+    }
+    catch (Npgsql.PostgresException ex) when (ex.SqlState is "42P01" or "42703")
+    {
+        return Results.Problem(detail: "User persona schema not available. Run workspace scoping migration.", statusCode: 503);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// ============================================
+// SUMMARIZATION API ENDPOINTS
+// ============================================
+
+// Summarize all memories from a session using LLM
+app.MapPost("/api/summarize/session", async (SessionSummarizeRequest request, KnowledgeGraphService kgService, ILlmService llmService) =>
+{
+    try
+    {
+        if (!Guid.TryParse(request.SessionId, out var sessionId))
+            return Results.BadRequest(new { error = "Valid session_id is required" });
+
+        var maxMemories = Math.Clamp(request.MaxMemories ?? 100, 1, 500);
+        var memories = await kgService.GetMemoriesBySessionAsync(sessionId, maxMemories);
+
+        if (!(request.IncludeAutoCaptures ?? true))
+            memories = memories.Where(m => m.MemoryType != "auto_capture").ToList();
+
+        if (memories.Count == 0)
+            return Results.Ok(new { summary = "", memoryCount = 0, message = $"No memories found for session {sessionId}" });
+
+        var content = BuildMemoryContentForSummary(memories);
+        var summary = await llmService.ChatAsync(content,
+            "Summarize the following session memories into a concise, actionable summary. Focus on key decisions, problems solved, and next steps. Format as structured markdown under 500 words.",
+            temperature: 0.3f, maxTokens: 1000);
+
+        if (request.StoreSummary ?? true)
+        {
+            await kgService.IngestMemoryAsync(
+                content: summary,
+                source: "summarization",
+                sessionId: sessionId,
+                metadata: new Dictionary<string, object>
+                {
+                    ["memory_type"] = "session_summary",
+                    ["summarized_memory_count"] = memories.Count,
+                    ["llm_provider"] = llmService.ProviderName,
+                    ["llm_model"] = llmService.ModelName
+                },
+                extractEntities: true,
+                memoryType: "session_summary");
+        }
+
+        return Results.Ok(new
+        {
+            summary,
+            memoryCount = memories.Count,
+            stored = request.StoreSummary ?? true,
+            llmProvider = llmService.ProviderName,
+            llmModel = llmService.ModelName
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Summarize recent context (for PreCompact or manual use)
+app.MapPost("/api/summarize/context", async (ContextSummarizeRequest? request, KnowledgeGraphService kgService, ILlmService llmService) =>
+{
+    try
+    {
+        var hoursBack = Math.Clamp(request?.HoursBack ?? 4, 1, 72);
+        var maxMemories = Math.Clamp(request?.MaxMemories ?? 50, 1, 200);
+        var fromUtc = DateTime.UtcNow.AddHours(-hoursBack);
+
+        var memories = await kgService.GetMemoriesByDateRangeAsync(fromUtc, DateTime.UtcNow, maxMemories);
+
+        if (memories.Count == 0)
+            return Results.Ok(new { summary = "", memoryCount = 0, message = $"No memories found in the last {hoursBack} hours" });
+
+        var content = BuildMemoryContentForSummary(memories);
+        var summary = await llmService.ChatAsync(content,
+            "Summarize the following recent memories into a concise context briefing. Focus on current work state, decisions, and blockers. Format as structured markdown under 300 words.",
+            temperature: 0.3f, maxTokens: 600);
+
+        if (request?.StoreSummary ?? true)
+        {
+            await kgService.IngestMemoryAsync(
+                content: summary,
+                source: "summarization",
+                metadata: new Dictionary<string, object>
+                {
+                    ["memory_type"] = "session_summary",
+                    ["hours_back"] = hoursBack,
+                    ["summarized_memory_count"] = memories.Count,
+                    ["llm_provider"] = llmService.ProviderName,
+                    ["llm_model"] = llmService.ModelName
+                },
+                extractEntities: true,
+                memoryType: "session_summary");
+        }
+
+        return Results.Ok(new
+        {
+            summary,
+            hoursBack,
+            memoryCount = memories.Count,
+            stored = request?.StoreSummary ?? true,
+            llmProvider = llmService.ProviderName,
+            llmModel = llmService.ModelName
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// ============================================
+// AUTO-CAPTURE API ENDPOINTS (server-side DB storage)
+// ============================================
+
+// POST capture entries to the server (replaces local JSONL file writes)
+app.MapPost("/api/captures", async (CaptureIngestRequest request, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        if (request.Entries == null || request.Entries.Count == 0)
+            return Results.BadRequest(new { error = "At least one entry is required" });
+
+        if (request.Entries.Count > 1000)
+            return Results.BadRequest(new { error = "Maximum 1000 entries per request" });
+
+        var captures = request.Entries.Select(e => new SessionCapture
+        {
+            SessionId = request.SessionId ?? e.SessionId,
+            Ts = e.Ts ?? DateTime.UtcNow,
+            Tool = e.Tool,
+            File = e.File,
+            Result = e.Result,
+            RawJson = e.RawJson
+        }).ToList();
+
+        var count = await kgService.StoreCapturesBatchAsync(captures);
+        return Results.Ok(new { stored = count, sessionId = request.SessionId });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// POST a single capture entry (convenience endpoint)
+app.MapPost("/api/captures/entry", async (CaptureEntryRequest entry, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var capture = new SessionCapture
+        {
+            SessionId = entry.SessionId,
+            Ts = entry.Ts ?? DateTime.UtcNow,
+            Tool = entry.Tool,
+            File = entry.File,
+            Result = entry.Result,
+            RawJson = entry.RawJson
+        };
+
+        var id = await kgService.StoreCaptureAsync(capture);
+        return Results.Ok(new { id, stored = true });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Check capture buffer status (reads from DB)
+app.MapGet("/api/captures/status", async (KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var status = await kgService.GetCaptureStatusAsync();
+        return Results.Ok(status);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Drain staged captures into memories (reads from DB, marks drained)
+app.MapPost("/api/captures/drain", async (
+    string? session_id,
+    int? max_entries,
+    bool? dry_run,
+    KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var result = await kgService.DrainCapturesAsync(
+            sessionId: session_id,
+            maxEntries: max_entries ?? 500,
+            dryRun: dry_run ?? false);
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// ============================================
 // USAGE & BILLING API ENDPOINTS
 // ============================================
 
@@ -6480,6 +6846,43 @@ internal record SelfHealingTriggerRequest(
 internal record HealingDismissRequest(
     string? Reason = null);
 
+// Progressive disclosure DTOs
+internal record MemoryFetchRequest(
+    List<Guid> Ids,
+    bool? IncludeEntities = true);
+
+// Goal management DTOs
+internal record GoalSetRequest(
+    string Key,
+    string Description,
+    float? Priority = 1.0f,
+    string? UserId = null);
+
+// Summarization DTOs
+internal record SessionSummarizeRequest(
+    string SessionId,
+    bool? IncludeAutoCaptures = true,
+    int? MaxMemories = 100,
+    bool? StoreSummary = true);
+
+internal record ContextSummarizeRequest(
+    int? HoursBack = 4,
+    int? MaxMemories = 50,
+    bool? StoreSummary = true);
+
+// Capture DTOs (server-side DB storage)
+internal record CaptureIngestRequest(
+    string? SessionId,
+    List<CaptureEntryRequest> Entries);
+
+internal record CaptureEntryRequest(
+    string? SessionId = null,
+    DateTime? Ts = null,
+    string? Tool = null,
+    string? File = null,
+    string? Result = null,
+    Dictionary<string, object>? RawJson = null);
+
 // Mutation state holder for tracking pause/resume state (thread-safe)
 internal class MutationStateHolder
 {
@@ -6521,4 +6924,22 @@ internal class InMemoryContextStore : IContextStore
 
     public Task<IEnumerable<string>> ListKeysAsync(CancellationToken ct = default) =>
         Task.FromResult<IEnumerable<string>>(_store.Keys);
+}
+
+// Helper for summarization endpoints
+static string BuildMemoryContentForSummary(List<SerialMemory.Core.Models.Memory> memories)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("# Session Memories");
+    sb.AppendLine();
+    foreach (var memory in memories.OrderBy(m => m.CreatedAt))
+    {
+        sb.AppendLine($"## [{memory.CreatedAt:yyyy-MM-dd HH:mm}] ({memory.MemoryType ?? "knowledge"})");
+        if (!string.IsNullOrEmpty(memory.Source))
+            sb.AppendLine($"Source: {memory.Source}");
+        sb.AppendLine();
+        sb.AppendLine(memory.Content.Length > 500 ? memory.Content[..500] + "..." : memory.Content);
+        sb.AppendLine();
+    }
+    return sb.ToString();
 }

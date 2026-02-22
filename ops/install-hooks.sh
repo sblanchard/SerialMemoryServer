@@ -35,7 +35,7 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo && echo 'POST-COMPACTION CONTEXT RELOAD' && echo && echo 'REQUIRED: Call these MCP tools to restore context:' && echo '  1. mcp__serialmemory-memory__instantiate_context with project_or_subject for the current project' && echo '  2. mcp__serialmemory-memory__memory_search for specific topics if needed' && echo && echo 'This will reload pre-compaction findings from SerialMemory.' && echo"
+          "command": "echo && echo 'POST-COMPACTION CONTEXT RELOAD' && echo && echo 'REQUIRED: Call these MCP tools to restore context:' && echo '  1. mcp__serialmemory-memory__instantiate_context with project_or_subject for the current project' && echo '  2. mcp__serialmemory-memory__memory_search_index for token-efficient search (then memory_fetch for details)' && echo && echo 'Progressive disclosure workflow: search_index → timeline → fetch (saves ~10x tokens)' && echo"
         }
       ]
     },
@@ -44,7 +44,7 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
       "hooks": [
         {
           "type": "command",
-          "command": "echo 'CLAUDE: Call mcp__serialmemory-memory__initialise_conversation_session and mcp__serialmemory-memory__instantiate_context for project context'"
+          "command": "echo 'CLAUDE: Call mcp__serialmemory-memory__initialise_conversation_session and mcp__serialmemory-memory__instantiate_context for project context. For token-efficient search use memory_search_index → memory_timeline → memory_fetch workflow.'"
         }
       ]
     }
@@ -90,10 +90,20 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
     { "matcher": "mcp__serialmemory-memory__initialise_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Starting session...'" }] },
     { "matcher": "mcp__serialmemory-memory__end_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Ending session...'" }] },
     { "matcher": "mcp__serialmemory-memory__instantiate_context",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Loading context...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_search_index",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Compact search...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_timeline",      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Loading timeline...'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_fetch",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Fetching memories...'" }] },
     { "matcher": "mcp__serialmemory-memory__get_tools_in_category", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Browsing tools...'" }] },
     { "matcher": "mcp__serialmemory-memory__execute_tool",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Executing tool...'" }] },
     { "matcher": "mcp__serialmemory-memory__memory_lineage",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory lineage...'" }] },
     { "matcher": "mcp__serialmemory-memory__memory_trace",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tracing memory...'" }] },
+    { "matcher": "mcp__serialmemory-memory__drain_session_captures", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Draining captures...'" }] },
+    { "matcher": "mcp__serialmemory-memory__capture_status",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Checking captures...'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_set",             "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Setting goal...'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_list",            "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Listing goals...'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_complete",        "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Completing goal...'" }] },
+    { "matcher": "mcp__serialmemory-memory__summarize_session",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Summarizing session...'" }] },
+    { "matcher": "mcp__serialmemory-memory__summarize_context",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Summarizing context...'" }] },
     { "matcher": "Write", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Writing file...'" }] },
     { "matcher": "Edit",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Editing file...'" }] },
     { "matcher": "Bash",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Running command...'" }] }
@@ -106,10 +116,20 @@ read -r -d '' HOOKS_JSON << 'HOOKS_EOF' || true
     { "matcher": "mcp__serialmemory-memory__initialise_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Session started'" }] },
     { "matcher": "mcp__serialmemory-memory__end_conversation_session", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Session ended'" }] },
     { "matcher": "mcp__serialmemory-memory__instantiate_context",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Context loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_search_index",  "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Index search complete'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_timeline",      "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Timeline loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__memory_fetch",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Memories fetched'" }] },
     { "matcher": "mcp__serialmemory-memory__get_tools_in_category", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tools listed'" }] },
     { "matcher": "mcp__serialmemory-memory__execute_tool",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Tool executed'" }] },
     { "matcher": "mcp__serialmemory-memory__memory_lineage",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Lineage traced'" }] },
     { "matcher": "mcp__serialmemory-memory__memory_trace",         "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Memory traced'" }] },
+    { "matcher": "mcp__serialmemory-memory__drain_session_captures", "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Captures drained'" }] },
+    { "matcher": "mcp__serialmemory-memory__capture_status",       "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Capture status loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_set",             "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Goal set'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_list",            "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Goals loaded'" }] },
+    { "matcher": "mcp__serialmemory-memory__goal_complete",        "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Goal completed'" }] },
+    { "matcher": "mcp__serialmemory-memory__summarize_session",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Session summarized'" }] },
+    { "matcher": "mcp__serialmemory-memory__summarize_context",    "hooks": [{ "type": "command", "command": "cat > /dev/null; echo 'Context summarized'" }] },
     { "matcher": "Write", "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] },
     { "matcher": "Edit",  "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] },
     { "matcher": "Bash",  "hooks": [{ "type": "command", "command": "bash ~/Projects/SerialMemoryServer/ops/session-capture.sh" }] }
@@ -201,10 +221,10 @@ echo "  Stop              - Response complete indicator"
 echo "  SubagentStop      - Subagent completion indicator"
 echo ""
 echo "MCP tool prefix: mcp__serialmemory-memory__"
-echo "Tool coverage: 12 matchers (8 core + execute_tool + get_tools_in_category + memory_lineage + memory_trace)"
-echo "Gateway tools (42+) are covered by the execute_tool matcher."
-echo "New Phase 1-3 tools (drain_session_captures, capture_status, summarize_session, summarize_context)"
-echo "are accessible via execute_tool gateway."
+echo "Tool coverage: 23 matchers (8 core + 3 disclosure + 3 goals + 2 captures + 2 summarization + 5 meta/observability)"
+echo "Progressive disclosure: memory_search_index, memory_timeline, memory_fetch (saves ~10x tokens)"
+echo "Captures: POST to HTTP API (no local filesystem) — drain_session_captures, capture_status"
+echo "Gateway tools (50+) are covered by the execute_tool matcher."
 echo ""
 echo "Note: This only installs SerialMemory hooks."
 echo "      Your existing non-hook settings are preserved."

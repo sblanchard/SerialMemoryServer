@@ -21,6 +21,11 @@ public interface IMemoryStore
     Task<List<Memory>> GetMemoriesByDateRangeAsync(DateTime fromUtc, DateTime toUtc, int limit = 100, CancellationToken cancellationToken = default);
     Task<List<Memory>> SearchMemoriesByEmbeddingInDateRangeAsync(float[] queryEmbedding, DateTime fromUtc, DateTime toUtc, float threshold = 0.3f, int limit = 50, CancellationToken cancellationToken = default);
     Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default);
+
+    // Progressive disclosure methods (P0 - GAP 2)
+    Task<List<Memory>> GetMemoriesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesAroundAnchorAsync(Guid anchorId, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default);
+    Task<List<Memory>> GetMemoriesAroundTimestampAsync(DateTime anchor, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -97,10 +102,44 @@ public interface IWorkspaceStore
 }
 
 /// <summary>
+/// Server-side session capture staging operations.
+/// Captures are received over HTTP, stored in DB, then drained into memories.
+/// </summary>
+public interface ICaptureStore
+{
+    Task<Guid> InsertCaptureAsync(SessionCapture capture, CancellationToken ct = default);
+    Task<int> InsertCapturesBatchAsync(List<SessionCapture> captures, CancellationToken ct = default);
+    Task<List<SessionCapture>> GetUndrainedCapturesAsync(string? sessionId = null, int limit = 5000, CancellationToken ct = default);
+    Task<int> MarkCapturesDrainedAsync(List<Guid> captureIds, CancellationToken ct = default);
+    Task<CaptureStatusResult> GetCaptureStatusAsync(CancellationToken ct = default);
+}
+
+/// <summary>
+/// Capture buffer status summary.
+/// </summary>
+public class CaptureStatusResult
+{
+    public int TotalUndrained { get; set; }
+    public int TotalDrained { get; set; }
+    public List<CaptureSessionSummary> Sessions { get; set; } = [];
+}
+
+/// <summary>
+/// Per-session capture summary.
+/// </summary>
+public class CaptureSessionSummary
+{
+    public string? SessionId { get; set; }
+    public int EntryCount { get; set; }
+    public DateTime? FirstTs { get; set; }
+    public DateTime? LastTs { get; set; }
+}
+
+/// <summary>
 /// Composite repository interface for knowledge graph operations.
 /// Inherits from focused sub-interfaces for backward compatibility.
 /// </summary>
-public interface IKnowledgeGraphStore : IMemoryStore, IEntityStore, IRelationshipStore, IUserProfileStore, ISessionStore, IStatisticsStore, IWorkspaceStore
+public interface IKnowledgeGraphStore : IMemoryStore, IEntityStore, IRelationshipStore, IUserProfileStore, ISessionStore, IStatisticsStore, IWorkspaceStore, ICaptureStore
 {
     Task<IAsyncDisposable> BeginUnitOfWorkAsync(CancellationToken cancellationToken = default);
 }

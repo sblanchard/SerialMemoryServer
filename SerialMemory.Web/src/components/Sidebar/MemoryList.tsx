@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Clock } from 'lucide-react';
 import type { SearchMemory } from '../../types/graph';
 import { getEntityColor } from '../../types/graph';
@@ -28,6 +29,60 @@ function truncate(text: string, maxLength: number): string {
 }
 
 export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: MemoryListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [knownIds, setKnownIds] = useState<Set<string>>(new Set());
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [userScrolled, setUserScrolled] = useState(false);
+  const isInitialLoad = useRef(true);
+
+  // Track which memories are new
+  useEffect(() => {
+    if (!memories.length) return;
+
+    const currentIds = new Set(memories.map(m => m.id));
+
+    if (isInitialLoad.current) {
+      // First load — mark everything as known, nothing is "new"
+      setKnownIds(currentIds);
+      isInitialLoad.current = false;
+      return;
+    }
+
+    const freshIds = new Set<string>();
+    for (const id of currentIds) {
+      if (!knownIds.has(id)) {
+        freshIds.add(id);
+      }
+    }
+
+    if (freshIds.size > 0) {
+      setNewIds(freshIds);
+      setKnownIds(currentIds);
+
+      // Auto-scroll to top if user hasn't scrolled away
+      if (!userScrolled && listRef.current) {
+        listRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      // Clear "new" highlight after animation completes
+      const timer = setTimeout(() => setNewIds(new Set()), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [memories]);
+
+  // Detect manual scrolling
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      setUserScrolled(el.scrollTop > 20);
+    };
+
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -55,10 +110,27 @@ export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: M
 
   return (
     <div className="space-y-3">
-      <h3 className="panel-header">{title}</h3>
-      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+      <div className="flex items-center justify-between">
+        <h3 className="panel-header">{title}</h3>
+        {newIds.size > 0 && (
+          <span className="text-xs text-cyan animate-pulse">
+            +{newIds.size} new
+          </span>
+        )}
+      </div>
+      <div
+        ref={listRef}
+        className="space-y-2 max-h-[400px] overflow-y-auto pr-1"
+      >
         {memories.map(memory => (
-          <div key={memory.id} className="memory-item">
+          <div
+            key={memory.id}
+            className={`memory-item transition-all duration-500 ${
+              newIds.has(memory.id)
+                ? 'memory-item-new'
+                : ''
+            }`}
+          >
             <p className="text-sm text-soft-white/90 mb-2 leading-relaxed">
               {truncate(memory.content, 100)}
             </p>

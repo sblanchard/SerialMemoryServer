@@ -32,19 +32,24 @@ public static class CoreToolDefinitions
         new
         {
             name = "memory_ingest",
-            description = "Add a new memory (episode) to the knowledge graph. Automatically extracts entities, relationships, and generates embeddings.",
+            description = "Add a new memory (episode) to the knowledge graph. Automatically extracts entities, relationships, and generates embeddings. Content inside <private>...</private> tags is automatically stripped before storage.",
             inputSchema = new
             {
                 type = "object",
                 properties = new
                 {
-                    content = new { type = "string", description = "Memory content to store" },
+                    content = new { type = "string", description = "Memory content to store. Content inside <private>...</private> tags is automatically stripped." },
                     source = new { type = "string", description = "Source of the memory (e.g., 'claude-desktop', 'cursor')" },
                     metadata = new { type = "object", description = "Additional metadata (tags, importance, etc.)" },
                     extract_entities = new { type = "boolean", @default = true, description = "Whether to extract entities and relationships" },
                     dedup_mode = new { type = "string", @enum = new[] { "warn", "skip", "append", "off" }, @default = "warn", description = "Dedup mode: warn (create+report), skip (reject if dup), append (merge into existing), off (no check)" },
                     dedup_threshold = new { type = "number", @default = 0.85, description = "Similarity threshold for duplicate detection (0.0-1.0)" },
-                    memory_type = new { type = "string", @enum = new[] { "error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture" }, @default = "knowledge", description = "Memory type for categorization and filtered retrieval" }
+                    memory_type = new { type = "string", @enum = new[] { "error", "decision", "pattern", "learning", "knowledge", "session_summary", "auto_capture" }, @default = "knowledge", description = "Memory type for categorization and filtered retrieval" },
+                    title = new { type = "string", description = "Short title/summary (auto-generated from first line if omitted)" },
+                    facts = new { type = "array", items = new { type = "string" }, description = "Structured factual points extracted from the observation" },
+                    concepts = new { type = "array", items = new { type = "string" }, description = "Categorization tags: how-it-works, why-it-exists, what-changed, problem-solution, gotcha, pattern, trade-off" },
+                    files_read = new { type = "array", items = new { type = "string" }, description = "Files read during this observation" },
+                    files_modified = new { type = "array", items = new { type = "string" }, description = "Files modified during this observation" }
                 },
                 required = new[] { "content" }
             }

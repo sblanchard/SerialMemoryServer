@@ -30,8 +30,18 @@ public class KnowledgeGraphService(
         string dedupMode = "warn",
         float dedupThreshold = 0.85f,
         string? memoryType = null,
+        string? title = null,
+        List<string>? facts = null,
+        List<string>? concepts = null,
+        List<string>? filesRead = null,
+        List<string>? filesModified = null,
         CancellationToken cancellationToken = default)
     {
+        // Strip <private> tags before any processing (P2 - GAP 6)
+        content = StripPrivateTags(content);
+        if (string.IsNullOrWhiteSpace(content))
+            throw new ArgumentException("Content is empty after removing private tags");
+
         // Generate embedding
         var embedding = await _embeddingService.EmbedTextAsync(content, cancellationToken);
 
@@ -108,7 +118,7 @@ public class KnowledgeGraphService(
             ?? (metadata?.TryGetValue("memory_type", out var mtVal) == true ? mtVal?.ToString() : null)
             ?? "knowledge";
 
-        // Create memory
+        // Create memory with structured observation fields
         var memory = new Memory
         {
             Content = content,
@@ -116,7 +126,12 @@ public class KnowledgeGraphService(
             Source = source,
             ConversationSessionId = sessionId,
             Metadata = metadata,
-            MemoryType = resolvedMemoryType
+            MemoryType = resolvedMemoryType,
+            Title = title ?? ExtractTitleFromContent(content),
+            Facts = facts,
+            Concepts = concepts,
+            FilesRead = filesRead,
+            FilesModified = filesModified
         };
 
         // Extract entities/relationships in parallel with entity extraction (before UoW)
@@ -694,6 +709,181 @@ public class KnowledgeGraphService(
 
     #endregion
 
+    #region Progressive Disclosure (P0 - GAP 2)
+
+    /// <summary>
+    /// Search memories returning only compact index results (ID, timestamp, type, title, similarity, entity count).
+    /// ~50-80 tokens per result vs ~500+ for full content. Use memory_fetch to get full details.
+    /// </summary>
+    public async Task<CompactSearchResult> SearchMemoriesCompactAsync(
+        string query,
+        SearchMode mode = SearchMode.Hybrid,
+        int limit = 20,
+        float threshold = 0.5f,
+        string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        var results = await SearchMemoriesAsync(query, mode, limit, threshold, true, memoryType, cancellationToken);
+
+        var compactResults = results.Select(r => new CompactMemoryEntry
+        {
+            Id = r.Id,
+            CreatedAt = r.CreatedAt,
+            MemoryType = r.Source ?? "knowledge",
+            Title = ExtractTitleFromContent(r.Content),
+            Similarity = r.Similarity > 0 ? r.Similarity : r.Rank,
+            EntityCount = r.Entities.Count,
+            ContentLength = r.Content.Length,
+            EstimatedTokens = EstimateTokens(r.Content)
+        }).ToList();
+
+        var totalFullTokens = compactResults.Sum(r => r.EstimatedTokens);
+        var indexTokens = compactResults.Sum(r => EstimateTokens($"{r.Id} {r.CreatedAt:O} {r.Title} {r.Similarity:F3}"));
+
+        return new CompactSearchResult
+        {
+            Results = compactResults,
+            TotalResults = compactResults.Count,
+            Meta = new SearchMeta
+            {
+                IndexTokens = indexTokens,
+                FullFetchTokens = totalFullTokens,
+                TokenSavingsPercent = totalFullTokens > 0 ? (int)((1.0 - (float)indexTokens / totalFullTokens) * 100) : 0
+            }
+        };
+    }
+
+    /// <summary>
+    /// Batch-fetch full memory details by IDs. Step 3 of progressive disclosure.
+    /// </summary>
+    public async Task<List<MemorySearchResult>> FetchMemoriesByIdsAsync(
+        List<Guid> ids,
+        bool includeEntities = true,
+        CancellationToken cancellationToken = default)
+    {
+        var memories = await _store.GetMemoriesByIdsAsync(ids, cancellationToken);
+
+        var results = memories.Select(m => new MemorySearchResult
+        {
+            Id = m.Id,
+            Content = m.Content,
+            CreatedAt = m.CreatedAt,
+            Source = m.Source,
+            MemoryType = m.MemoryType,
+            Title = m.Title,
+            Facts = m.Facts,
+            Concepts = m.Concepts,
+            FilesRead = m.FilesRead,
+            FilesModified = m.FilesModified,
+            EstimatedTokens = EstimateTokens(m.Content),
+            Entities = []
+        }).ToList();
+
+        if (includeEntities && results.Count > 0)
+        {
+            var memoryIds = results.Select(r => r.Id).ToList();
+            var entitiesByMemory = await _store.GetEntitiesForMemoriesAsync(memoryIds, cancellationToken);
+            foreach (var result in results)
+            {
+                if (entitiesByMemory.TryGetValue(result.Id, out var entities))
+                {
+                    result.Entities = entities.Select(e => new EntityInfo
+                    {
+                        Id = e.Id,
+                        Name = e.Name,
+                        Type = e.EntityType
+                    }).ToList();
+                }
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Get chronological timeline around an anchor point.
+    /// </summary>
+    public async Task<TimelineResult> GetTimelineAsync(
+        Guid? anchorId = null,
+        DateTime? anchorTime = null,
+        int before = 5,
+        int after = 5,
+        string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        List<Memory> memories;
+
+        if (anchorId.HasValue)
+        {
+            memories = await _store.GetMemoriesAroundAnchorAsync(anchorId.Value, before, after, memoryType, cancellationToken);
+        }
+        else if (anchorTime.HasValue)
+        {
+            memories = await _store.GetMemoriesAroundTimestampAsync(anchorTime.Value, before, after, memoryType, cancellationToken);
+        }
+        else
+        {
+            memories = await _store.GetRecentMemoriesAsync(before + after, cancellationToken);
+        }
+
+        return new TimelineResult
+        {
+            AnchorId = anchorId,
+            AnchorTime = anchorTime ?? memories.FirstOrDefault()?.CreatedAt,
+            Entries = memories.Select(m => new CompactMemoryEntry
+            {
+                Id = m.Id,
+                CreatedAt = m.CreatedAt,
+                MemoryType = m.MemoryType,
+                Title = m.Title ?? ExtractTitleFromContent(m.Content),
+                Similarity = 0,
+                EntityCount = 0,
+                ContentLength = m.Content.Length,
+                EstimatedTokens = EstimateTokens(m.Content)
+            }).ToList(),
+            TotalEntries = memories.Count
+        };
+    }
+
+    #endregion
+
+    #region Privacy Tag Support (P2 - GAP 6)
+
+    /// <summary>
+    /// Strip &lt;private&gt;...&lt;/private&gt; tags from content before storage.
+    /// </summary>
+    public static string StripPrivateTags(string content)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(
+            content,
+            @"<private>.*?</private>",
+            "",
+            System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Trim();
+    }
+
+    #endregion
+
+    #region Helpers
+
+    private static string ExtractTitleFromContent(string content)
+    {
+        var newlinePos = content.IndexOf('\n');
+        if (newlinePos > 0 && newlinePos <= 120)
+            return content[..newlinePos].Trim();
+        return content.Length > 100 ? content[..100].Trim() + "..." : content.Trim();
+    }
+
+    /// <summary>
+    /// Estimate token count from character count (rough: chars / 4).
+    /// </summary>
+    public static int EstimateTokens(string text)
+    {
+        return (text.Length + 3) / 4;
+    }
+
+    #endregion
+
     #region User Persona Operations
 
     /// <summary>
@@ -788,6 +978,180 @@ public class KnowledgeGraphService(
         CancellationToken cancellationToken = default)
     {
         await SetUserPersonaAttributeAsync("goal", key, "[COMPLETED]", 0f, userId, cancellationToken: cancellationToken);
+    }
+
+    #endregion
+
+    #region Capture Operations
+
+    /// <summary>
+    /// Store a capture entry server-side.
+    /// </summary>
+    public async Task<Guid> StoreCaptureAsync(
+        SessionCapture capture,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.InsertCaptureAsync(capture, cancellationToken);
+    }
+
+    /// <summary>
+    /// Store a batch of capture entries server-side.
+    /// </summary>
+    public async Task<int> StoreCapturesBatchAsync(
+        List<SessionCapture> captures,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.InsertCapturesBatchAsync(captures, cancellationToken);
+    }
+
+    /// <summary>
+    /// Get capture buffer status.
+    /// </summary>
+    public async Task<CaptureStatusResult> GetCaptureStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetCaptureStatusAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Drain undrained captures into memories. Groups consecutive entries by tool type.
+    /// Returns number of memories created.
+    /// </summary>
+    public async Task<CaptureDrainResult> DrainCapturesAsync(
+        string? sessionId = null,
+        int maxEntries = 500,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default)
+    {
+        var captures = await _store.GetUndrainedCapturesAsync(sessionId, maxEntries, cancellationToken);
+
+        if (captures.Count == 0)
+            return new CaptureDrainResult { Message = "No undrained captures found" };
+
+        if (dryRun)
+            return new CaptureDrainResult
+            {
+                EntriesFound = captures.Count,
+                DryRun = true,
+                Preview = GroupCapturesForPreview(captures)
+            };
+
+        var result = new CaptureDrainResult();
+        var drainedIds = new List<Guid>();
+
+        // Group consecutive entries by tool type
+        var batches = GroupCaptureIntoBatches(captures);
+
+        foreach (var batch in batches)
+        {
+            try
+            {
+                var content = FormatCaptureContent(batch);
+                if (string.IsNullOrWhiteSpace(content)) continue;
+
+                var metadata = new Dictionary<string, object>
+                {
+                    ["memory_type"] = "auto_capture",
+                    ["trigger"] = "http_drain",
+                    ["entry_count"] = batch.Entries.Count,
+                    ["tool_type"] = batch.ToolType
+                };
+
+                if (batch.FirstTs.HasValue) metadata["first_ts"] = batch.FirstTs.Value.ToString("O");
+                if (batch.LastTs.HasValue) metadata["last_ts"] = batch.LastTs.Value.ToString("O");
+
+                await IngestMemoryAsync(
+                    content: content,
+                    source: "auto-capture",
+                    sessionId: batch.Entries.FirstOrDefault()?.SessionId is string sid && Guid.TryParse(sid, out var parsedSid) ? parsedSid : null,
+                    metadata: metadata,
+                    extractEntities: true,
+                    dedupMode: "off",
+                    memoryType: "auto_capture",
+                    cancellationToken: cancellationToken);
+
+                result.MemoriesCreated++;
+                drainedIds.AddRange(batch.Entries.Select(e => e.Id));
+            }
+            catch
+            {
+                result.Errors++;
+                drainedIds.AddRange(batch.Entries.Select(e => e.Id));
+            }
+        }
+
+        // Mark all as drained
+        if (drainedIds.Count > 0)
+            await _store.MarkCapturesDrainedAsync(drainedIds, cancellationToken);
+
+        result.EntriesProcessed = drainedIds.Count;
+        return result;
+    }
+
+    private static List<CaptureBatch> GroupCaptureIntoBatches(List<SessionCapture> captures)
+    {
+        var batches = new List<CaptureBatch>();
+        CaptureBatch? current = null;
+
+        foreach (var capture in captures)
+        {
+            var toolType = NormalizeCaptureToolType(capture.Tool);
+            if (current == null || current.ToolType != toolType)
+            {
+                current = new CaptureBatch { ToolType = toolType };
+                batches.Add(current);
+            }
+            current.Entries.Add(capture);
+            current.FirstTs ??= capture.Ts;
+            current.LastTs = capture.Ts;
+        }
+
+        return batches;
+    }
+
+    private static string NormalizeCaptureToolType(string? tool)
+    {
+        if (string.IsNullOrEmpty(tool)) return "unknown";
+        var lower = tool.ToLowerInvariant();
+        if (lower.Contains("write") || lower.Contains("edit")) return "file_edit";
+        if (lower.Contains("bash")) return "bash_command";
+        if (lower.Contains("read") || lower.Contains("glob") || lower.Contains("grep")) return "file_read";
+        return lower;
+    }
+
+    private static string FormatCaptureContent(CaptureBatch batch)
+    {
+        var files = batch.Entries
+            .Where(e => !string.IsNullOrEmpty(e.File))
+            .Select(e => e.File!)
+            .Distinct()
+            .ToList();
+
+        return batch.ToolType switch
+        {
+            "file_edit" => files.Count > 0
+                ? $"Files modified: {string.Join(", ", files)}"
+                : $"File edit operations ({batch.Entries.Count} actions)",
+            "bash_command" => $"Commands executed ({batch.Entries.Count} actions)" +
+                (files.Count > 0 ? $" — files: {string.Join(", ", files.Take(5))}" : ""),
+            "file_read" => files.Count > 0
+                ? $"Files read: {string.Join(", ", files.Take(10))}"
+                : $"File read operations ({batch.Entries.Count} actions)",
+            _ => $"Activity: {batch.ToolType} ({batch.Entries.Count} actions)" +
+                (files.Count > 0 ? $" — {string.Join(", ", files.Take(5))}" : "")
+        };
+    }
+
+    private static List<object> GroupCapturesForPreview(List<SessionCapture> captures)
+    {
+        var batches = GroupCaptureIntoBatches(captures);
+        return batches.Select(b => (object)new
+        {
+            toolType = b.ToolType,
+            entryCount = b.Entries.Count,
+            firstTs = b.FirstTs,
+            lastTs = b.LastTs
+        }).ToList();
     }
 
     #endregion
@@ -1020,6 +1384,17 @@ public class MemorySearchResult
     public float Similarity { get; set; }
     public float Rank { get; set; }
     public List<EntityInfo> Entities { get; set; } = [];
+
+    // Structured observation fields (P1 - GAP 5)
+    public string? MemoryType { get; set; }
+    public string? Title { get; set; }
+    public List<string>? Facts { get; set; }
+    public List<string>? Concepts { get; set; }
+    public List<string>? FilesRead { get; set; }
+    public List<string>? FilesModified { get; set; }
+
+    // Token estimation (P1 - GAP 4)
+    public int EstimatedTokens { get; set; }
 }
 
 public class MultiHopSearchResult
@@ -1095,6 +1470,79 @@ public class PreviousDayContext
     public List<MemorySearchResult> Memories { get; set; } = [];
     public List<EntityInfo> TopEntities { get; set; } = [];
     public List<RelationshipInfo> TopRelationships { get; set; } = [];
+}
+
+#endregion
+
+#region Progressive Disclosure Result Types (P0 - GAP 2)
+
+/// <summary>
+/// Compact memory entry for token-efficient search results (~50-80 tokens each).
+/// </summary>
+public class CompactMemoryEntry
+{
+    public Guid Id { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string MemoryType { get; set; } = "knowledge";
+    public string Title { get; set; } = "";
+    public float Similarity { get; set; }
+    public int EntityCount { get; set; }
+    public int ContentLength { get; set; }
+    public int EstimatedTokens { get; set; }
+}
+
+/// <summary>
+/// Result from compact search index. Includes token savings metadata.
+/// </summary>
+public class CompactSearchResult
+{
+    public List<CompactMemoryEntry> Results { get; set; } = [];
+    public int TotalResults { get; set; }
+    public SearchMeta Meta { get; set; } = new();
+}
+
+/// <summary>
+/// Token usage metadata for search results.
+/// </summary>
+public class SearchMeta
+{
+    public int IndexTokens { get; set; }
+    public int FullFetchTokens { get; set; }
+    public int TokenSavingsPercent { get; set; }
+}
+
+/// <summary>
+/// Timeline navigation result showing memories around an anchor point.
+/// </summary>
+public class TimelineResult
+{
+    public Guid? AnchorId { get; set; }
+    public DateTime? AnchorTime { get; set; }
+    public List<CompactMemoryEntry> Entries { get; set; } = [];
+    public int TotalEntries { get; set; }
+}
+
+#endregion
+
+#region Capture Result Types
+
+public class CaptureDrainResult
+{
+    public int EntriesProcessed { get; set; }
+    public int EntriesFound { get; set; }
+    public int MemoriesCreated { get; set; }
+    public int Errors { get; set; }
+    public bool DryRun { get; set; }
+    public string? Message { get; set; }
+    public List<object>? Preview { get; set; }
+}
+
+internal class CaptureBatch
+{
+    public required string ToolType { get; init; }
+    public List<SessionCapture> Entries { get; } = [];
+    public DateTime? FirstTs { get; set; }
+    public DateTime? LastTs { get; set; }
 }
 
 #endregion

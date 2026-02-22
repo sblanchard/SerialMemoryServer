@@ -41,6 +41,14 @@ public abstract class KnowledgeGraphStoreDecorator(IKnowledgeGraphStore inner) :
     public virtual Task<long> GetMemoryCountAsync(CancellationToken cancellationToken = default)
         => Inner.GetMemoryCountAsync(cancellationToken);
 
+    // Progressive disclosure methods
+    public virtual Task<List<Memory>> GetMemoriesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default)
+        => Inner.GetMemoriesByIdsAsync(ids, cancellationToken);
+    public virtual Task<List<Memory>> GetMemoriesAroundAnchorAsync(Guid anchorId, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default)
+        => Inner.GetMemoriesAroundAnchorAsync(anchorId, before, after, memoryType, cancellationToken);
+    public virtual Task<List<Memory>> GetMemoriesAroundTimestampAsync(DateTime anchor, int before = 5, int after = 5, string? memoryType = null, CancellationToken cancellationToken = default)
+        => Inner.GetMemoriesAroundTimestampAsync(anchor, before, after, memoryType, cancellationToken);
+
     // Entity operations
     public virtual Task<Guid> CreateEntityAsync(Entity entity, CancellationToken cancellationToken = default)
         => Inner.CreateEntityAsync(entity, cancellationToken);

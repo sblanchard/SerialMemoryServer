@@ -150,8 +150,8 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
 
         const string sql = """
 
-                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata, memory_type)
-                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType)
+                                       INSERT INTO memories (id, tenant_id, workspace_id, content, embedding, source, conversation_session_id, metadata, memory_type, title, facts, concepts, files_read, files_modified)
+                                       VALUES (@Id, @TenantId, @WorkspaceId, @Content, @Embedding, @Source, @SessionId, @Metadata::jsonb, @MemoryType, @Title, @Facts::jsonb, @Concepts::jsonb, @FilesRead::jsonb, @FilesModified::jsonb)
                            """;
 
         await using var _connLease = await OpenConnectionAsync(cancellationToken);
@@ -169,6 +169,11 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         cmd.Parameters.Add(new NpgsqlParameter("@SessionId", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)memory.ConversationSessionId ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@Metadata", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Metadata != null ? System.Text.Json.JsonSerializer.Serialize(memory.Metadata) : DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("@MemoryType", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.MemoryType ?? "knowledge" });
+        cmd.Parameters.Add(new NpgsqlParameter("@Title", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)memory.Title ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Facts", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Facts != null ? System.Text.Json.JsonSerializer.Serialize(memory.Facts) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@Concepts", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.Concepts != null ? System.Text.Json.JsonSerializer.Serialize(memory.Concepts) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@FilesRead", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.FilesRead != null ? System.Text.Json.JsonSerializer.Serialize(memory.FilesRead) : DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("@FilesModified", NpgsqlTypes.NpgsqlDbType.Text) { Value = memory.FilesModified != null ? System.Text.Json.JsonSerializer.Serialize(memory.FilesModified) : DBNull.Value });
 
         try
         {
@@ -875,8 +880,20 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
                 : null,
             Similarity = row.similarity,
             Rank = row.rank,
-            MemoryType = row.memory_type ?? "knowledge"
+            MemoryType = row.memory_type ?? "knowledge",
+            Title = row.title,
+            Facts = DeserializeJsonList(row.facts),
+            Concepts = DeserializeJsonList(row.concepts),
+            FilesRead = DeserializeJsonList(row.files_read),
+            FilesModified = DeserializeJsonList(row.files_modified)
         };
+    }
+
+    private static List<string>? DeserializeJsonList(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json); }
+        catch { return null; }
     }
 
     /// <summary>
@@ -895,6 +912,12 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         public string? memory_type { get; init; } = "knowledge";
         public float similarity { get; init; }
         public float rank { get; init; }
+        // Structured observation fields
+        public string? title { get; init; }
+        public string? facts { get; init; }
+        public string? concepts { get; init; }
+        public string? files_read { get; init; }
+        public string? files_modified { get; init; }
     }
 
     private static Entity MapToEntity(dynamic row)
@@ -1422,6 +1445,92 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
         return results.Select(MapToMemory).ToList();
     }
 
+    // --- Progressive Disclosure Methods (P0 - GAP 2) ---
+
+    public async Task<List<Memory>> GetMemoriesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return [];
+
+        const string sql = """
+            SELECT id, content, created_at, updated_at, source,
+                   conversation_session_id, metadata::text, memory_type,
+                   title, facts::text, concepts::text, files_read::text, files_modified::text
+            FROM memories
+            WHERE id = ANY(@Ids)
+            ORDER BY created_at DESC
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
+            sql,
+            new { Ids = ids.ToArray() },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
+    public async Task<List<Memory>> GetMemoriesAroundAnchorAsync(
+        Guid anchorId, int before = 5, int after = 5, string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        // First get the anchor memory's timestamp
+        const string anchorSql = "SELECT created_at FROM memories WHERE id = @Id";
+
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+
+        var anchorTime = await conn.QuerySingleOrDefaultAsync<DateTime?>(new CommandDefinition(
+            anchorSql, new { Id = anchorId }, cancellationToken: cancellationToken));
+
+        if (anchorTime == null) return [];
+
+        return await GetMemoriesAroundTimestampInternalAsync(conn, anchorTime.Value, before, after, memoryType, cancellationToken);
+    }
+
+    public async Task<List<Memory>> GetMemoriesAroundTimestampAsync(
+        DateTime anchor, int before = 5, int after = 5, string? memoryType = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var _connLease = await OpenConnectionAsync(cancellationToken);
+        var conn = _connLease.Connection;
+        return await GetMemoriesAroundTimestampInternalAsync(conn, anchor, before, after, memoryType, cancellationToken);
+    }
+
+    private static async Task<List<Memory>> GetMemoriesAroundTimestampInternalAsync(
+        NpgsqlConnection conn, DateTime anchor, int before, int after, string? memoryType,
+        CancellationToken cancellationToken)
+    {
+        var typeFilter = memoryType != null ? " AND memory_type = @MemoryType" : "";
+
+        var sql = $"""
+            (SELECT id, content, created_at, updated_at, source,
+                    conversation_session_id, metadata::text, memory_type,
+                    title, facts::text, concepts::text, files_read::text, files_modified::text
+             FROM memories
+             WHERE created_at <= @Anchor{typeFilter}
+             ORDER BY created_at DESC
+             LIMIT @Before)
+            UNION ALL
+            (SELECT id, content, created_at, updated_at, source,
+                    conversation_session_id, metadata::text, memory_type,
+                    title, facts::text, concepts::text, files_read::text, files_modified::text
+             FROM memories
+             WHERE created_at > @Anchor{typeFilter}
+             ORDER BY created_at ASC
+             LIMIT @After)
+            ORDER BY created_at ASC
+            """;
+
+        var results = await conn.QueryAsync<MemoryRow>(new CommandDefinition(
+            sql,
+            new { Anchor = anchor, Before = before, After = after, MemoryType = memoryType },
+            cancellationToken: cancellationToken));
+
+        return results.Select(MapToMemory).ToList();
+    }
+
     #endregion
 
     #region Workspace Operations
@@ -1629,6 +1738,171 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
             StateData = System.Text.Json.JsonSerializer.Deserialize<WorkspaceStateData>(row.state_data.ToString())
                 ?? new WorkspaceStateData(),
             CreatedAt = row.created_at
+        };
+    }
+
+    #endregion
+
+    #region ICaptureStore
+
+    public async Task<Guid> InsertCaptureAsync(SessionCapture capture, CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO session_captures (id, session_id, ts, tool, file, result, raw_json)
+            VALUES (@Id, @SessionId, @Ts, @Tool, @File, @Result, @RawJson::jsonb)
+            RETURNING id
+            """;
+
+        var id = capture.Id == Guid.Empty ? Guid.CreateVersion7() : capture.Id;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            Id = id,
+            capture.SessionId,
+            capture.Ts,
+            capture.Tool,
+            capture.File,
+            capture.Result,
+            RawJson = capture.RawJson != null
+                ? System.Text.Json.JsonSerializer.Serialize(capture.RawJson)
+                : null
+        }, cancellationToken: ct));
+
+        return id;
+    }
+
+    public async Task<int> InsertCapturesBatchAsync(List<SessionCapture> captures, CancellationToken ct = default)
+    {
+        if (captures.Count == 0) return 0;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var count = 0;
+        foreach (var capture in captures)
+        {
+            var id = capture.Id == Guid.Empty ? Guid.CreateVersion7() : capture.Id;
+
+            await conn.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO session_captures (id, session_id, ts, tool, file, result, raw_json)
+                VALUES (@Id, @SessionId, @Ts, @Tool, @File, @Result, @RawJson::jsonb)
+                """,
+                new
+                {
+                    Id = id,
+                    capture.SessionId,
+                    capture.Ts,
+                    capture.Tool,
+                    capture.File,
+                    capture.Result,
+                    RawJson = capture.RawJson != null
+                        ? System.Text.Json.JsonSerializer.Serialize(capture.RawJson)
+                        : null
+                },
+                cancellationToken: ct));
+            count++;
+        }
+
+        return count;
+    }
+
+    public async Task<List<SessionCapture>> GetUndrainedCapturesAsync(string? sessionId = null, int limit = 5000, CancellationToken ct = default)
+    {
+        var sql = sessionId != null
+            ? """
+              SELECT id, session_id, ts, tool, file, result, created_at
+              FROM session_captures
+              WHERE drained = FALSE AND session_id = @SessionId
+              ORDER BY ts ASC
+              LIMIT @Limit
+              """
+            : """
+              SELECT id, session_id, ts, tool, file, result, created_at
+              FROM session_captures
+              WHERE drained = FALSE
+              ORDER BY ts ASC
+              LIMIT @Limit
+              """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql, new { SessionId = sessionId, Limit = limit }, cancellationToken: ct));
+
+        return rows.Select(r => new SessionCapture
+        {
+            Id = r.id,
+            SessionId = (string?)r.session_id,
+            Ts = r.ts,
+            Tool = (string?)r.tool,
+            File = (string?)r.file,
+            Result = (string?)r.result,
+            CreatedAt = r.created_at
+        }).ToList();
+    }
+
+    public async Task<int> MarkCapturesDrainedAsync(List<Guid> captureIds, CancellationToken ct = default)
+    {
+        if (captureIds.Count == 0) return 0;
+
+        const string sql = """
+            UPDATE session_captures
+            SET drained = TRUE, drained_at = NOW()
+            WHERE id = ANY(@Ids)
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        return await conn.ExecuteAsync(new CommandDefinition(
+            sql, new { Ids = captureIds.ToArray() }, cancellationToken: ct));
+    }
+
+    public async Task<CaptureStatusResult> GetCaptureStatusAsync(CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT
+                COUNT(*) FILTER (WHERE drained = FALSE) AS undrained,
+                COUNT(*) FILTER (WHERE drained = TRUE) AS drained
+            FROM session_captures
+            """;
+
+        const string sessionSql = """
+            SELECT
+                session_id,
+                COUNT(*) AS entry_count,
+                MIN(ts) AS first_ts,
+                MAX(ts) AS last_ts
+            FROM session_captures
+            WHERE drained = FALSE
+            GROUP BY session_id
+            ORDER BY MAX(ts) DESC
+            LIMIT 20
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var counts = await conn.QuerySingleAsync<dynamic>(new CommandDefinition(sql, cancellationToken: ct));
+
+        var sessions = await conn.QueryAsync<dynamic>(new CommandDefinition(sessionSql, cancellationToken: ct));
+
+        return new CaptureStatusResult
+        {
+            TotalUndrained = (int)(long)counts.undrained,
+            TotalDrained = (int)(long)counts.drained,
+            Sessions = sessions.Select(s => new CaptureSessionSummary
+            {
+                SessionId = (string?)s.session_id,
+                EntryCount = (int)(long)s.entry_count,
+                FirstTs = s.first_ts,
+                LastTs = s.last_ts
+            }).ToList()
         };
     }
 

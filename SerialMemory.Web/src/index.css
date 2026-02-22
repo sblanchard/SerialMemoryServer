@@ -166,6 +166,24 @@ body {
   transform: translateX(2px);
 }
 
+/* New memory highlight animation */
+@keyframes memory-flash {
+  0% {
+    background: rgba(34, 211, 238, 0.15);
+    border-color: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
+  }
+  100% {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(59, 130, 246, 0.1);
+    box-shadow: none;
+  }
+}
+
+.memory-item-new {
+  animation: memory-flash 2s ease-out forwards;
+}
+
 /* Search mode tabs */
 .search-tabs {
   display: flex;

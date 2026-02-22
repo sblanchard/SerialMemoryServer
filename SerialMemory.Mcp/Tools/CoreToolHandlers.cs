@@ -74,6 +74,13 @@ internal sealed class CoreToolHandlers(
             metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(metadataNode.ToJsonString());
         }
 
+        // Structured observation fields (P1 - GAP 5)
+        var title = arguments?["title"]?.GetValue<string>()?.Trim();
+        var facts = ParseStringArray(arguments?["facts"]);
+        var concepts = ParseStringArray(arguments?["concepts"]);
+        var filesRead = ParseStringArray(arguments?["files_read"]);
+        var filesModified = ParseStringArray(arguments?["files_modified"]);
+
         var result = await kgService.IngestMemoryAsync(
             content,
             source,
@@ -82,7 +89,12 @@ internal sealed class CoreToolHandlers(
             extractEntities,
             dedupMode,
             dedupThreshold,
-            memoryTypeParam);
+            memoryTypeParam,
+            title,
+            facts,
+            concepts,
+            filesRead,
+            filesModified);
 
         // Set dedup metadata for usage tracking
         toolMetadataContext.Value = new Dictionary<string, object>
@@ -118,6 +130,16 @@ internal sealed class CoreToolHandlers(
         }
 
         return CreateTextResponse(text);
+    }
+
+    private static List<string>? ParseStringArray(JsonNode? node)
+    {
+        if (node is not JsonArray arr || arr.Count == 0) return null;
+        return arr
+            .Select(n => n?.GetValue<string>()?.Trim())
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Cast<string>()
+            .ToList();
     }
 
     public async Task<object> HandleMultiHopSearch(JsonNode? arguments)

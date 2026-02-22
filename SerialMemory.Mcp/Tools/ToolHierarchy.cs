@@ -21,6 +21,7 @@ public static class ToolHierarchy
         ("session", new("Session Management", "Create/end sessions, instantiate context")),
         ("admin", new("Administration", "Persona, integrations, import, crawl, statistics, model info, reembed")),
         ("workspace", new("Workspace & Snapshots", "Create/switch workspaces, create/load state snapshots")),
+        ("disclosure", new("Progressive Disclosure", "Token-efficient 3-layer search: index → timeline → fetch")),
         ("capture", new("Auto-Capture", "Drain session captures, check capture buffer status")),
         ("summarization", new("Summarization", "AI-powered session and context summarization"))
     ];
@@ -99,6 +100,11 @@ public static class ToolHierarchy
         ["workspace.snapshot_list"] = "snapshot_list",
         ["workspace.snapshot_load"] = "snapshot_load",
 
+        // Progressive Disclosure
+        ["disclosure.memory_search_index"] = "memory_search_index",
+        ["disclosure.memory_timeline"] = "memory_timeline",
+        ["disclosure.memory_fetch"] = "memory_fetch",
+
         // Auto-Capture
         ["capture.drain_session_captures"] = "drain_session_captures",
         ["capture.capture_status"] = "capture_status",
@@ -127,6 +133,7 @@ public static class ToolHierarchy
                 "set_user_persona", "get_integrations", "import_from_core",
                 "crawl_relationships", "get_graph_statistics", "get_model_info", "reembed_memories"),
             "workspace" => ToolDefinitions.GetWorkspaceTools(),
+            "disclosure" => ToolDefinitions.GetProgressiveDisclosureTools(),
             "capture" => ToolDefinitions.GetCaptureTools(),
             "summarization" => ToolDefinitions.GetSummarizationTools(),
             _ => []
