@@ -125,6 +125,18 @@ public abstract class KnowledgeGraphStoreDecorator(IKnowledgeGraphStore inner) :
     public virtual Task<WorkspaceSnapshot?> GetSnapshotByNameAsync(string workspaceId, string snapshotName, CancellationToken ct = default)
         => Inner.GetSnapshotByNameAsync(workspaceId, snapshotName, ct);
 
+    // Capture operations
+    public virtual Task<Guid> InsertCaptureAsync(SessionCapture capture, CancellationToken ct = default)
+        => Inner.InsertCaptureAsync(capture, ct);
+    public virtual Task<int> InsertCapturesBatchAsync(List<SessionCapture> captures, CancellationToken ct = default)
+        => Inner.InsertCapturesBatchAsync(captures, ct);
+    public virtual Task<List<SessionCapture>> GetUndrainedCapturesAsync(string? sessionId = null, int limit = 5000, CancellationToken ct = default)
+        => Inner.GetUndrainedCapturesAsync(sessionId, limit, ct);
+    public virtual Task<int> MarkCapturesDrainedAsync(List<Guid> captureIds, CancellationToken ct = default)
+        => Inner.MarkCapturesDrainedAsync(captureIds, ct);
+    public virtual Task<CaptureStatusResult> GetCaptureStatusAsync(CancellationToken ct = default)
+        => Inner.GetCaptureStatusAsync(ct);
+
     // Unit of work
     public virtual Task<IAsyncDisposable> BeginUnitOfWorkAsync(CancellationToken cancellationToken = default)
         => Inner.BeginUnitOfWorkAsync(cancellationToken);
