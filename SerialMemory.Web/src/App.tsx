@@ -1,9 +1,10 @@
 import { useState, useCallback, useMemo } from 'react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MainLayout } from './components/Layout';
 import { ForceGraph3D, GraphControls } from './components/Graph';
 import { StatsPanel, SearchPanel, MemoryList, AskMyMemory } from './components/Sidebar';
 import { useGraphData } from './hooks/useGraphData';
+import { useSignalR } from './hooks/useSignalR';
 import { fetchRecentMemories, searchMemories } from './lib/api';
 import type { SearchMemory, ForceGraphNode } from './types/graph';
 import './index.css';
@@ -15,6 +16,26 @@ function AppContent() {
   const [searchMode, setSearchMode] = useState<'semantic' | 'text' | 'hybrid'>('hybrid');
   const [selectedNode, setSelectedNode] = useState<ForceGraphNode | null>(null);
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const qc = useQueryClient();
+
+  // Real-time memory streaming via SignalR
+  const handleMemoryEvent = useCallback((memory: SearchMemory) => {
+    // Prepend streamed memory into the react-query cache
+    qc.setQueryData<SearchMemory[]>(
+      ['memories', undefined, 'hybrid'],
+      (old) => {
+        if (!old) return [memory];
+        // Deduplicate by id
+        if (old.some(m => m.id === memory.id)) return old;
+        return [memory, ...old].slice(0, 50);
+      }
+    );
+  }, [qc]);
+
+  const { isConnected } = useSignalR({
+    enabled: true,
+    onMemoryEvent: handleMemoryEvent,
+  });
 
   // Fetch graph data
   const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } = useGraphData({
@@ -23,7 +44,8 @@ function AppContent() {
     hops: 2,
   });
 
-  // Fetch memories for sidebar (auto-refresh every 10s when showing recent)
+  // Fetch memories for sidebar
+  // When SignalR is connected and not searching, disable polling (real-time takes over)
   const { data: memories, isLoading: memoriesLoading } = useQuery({
     queryKey: ['memories', searchQuery, searchMode],
     queryFn: async () => {
@@ -32,7 +54,7 @@ function AppContent() {
       }
       return fetchRecentMemories(20);
     },
-    refetchInterval: searchQuery ? false : 10000,
+    refetchInterval: searchQuery ? false : (isConnected ? false : 10000),
   });
 
   // Filter nodes based on active filters
@@ -100,6 +122,7 @@ function AppContent() {
         memories={(memories as SearchMemory[]) || []}
         isLoading={memoriesLoading}
         title={searchQuery ? 'Search Results' : 'Recent Memories'}
+        isLive={isConnected && !searchQuery}
       />
 
       {selectedNode && (

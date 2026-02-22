@@ -7,6 +7,7 @@ interface MemoryListProps {
   memories: SearchMemory[];
   isLoading?: boolean;
   title?: string;
+  isLive?: boolean;
 }
 
 function formatDate(dateString: string): string {
@@ -28,7 +29,7 @@ function truncate(text: string, maxLength: number): string {
   return text.slice(0, maxLength) + '...';
 }
 
-export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: MemoryListProps) {
+export function MemoryList({ memories, isLoading, title = 'Recent Memories', isLive }: MemoryListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const [knownIds, setKnownIds] = useState<Set<string>>(new Set());
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
@@ -111,7 +112,15 @@ export function MemoryList({ memories, isLoading, title = 'Recent Memories' }: M
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="panel-header">{title}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="panel-header">{title}</h3>
+          {isLive && (
+            <span className="flex items-center gap-1 text-xs text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              LIVE
+            </span>
+          )}
+        </div>
         {newIds.size > 0 && (
           <span className="text-xs text-cyan animate-pulse">
             +{newIds.size} new
