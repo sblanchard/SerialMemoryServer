@@ -1619,41 +1619,78 @@ app.MapPost("/api/summarize/context", async (ContextSummarizeRequest? request, K
 });
 
 // ============================================
-// AUTO-CAPTURE API ENDPOINTS
+// AUTO-CAPTURE API ENDPOINTS (server-side DB storage)
 // ============================================
 
-var captureSessionDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cc-serialmemory", "sessions");
-
-// Check capture buffer status
-app.MapGet("/api/captures/status", () =>
+// POST capture entries to the server (replaces local JSONL file writes)
+app.MapPost("/api/captures", async (CaptureIngestRequest request, KnowledgeGraphService kgService) =>
 {
-    if (!Directory.Exists(captureSessionDir))
-        return Results.Ok(new { files = 0, totalEntries = 0, message = "No capture directory found" });
-
-    var files = Directory.GetFiles(captureSessionDir, "*.jsonl")
-        .Where(f => !f.EndsWith(".drained"))
-        .OrderByDescending(File.GetLastWriteTimeUtc)
-        .Select(f =>
-        {
-            var lineCount = File.ReadLines(f).Count(l => !string.IsNullOrWhiteSpace(l));
-            return new
-            {
-                name = Path.GetFileName(f),
-                entries = lineCount,
-                lastModified = File.GetLastWriteTimeUtc(f)
-            };
-        })
-        .ToList();
-
-    return Results.Ok(new
+    try
     {
-        files = files.Count,
-        totalEntries = files.Sum(f => f.entries),
-        captures = files
-    });
+        if (request.Entries == null || request.Entries.Count == 0)
+            return Results.BadRequest(new { error = "At least one entry is required" });
+
+        if (request.Entries.Count > 1000)
+            return Results.BadRequest(new { error = "Maximum 1000 entries per request" });
+
+        var captures = request.Entries.Select(e => new SessionCapture
+        {
+            SessionId = request.SessionId ?? e.SessionId,
+            Ts = e.Ts ?? DateTime.UtcNow,
+            Tool = e.Tool,
+            File = e.File,
+            Result = e.Result,
+            RawJson = e.RawJson
+        }).ToList();
+
+        var count = await kgService.StoreCapturesBatchAsync(captures);
+        return Results.Ok(new { stored = count, sessionId = request.SessionId });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
 });
 
-// Drain captured JSONL session entries into memories
+// POST a single capture entry (convenience endpoint)
+app.MapPost("/api/captures/entry", async (CaptureEntryRequest entry, KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var capture = new SessionCapture
+        {
+            SessionId = entry.SessionId,
+            Ts = entry.Ts ?? DateTime.UtcNow,
+            Tool = entry.Tool,
+            File = entry.File,
+            Result = entry.Result,
+            RawJson = entry.RawJson
+        };
+
+        var id = await kgService.StoreCaptureAsync(capture);
+        return Results.Ok(new { id, stored = true });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Check capture buffer status (reads from DB)
+app.MapGet("/api/captures/status", async (KnowledgeGraphService kgService) =>
+{
+    try
+    {
+        var status = await kgService.GetCaptureStatusAsync();
+        return Results.Ok(status);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+});
+
+// Drain staged captures into memories (reads from DB, marks drained)
 app.MapPost("/api/captures/drain", async (
     string? session_id,
     int? max_entries,
@@ -1662,68 +1699,12 @@ app.MapPost("/api/captures/drain", async (
 {
     try
     {
-        if (!Directory.Exists(captureSessionDir))
-            return Results.Ok(new { entriesProcessed = 0, memoriesCreated = 0, message = "No capture directory found" });
+        var result = await kgService.DrainCapturesAsync(
+            sessionId: session_id,
+            maxEntries: max_entries ?? 500,
+            dryRun: dry_run ?? false);
 
-        // Find session log file
-        string? logFile = null;
-        if (!string.IsNullOrEmpty(session_id))
-        {
-            var specific = Path.Combine(captureSessionDir, $"{session_id}.jsonl");
-            if (File.Exists(specific)) logFile = specific;
-        }
-        logFile ??= Directory.GetFiles(captureSessionDir, "*.jsonl")
-            .Where(f => !f.EndsWith(".drained"))
-            .OrderByDescending(File.GetLastWriteTimeUtc)
-            .FirstOrDefault();
-
-        if (logFile == null)
-            return Results.Ok(new { entriesProcessed = 0, memoriesCreated = 0, message = "No active capture file found" });
-
-        var maxCount = Math.Clamp(max_entries ?? 500, 1, 5000);
-        var lines = File.ReadLines(logFile)
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .Take(maxCount)
-            .ToList();
-
-        if (dry_run == true)
-            return Results.Ok(new { entriesFound = lines.Count, dryRun = true, file = Path.GetFileName(logFile) });
-
-        var memoriesCreated = 0;
-        var errors = 0;
-
-        // Batch lines and ingest as memories
-        foreach (var chunk in lines.Chunk(10))
-        {
-            try
-            {
-                var content = string.Join("\n", chunk);
-                await kgService.IngestMemoryAsync(
-                    content: content,
-                    source: "auto-capture",
-                    metadata: new Dictionary<string, object>
-                    {
-                        ["memory_type"] = "auto_capture",
-                        ["entry_count"] = chunk.Length
-                    },
-                    extractEntities: true,
-                    dedupMode: "off",
-                    memoryType: "auto_capture");
-                memoriesCreated++;
-            }
-            catch { errors++; }
-        }
-
-        // Rename to .drained
-        try { File.Move(logFile, logFile + ".drained", overwrite: true); } catch { }
-
-        return Results.Ok(new
-        {
-            entriesProcessed = lines.Count,
-            memoriesCreated,
-            errors,
-            file = Path.GetFileName(logFile)
-        });
+        return Results.Ok(result);
     }
     catch (Exception ex)
     {
@@ -6888,6 +6869,19 @@ internal record ContextSummarizeRequest(
     int? HoursBack = 4,
     int? MaxMemories = 50,
     bool? StoreSummary = true);
+
+// Capture DTOs (server-side DB storage)
+internal record CaptureIngestRequest(
+    string? SessionId,
+    List<CaptureEntryRequest> Entries);
+
+internal record CaptureEntryRequest(
+    string? SessionId = null,
+    DateTime? Ts = null,
+    string? Tool = null,
+    string? File = null,
+    string? Result = null,
+    Dictionary<string, object>? RawJson = null);
 
 // Mutation state holder for tracking pause/resume state (thread-safe)
 internal class MutationStateHolder

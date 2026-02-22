@@ -982,6 +982,180 @@ public class KnowledgeGraphService(
 
     #endregion
 
+    #region Capture Operations
+
+    /// <summary>
+    /// Store a capture entry server-side.
+    /// </summary>
+    public async Task<Guid> StoreCaptureAsync(
+        SessionCapture capture,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.InsertCaptureAsync(capture, cancellationToken);
+    }
+
+    /// <summary>
+    /// Store a batch of capture entries server-side.
+    /// </summary>
+    public async Task<int> StoreCapturesBatchAsync(
+        List<SessionCapture> captures,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.InsertCapturesBatchAsync(captures, cancellationToken);
+    }
+
+    /// <summary>
+    /// Get capture buffer status.
+    /// </summary>
+    public async Task<CaptureStatusResult> GetCaptureStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetCaptureStatusAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Drain undrained captures into memories. Groups consecutive entries by tool type.
+    /// Returns number of memories created.
+    /// </summary>
+    public async Task<CaptureDrainResult> DrainCapturesAsync(
+        string? sessionId = null,
+        int maxEntries = 500,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default)
+    {
+        var captures = await _store.GetUndrainedCapturesAsync(sessionId, maxEntries, cancellationToken);
+
+        if (captures.Count == 0)
+            return new CaptureDrainResult { Message = "No undrained captures found" };
+
+        if (dryRun)
+            return new CaptureDrainResult
+            {
+                EntriesFound = captures.Count,
+                DryRun = true,
+                Preview = GroupCapturesForPreview(captures)
+            };
+
+        var result = new CaptureDrainResult();
+        var drainedIds = new List<Guid>();
+
+        // Group consecutive entries by tool type
+        var batches = GroupCaptureIntoBatches(captures);
+
+        foreach (var batch in batches)
+        {
+            try
+            {
+                var content = FormatCaptureContent(batch);
+                if (string.IsNullOrWhiteSpace(content)) continue;
+
+                var metadata = new Dictionary<string, object>
+                {
+                    ["memory_type"] = "auto_capture",
+                    ["trigger"] = "http_drain",
+                    ["entry_count"] = batch.Entries.Count,
+                    ["tool_type"] = batch.ToolType
+                };
+
+                if (batch.FirstTs.HasValue) metadata["first_ts"] = batch.FirstTs.Value.ToString("O");
+                if (batch.LastTs.HasValue) metadata["last_ts"] = batch.LastTs.Value.ToString("O");
+
+                await IngestMemoryAsync(
+                    content: content,
+                    source: "auto-capture",
+                    sessionId: batch.Entries.FirstOrDefault()?.SessionId is string sid && Guid.TryParse(sid, out var parsedSid) ? parsedSid : null,
+                    metadata: metadata,
+                    extractEntities: true,
+                    dedupMode: "off",
+                    memoryType: "auto_capture",
+                    cancellationToken: cancellationToken);
+
+                result.MemoriesCreated++;
+                drainedIds.AddRange(batch.Entries.Select(e => e.Id));
+            }
+            catch
+            {
+                result.Errors++;
+                drainedIds.AddRange(batch.Entries.Select(e => e.Id));
+            }
+        }
+
+        // Mark all as drained
+        if (drainedIds.Count > 0)
+            await _store.MarkCapturesDrainedAsync(drainedIds, cancellationToken);
+
+        result.EntriesProcessed = drainedIds.Count;
+        return result;
+    }
+
+    private static List<CaptureBatch> GroupCaptureIntoBatches(List<SessionCapture> captures)
+    {
+        var batches = new List<CaptureBatch>();
+        CaptureBatch? current = null;
+
+        foreach (var capture in captures)
+        {
+            var toolType = NormalizeCaptureToolType(capture.Tool);
+            if (current == null || current.ToolType != toolType)
+            {
+                current = new CaptureBatch { ToolType = toolType };
+                batches.Add(current);
+            }
+            current.Entries.Add(capture);
+            current.FirstTs ??= capture.Ts;
+            current.LastTs = capture.Ts;
+        }
+
+        return batches;
+    }
+
+    private static string NormalizeCaptureToolType(string? tool)
+    {
+        if (string.IsNullOrEmpty(tool)) return "unknown";
+        var lower = tool.ToLowerInvariant();
+        if (lower.Contains("write") || lower.Contains("edit")) return "file_edit";
+        if (lower.Contains("bash")) return "bash_command";
+        if (lower.Contains("read") || lower.Contains("glob") || lower.Contains("grep")) return "file_read";
+        return lower;
+    }
+
+    private static string FormatCaptureContent(CaptureBatch batch)
+    {
+        var files = batch.Entries
+            .Where(e => !string.IsNullOrEmpty(e.File))
+            .Select(e => e.File!)
+            .Distinct()
+            .ToList();
+
+        return batch.ToolType switch
+        {
+            "file_edit" => files.Count > 0
+                ? $"Files modified: {string.Join(", ", files)}"
+                : $"File edit operations ({batch.Entries.Count} actions)",
+            "bash_command" => $"Commands executed ({batch.Entries.Count} actions)" +
+                (files.Count > 0 ? $" — files: {string.Join(", ", files.Take(5))}" : ""),
+            "file_read" => files.Count > 0
+                ? $"Files read: {string.Join(", ", files.Take(10))}"
+                : $"File read operations ({batch.Entries.Count} actions)",
+            _ => $"Activity: {batch.ToolType} ({batch.Entries.Count} actions)" +
+                (files.Count > 0 ? $" — {string.Join(", ", files.Take(5))}" : "")
+        };
+    }
+
+    private static List<object> GroupCapturesForPreview(List<SessionCapture> captures)
+    {
+        var batches = GroupCaptureIntoBatches(captures);
+        return batches.Select(b => (object)new
+        {
+            toolType = b.ToolType,
+            entryCount = b.Entries.Count,
+            firstTs = b.FirstTs,
+            lastTs = b.LastTs
+        }).ToList();
+    }
+
+    #endregion
+
     #region Session Operations
 
     /// <summary>
@@ -1346,6 +1520,29 @@ public class TimelineResult
     public DateTime? AnchorTime { get; set; }
     public List<CompactMemoryEntry> Entries { get; set; } = [];
     public int TotalEntries { get; set; }
+}
+
+#endregion
+
+#region Capture Result Types
+
+public class CaptureDrainResult
+{
+    public int EntriesProcessed { get; set; }
+    public int EntriesFound { get; set; }
+    public int MemoriesCreated { get; set; }
+    public int Errors { get; set; }
+    public bool DryRun { get; set; }
+    public string? Message { get; set; }
+    public List<object>? Preview { get; set; }
+}
+
+internal class CaptureBatch
+{
+    public required string ToolType { get; init; }
+    public List<SessionCapture> Entries { get; } = [];
+    public DateTime? FirstTs { get; set; }
+    public DateTime? LastTs { get; set; }
 }
 
 #endregion

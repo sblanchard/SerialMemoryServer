@@ -1742,4 +1742,169 @@ public class PostgresKnowledgeGraphStore : IKnowledgeGraphStore
     }
 
     #endregion
+
+    #region ICaptureStore
+
+    public async Task<Guid> InsertCaptureAsync(SessionCapture capture, CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO session_captures (id, session_id, ts, tool, file, result, raw_json)
+            VALUES (@Id, @SessionId, @Ts, @Tool, @File, @Result, @RawJson::jsonb)
+            RETURNING id
+            """;
+
+        var id = capture.Id == Guid.Empty ? Guid.CreateVersion7() : capture.Id;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            Id = id,
+            capture.SessionId,
+            capture.Ts,
+            capture.Tool,
+            capture.File,
+            capture.Result,
+            RawJson = capture.RawJson != null
+                ? System.Text.Json.JsonSerializer.Serialize(capture.RawJson)
+                : null
+        }, cancellationToken: ct));
+
+        return id;
+    }
+
+    public async Task<int> InsertCapturesBatchAsync(List<SessionCapture> captures, CancellationToken ct = default)
+    {
+        if (captures.Count == 0) return 0;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var count = 0;
+        foreach (var capture in captures)
+        {
+            var id = capture.Id == Guid.Empty ? Guid.CreateVersion7() : capture.Id;
+
+            await conn.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO session_captures (id, session_id, ts, tool, file, result, raw_json)
+                VALUES (@Id, @SessionId, @Ts, @Tool, @File, @Result, @RawJson::jsonb)
+                """,
+                new
+                {
+                    Id = id,
+                    capture.SessionId,
+                    capture.Ts,
+                    capture.Tool,
+                    capture.File,
+                    capture.Result,
+                    RawJson = capture.RawJson != null
+                        ? System.Text.Json.JsonSerializer.Serialize(capture.RawJson)
+                        : null
+                },
+                cancellationToken: ct));
+            count++;
+        }
+
+        return count;
+    }
+
+    public async Task<List<SessionCapture>> GetUndrainedCapturesAsync(string? sessionId = null, int limit = 5000, CancellationToken ct = default)
+    {
+        var sql = sessionId != null
+            ? """
+              SELECT id, session_id, ts, tool, file, result, created_at
+              FROM session_captures
+              WHERE drained = FALSE AND session_id = @SessionId
+              ORDER BY ts ASC
+              LIMIT @Limit
+              """
+            : """
+              SELECT id, session_id, ts, tool, file, result, created_at
+              FROM session_captures
+              WHERE drained = FALSE
+              ORDER BY ts ASC
+              LIMIT @Limit
+              """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var rows = await conn.QueryAsync<dynamic>(new CommandDefinition(
+            sql, new { SessionId = sessionId, Limit = limit }, cancellationToken: ct));
+
+        return rows.Select(r => new SessionCapture
+        {
+            Id = r.id,
+            SessionId = (string?)r.session_id,
+            Ts = r.ts,
+            Tool = (string?)r.tool,
+            File = (string?)r.file,
+            Result = (string?)r.result,
+            CreatedAt = r.created_at
+        }).ToList();
+    }
+
+    public async Task<int> MarkCapturesDrainedAsync(List<Guid> captureIds, CancellationToken ct = default)
+    {
+        if (captureIds.Count == 0) return 0;
+
+        const string sql = """
+            UPDATE session_captures
+            SET drained = TRUE, drained_at = NOW()
+            WHERE id = ANY(@Ids)
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        return await conn.ExecuteAsync(new CommandDefinition(
+            sql, new { Ids = captureIds.ToArray() }, cancellationToken: ct));
+    }
+
+    public async Task<CaptureStatusResult> GetCaptureStatusAsync(CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT
+                COUNT(*) FILTER (WHERE drained = FALSE) AS undrained,
+                COUNT(*) FILTER (WHERE drained = TRUE) AS drained
+            FROM session_captures
+            """;
+
+        const string sessionSql = """
+            SELECT
+                session_id,
+                COUNT(*) AS entry_count,
+                MIN(ts) AS first_ts,
+                MAX(ts) AS last_ts
+            FROM session_captures
+            WHERE drained = FALSE
+            GROUP BY session_id
+            ORDER BY MAX(ts) DESC
+            LIMIT 20
+            """;
+
+        await using var _connLease = await OpenConnectionAsync(ct);
+        var conn = _connLease.Connection;
+
+        var counts = await conn.QuerySingleAsync<dynamic>(new CommandDefinition(sql, cancellationToken: ct));
+
+        var sessions = await conn.QueryAsync<dynamic>(new CommandDefinition(sessionSql, cancellationToken: ct));
+
+        return new CaptureStatusResult
+        {
+            TotalUndrained = (int)(long)counts.undrained,
+            TotalDrained = (int)(long)counts.drained,
+            Sessions = sessions.Select(s => new CaptureSessionSummary
+            {
+                SessionId = (string?)s.session_id,
+                EntryCount = (int)(long)s.entry_count,
+                FirstTs = s.first_ts,
+                LastTs = s.last_ts
+            }).ToList()
+        };
+    }
+
+    #endregion
 }
