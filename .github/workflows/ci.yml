@@ -238,12 +238,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Determine version bump
         id: version
         run: |
-          # Get latest tag or default to v0.0.0
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Get highest semver tag (git describe can pick wrong tag when multiple tags share a commit)
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
           # Parse current version
