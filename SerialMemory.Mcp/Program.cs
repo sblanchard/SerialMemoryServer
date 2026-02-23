@@ -438,7 +438,7 @@ while (await reader.ReadLineAsync() is { } line)
 object HandleInitialize() => new
 {
     protocolVersion = "2024-11-05",
-    serverInfo = new { name = "serialmemory-server", version = "2.0.0" },
+    serverInfo = new { name = "serialmemory-server", version = "2.1.0" },
     capabilities = new { tools = new { }, resources = new { } }
 };
 

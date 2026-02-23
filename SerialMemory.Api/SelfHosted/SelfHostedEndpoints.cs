@@ -375,7 +375,7 @@ public static class SelfHostedEndpoints
 
     private static string GetVersion()
     {
-        return typeof(SelfHostedEndpoints).Assembly.GetName().Version?.ToString() ?? "2.1.0";
+        return typeof(SelfHostedEndpoints).Assembly.GetName().Version?.ToString() ?? "2.2.0";
     }
 
     private static string GetUptime()

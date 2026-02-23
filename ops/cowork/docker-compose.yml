@@ -1,0 +1,87 @@
+# =============================================================================
+# SerialMemory MCP - Self-Hosted Deployment for Claude Cowork
+# =============================================================================
+# Deploy on a local machine, expose via Cloudflare tunnel.
+#
+# Quick Start:
+#   cp .env.example .env    # Edit with your values
+#   docker compose up -d
+#   # Add Cloudflare tunnel route: mcp.serialmemory.dev -> http://localhost:4545
+#
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Database: PostgreSQL with pgvector
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: serialmemory-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-contextdb}
+      SERIALMEMORY_API_KEY: ${SERIALMEMORY_API_KEY:?SERIALMEMORY_API_KEY is required}
+    volumes:
+      - ../init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ../eventsourcing_schema.sql:/docker-entrypoint-initdb.d/02-eventsourcing.sql:ro
+      - ../multi_tenant_schema.sql:/docker-entrypoint-initdb.d/03-multi-tenant.sql:ro
+      - ../rls_policies.sql:/docker-entrypoint-initdb.d/04-rls.sql:ro
+      - ../usage_metering_schema.sql:/docker-entrypoint-initdb.d/05-usage.sql:ro
+      - ../admin_actions_schema.sql:/docker-entrypoint-initdb.d/06-admin.sql:ro
+      - ../job_supervision_schema.sql:/docker-entrypoint-initdb.d/07-jobs.sql:ro
+      - ../telemetry_schema.sql:/docker-entrypoint-initdb.d/08-telemetry.sql:ro
+      - ../reasoning_schema.sql:/docker-entrypoint-initdb.d/09-reasoning.sql:ro
+      - ../mind_health_schema.sql:/docker-entrypoint-initdb.d/10-mind.sql:ro
+      - ../llm_settings_schema.sql:/docker-entrypoint-initdb.d/11-llm.sql:ro
+      - ../classification_schema.sql:/docker-entrypoint-initdb.d/12-classify.sql:ro
+      - ../fix_memories_columns.sql:/docker-entrypoint-initdb.d/13-fix.sql:ro
+      - ../emergency_rls_fix.sql:/docker-entrypoint-initdb.d/99-rls-fix.sql:ro
+      - ./init-selfhosted.sh:/docker-entrypoint-initdb.d/AA-selfhosted.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d contextdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # MCP Server (HTTP mode)
+  # ---------------------------------------------------------------------------
+  mcp:
+    build:
+      context: ../..
+      dockerfile: SerialMemory.Mcp/Dockerfile
+    container_name: serialmemory-mcp
+    command: ["--http-only"]
+    ports:
+      - "4545:4545"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-contextdb}
+      - SERIALMEMORY_API_KEY=${SERIALMEMORY_API_KEY}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-nomic-embed-text}
+      - OLLAMA_EMBEDDING_DIM=${OLLAMA_EMBEDDING_DIM:-768}
+      - MCP_HTTP_TOKEN=${MCP_HTTP_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:

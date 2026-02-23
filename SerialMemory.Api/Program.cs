@@ -579,7 +579,7 @@ app.MapDashboardEndpoints();
 // ============================================
 
 // Initialize health check service
-var healthService = new HealthCheckService(operationalConfig, "2.1.0", Environment.GetEnvironmentVariable("ENVIRONMENT") ?? "development");
+var healthService = new HealthCheckService(operationalConfig, "2.2.0", Environment.GetEnvironmentVariable("ENVIRONMENT") ?? "development");
 healthService.AddCheck(new LivenessCheck());
 healthService.AddCheck(new DatabaseHealthCheck(pgConnectionString, operationalConfig.DatabaseHealthCheckTimeoutSeconds));
 // RLS guardrail check is only relevant for multi-tenant SaaS mode
