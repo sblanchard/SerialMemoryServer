@@ -119,8 +119,8 @@ public sealed class ReembedJobWorker : BackgroundService
 
         // Get memories needing reembedding
         var query = job.ForceAll
-            ? "SELECT id, content FROM memories WHERE is_active = TRUE LIMIT @BatchSize"
-            : "SELECT id, content FROM memories WHERE is_active = TRUE AND embedding IS NULL LIMIT @BatchSize";
+            ? "SELECT id, content FROM memories WHERE is_active = TRUE ORDER BY id"
+            : "SELECT id, content FROM memories WHERE is_active = TRUE AND embedding IS NULL ORDER BY id LIMIT @BatchSize";
 
         var memories = (await conn.QueryAsync<(Guid Id, string Content)>(
             query, new { job.BatchSize })).ToList();

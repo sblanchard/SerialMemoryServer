@@ -62,6 +62,9 @@ public abstract class McpServerBase
         var postgresPassword = configuration["POSTGRES_PASSWORD"] ?? "postgres";
         var postgresDb = configuration["POSTGRES_DB"] ?? "contextdb";
 
+        var openAiApiKey = configuration["OPENAI_API_KEY"];
+        var openAiEmbedModel = configuration["OPENAI_EMBED_MODEL"] ?? "text-embedding-3-small";
+        var openAiEntityModel = configuration["OPENAI_ENTITY_MODEL"];
         var ollamaUrl = configuration["OLLAMA_URL"] ?? "http://localhost:11434";
         var ollamaModel = configuration["OLLAMA_MODEL"] ?? "nomic-embed-text";
         var ollamaEmbeddingDim = int.TryParse(configuration["OLLAMA_EMBEDDING_DIM"], out var dim) ? dim : 768;
@@ -103,8 +106,30 @@ public abstract class McpServerBase
 
         // Create store with tenant context for RLS
         Store = new PostgresKnowledgeGraphStore(ConnectionString, TenantContext);
-        EmbeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
-        EntityService = EntityExtractionServiceFactory.Create(ollamaEntityUrl, ollamaEntityModel, extractionServiceUrl);
+
+        // Create embedding service - OpenAI preferred, Ollama fallback
+        if (!string.IsNullOrEmpty(openAiApiKey))
+        {
+            var openAiClient = new OpenAiClient(
+                apiKey: openAiApiKey,
+                chatModel: "gpt-5-nano-2025-08-07",
+                embedModel: openAiEmbedModel,
+                embeddingDimension: 1536);
+            EmbeddingService = openAiClient;
+            Logger.LogInformation("Using OpenAI embedding service: {Model} (dim=1536)", openAiEmbedModel);
+        }
+        else
+        {
+            EmbeddingService = new OllamaEmbeddingService(ollamaUrl, ollamaModel, ollamaEmbeddingDim);
+            Logger.LogInformation("Using Ollama embedding service: {Model} (dim={Dim})", ollamaModel, ollamaEmbeddingDim);
+        }
+
+        EntityService = EntityExtractionServiceFactory.Create(
+            openAiApiKey: openAiApiKey,
+            openAiEntityModel: openAiEntityModel,
+            ollamaUrl: ollamaEntityUrl,
+            ollamaModel: ollamaEntityModel,
+            httpServiceUrl: extractionServiceUrl);
         KgService = new KnowledgeGraphService(Store, EmbeddingService, EntityService);
         EventStore = new PostgresEventStore(VectorDataSource, LoggerFactory.CreateLogger<PostgresEventStore>());
 
